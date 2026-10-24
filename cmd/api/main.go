@@ -12,6 +12,7 @@ import (
     "github.com/HenriNorman/gregport/internal/platform/database"
 	"github.com/HenriNorman/gregport/internal/middleware"
 	"github.com/HenriNorman/gregport/internal/platform/httpx"
+	"github.com/HenriNorman/gregport/internal/auth"
 )
 
 func main() {
@@ -27,20 +28,29 @@ func main() {
     defer pool.Close()
     log.Println("connected to postgres")
 
-    r := chi.NewRouter()
+    // wire dependencies
+    authRepo := auth.NewRepository(pool)
+    authSvc := auth.NewService(authRepo)
+    authHandler := auth.NewHandler(authSvc)
 
-	r.Use(middleware.Recovery)
-	r.Use(middleware.RequestID)
+    // build the router — ALL routes before ListenAndServe
+    r := chi.NewRouter()
+    r.Use(middleware.Recovery)
+    r.Use(middleware.RequestID)
 
     r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
         if err := pool.Ping(r.Context()); err != nil {
-			httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{
-				"status": "Unhealthy"})
-			return
+            httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unhealthy"})
+            return
         }
-	    httpx.WriteJSON(w, http.StatusOK, map[string]string{"status":"ok"})
-	})
+        httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+    })
 
+    r.Route("/v1", func(r chi.Router) {
+        r.Post("/auth/signup", authHandler.Signup)
+    })
+
+    // start the server LAST
     log.Printf("listening on :%s", cfg.AppPort)
     log.Fatal(http.ListenAndServe(":"+cfg.AppPort, r))
 }
