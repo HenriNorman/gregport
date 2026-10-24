@@ -1,0 +1,12 @@
+.env
+*.env
+!*.env.example
+
+# build artifacts
+/bin/
+*.exe
+
+# editor
+.idea/
+.vscode/
+*.swp
