@@ -43,3 +43,21 @@ place that speaks SQL. The handler is the only place that speaks JSON.
 cp .env.example .env      # fill in real values
 docker compose up -d --wait
 go run cmd/api/main.go
+The app listens on :8080 (override with APP_PORT).
+```
+
+## Testing
+go test ./internal/auth/ -v
+
+Two kinds of tests:
+
+    Integration (internal/auth/repository_test.go) — run against a real
+    Postgres. Prove the signup transaction rolls back: a duplicate-email signup
+    leaves no orphan organization row.
+
+    Unit (internal/auth/service_test.go) — use a fake Repo, no database.
+    Prove validation, email normalization, and error passthrough.
+
+The split exists because Service depends on the auth.Repo interface, not
+the concrete *Repository. Production injects the real repo; tests inject a
+fake. That's what makes the service testable without a database.
