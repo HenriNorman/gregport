@@ -20,7 +20,6 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
-// CreateAccount inserts an organization, a user, and an owner membership atomically.
 func (r *Repository) CreateAccount(ctx context.Context, org Organization, user User) (Organization, User, Membership, error) {
 	var (
 		outOrg   Organization
@@ -29,7 +28,6 @@ func (r *Repository) CreateAccount(ctx context.Context, org Organization, user U
 	)
 
 	err := database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
-		// 1. insert organization
 		if err := tx.QueryRow(ctx,
 			`INSERT INTO organizations (name, slug)
 			 VALUES ($1, $2)
@@ -39,7 +37,6 @@ func (r *Repository) CreateAccount(ctx context.Context, org Organization, user U
 			return translatePgError(err)
 		}
 
-		// 2. insert user
 		if err := tx.QueryRow(ctx,
 			`INSERT INTO users (email, password_hash, name)
 			 VALUES ($1, $2, $3)
@@ -49,7 +46,6 @@ func (r *Repository) CreateAccount(ctx context.Context, org Organization, user U
 			return translatePgError(err)
 		}
 
-		// 3. insert membership (owner)
 		if err := tx.QueryRow(ctx,
 			`INSERT INTO memberships (org_id, user_id, role)
 			 VALUES ($1, $2, 'owner')
@@ -68,7 +64,6 @@ func (r *Repository) CreateAccount(ctx context.Context, org Organization, user U
 	return outOrg, outUser, outMember, nil
 }
 
-// translatePgError maps Postgres unique-violation (23505) to domain errors.
 func translatePgError(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {

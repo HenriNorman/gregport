@@ -28,12 +28,10 @@ func main() {
     defer pool.Close()
     log.Println("connected to postgres")
 
-    // wire dependencies
     authRepo := auth.NewRepository(pool)
     authSvc := auth.NewService(authRepo)
     authHandler := auth.NewHandler(authSvc)
 
-    // build the router — ALL routes before ListenAndServe
     r := chi.NewRouter()
     r.Use(middleware.Recovery)
     r.Use(middleware.RequestID)
@@ -50,7 +48,6 @@ func main() {
         r.Post("/auth/signup", authHandler.Signup)
     })
 
-    // start the server LAST
     log.Printf("listening on :%s", cfg.AppPort)
     log.Fatal(http.ListenAndServe(":"+cfg.AppPort, r))
 }
