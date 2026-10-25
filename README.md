@@ -5,10 +5,10 @@ tickets, comments, SLA policies, notifications, and webhooks.
 
 ## Status
 
-**Signup feature complete. Auth token layer in place.** The database schema is
-applied, the HTTP boundary layer is in place, and `POST /v1/auth/signup`
-creates an organization, a user, and an owner membership in a single
-transaction.
+**Signup, login, refresh, logout, and `/v1/me` are live.** The auth cycle is
+complete: a user can sign up, log in, call a protected route, rotate their
+refresh token, and log out. Every protected request carries a verified
+`user_id`, `org_id`, and `role` in its context. The ticket domain is next.
 
 JWT access tokens, hashed refresh tokens, refresh-token rotation with reuse
 detection, and the Login/Refresh/Logout services are implemented and tested.
@@ -39,6 +39,7 @@ internal/
     config/                  Config + Load (env)
     database/                pgxpool + WithTx
     httpx/                   DecodeJSON, WriteJSON, WriteError, APIError
+    requestctx/              Principal in context
 migrations/                  SQL schema
 
 Each feature is a package under `internal/` containing its own models,
@@ -117,3 +118,11 @@ a fake. That's what makes the service testable without a database.
 The token tests run real JWT signing and verification — no mocks. They prove
 the security properties (algorithm pinning, expiry required, tamper detection)
 actually hold, not just that the code was written.
+
+All 32 tests pass without a database except the two integration files
+(`repository_test.go`, `repository_tokens_test.go`), which need Postgres.
+
+The auth cycle was also verified end to end with `curl`: login returns a
+token pair, `/v1/me` accepts the access token and rejects requests without
+one, refresh rotates and replaying the old token returns 401, logout returns
+204, and wrong-password / unknown-email return **identical** 401 responses.

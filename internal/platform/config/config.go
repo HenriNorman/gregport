@@ -14,7 +14,7 @@ type Config struct {
     DBName     string
     AppPort    string
 	JWTSecret  string
-	AcessTokenTTL time.Duration
+	AccessTokenTTL time.Duration
 	RefreshTokenTTL time.Duration 
 }
 
@@ -27,7 +27,7 @@ func Load() Config {
         DBName:     getEnv("DB_NAME", "gregport"),
         AppPort:    getEnv("APP_PORT", "8080"),
 		JWTSecret: os.Getenv("JWT_SECRET"),
-		AcessTokenTTL: getEnvDuration("ACCESS_TOKEN_TTL", 15*time.Minute),
+		AccessTokenTTL: getEnvDuration("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL: getEnvDuration("REFRESH_TOKEN_TTL", 30*24*time.Hour),
     }
 

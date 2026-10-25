@@ -3,8 +3,11 @@ package auth
 import (
 	"errors"
 	"net/http"
-
+	"net"
+	
+	"github.com/google/uuid"
 	"github.com/HenriNorman/gregport/internal/platform/httpx"
+	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 )
 
 type Handler struct {
@@ -15,7 +18,6 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-// --- DTOs ---
 
 type SignupRequest struct {
 	OrgName  string `json:"org_name"`
@@ -42,7 +44,34 @@ type SignupResponse struct {
 	Role         string  `json:"role"`
 }
 
-// --- Handler ---
+type LoginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	OrgSlug  string `json:"org_slug,omitempty"`
+}
+
+type TokenResponse struct {
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	ExpiresIn    int       `json:"expires_in"`   // seconds
+	UserID       uuid.UUID `json:"user_id"`
+	OrgID        uuid.UUID `json:"org_id"`
+	Role         string    `json:"role"`
+}
+
+type RefreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+type LogoutRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+type MeResponse struct {
+	UserID string `json:"user_id"`
+	OrgID  string `json:"org_id"`
+	Role   string `json:"role"`
+}
 
 func (h *Handler) Signup(w http.ResponseWriter, r *http.Request) {
 	var req SignupRequest
@@ -87,4 +116,109 @@ func mapSignupError(err error) *httpx.APIError {
 	default:
 		return httpx.InternalError(err)
 	}
+}
+
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	var req LoginRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+
+	pair, err := h.svc.Login(r.Context(), LoginInput{
+		Email:     req.Email,
+		Password:  req.Password,
+		OrgSlug:   req.OrgSlug,
+		UserAgent: r.UserAgent(),
+		IP:        clientIP(r),
+	})
+	if err != nil {
+		httpx.WriteError(w, mapLoginError(err))
+		return
+	}
+
+	_ = httpx.WriteJSON(w, http.StatusOK, TokenResponse{
+		AccessToken:  pair.AccessToken,
+		RefreshToken: pair.RefreshToken,
+		ExpiresIn:    int(pair.ExpiresIn.Seconds()),
+		UserID:       pair.Principal.UserID,
+		OrgID:        pair.Principal.OrgID,
+		Role:         pair.Principal.Role,
+	})
+}
+
+func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
+	var req RefreshRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+
+	pair, err := h.svc.Refresh(r.Context(), req.RefreshToken, r.UserAgent(), clientIP(r))
+	if err != nil {
+		httpx.WriteError(w, mapLoginError(err))
+		return
+	}
+
+	_ = httpx.WriteJSON(w, http.StatusOK, TokenResponse{
+		AccessToken:  pair.AccessToken,
+		RefreshToken: pair.RefreshToken,
+		ExpiresIn:    int(pair.ExpiresIn.Seconds()),
+		UserID:       pair.Principal.UserID,
+		OrgID:        pair.Principal.OrgID,
+		Role:         pair.Principal.Role,
+	})
+}
+
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	var req LogoutRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+
+	_ = h.svc.Logout(r.Context(), req.RefreshToken)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, &httpx.APIError{
+			Status: http.StatusUnauthorized, Code: "unauthorized", Message: "authentication required",
+		})
+		return
+	}
+	_ = httpx.WriteJSON(w, http.StatusOK, MeResponse{
+		UserID: p.UserID.String(),
+		OrgID:  p.OrgID.String(),
+		Role:   p.Role,
+	})
+}
+
+func mapLoginError(err error) *httpx.APIError {
+	switch {
+	case errors.Is(err, ErrInvalidCredentials):
+		return &httpx.APIError{
+			Status: http.StatusUnauthorized, Code: "invalid_credentials",
+			Message: "invalid email or password",
+		}
+	case errors.Is(err, ErrOrgRequired):
+		return httpx.Unprocessable("org_required", "org_slug is required when the user belongs to multiple organizations")
+	case errors.Is(err, ErrInvalidToken):
+		return &httpx.APIError{
+			Status: http.StatusUnauthorized, Code: "invalid_token",
+			Message: "invalid or expired token",
+		}
+	default:
+		return httpx.InternalError(err)
+	}
+}
+
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }

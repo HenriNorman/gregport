@@ -7,7 +7,7 @@ import (
     "time"
 
     "github.com/go-chi/chi/v5"
-
+	"github.com/joho/godotenv"
     "github.com/HenriNorman/gregport/internal/platform/config"
     "github.com/HenriNorman/gregport/internal/platform/database"
 	"github.com/HenriNorman/gregport/internal/middleware"
@@ -16,6 +16,7 @@ import (
 )
 
 func main() {
+	_ = godotenv.Load()
     cfg := config.Load()
 
     ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -27,9 +28,10 @@ func main() {
     }
     defer pool.Close()
     log.Println("connected to postgres")
-
+	
+	tm := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
     authRepo := auth.NewRepository(pool)
-    authSvc := auth.NewService(authRepo)
+    authSvc := auth.NewService(authRepo, tm)
     authHandler := auth.NewHandler(authSvc)
 
     r := chi.NewRouter()
@@ -44,9 +46,17 @@ func main() {
         httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
     })
 
-    r.Route("/v1", func(r chi.Router) {
-        r.Post("/auth/signup", authHandler.Signup)
-    })
+   r.Route("/v1", func(r chi.Router) {
+		r.Post("/auth/signup", authHandler.Signup)
+		r.Post("/auth/login", authHandler.Login)
+		r.Post("/auth/refresh", authHandler.Refresh)
+		r.Post("/auth/logout", authHandler.Logout)
+
+		r.Group(func(r chi.Router) {
+			r.Use(auth.Authenticate(tm))
+			r.Get("/me", authHandler.Me)
+		})
+	})
 
     log.Printf("listening on :%s", cfg.AppPort)
     log.Fatal(http.ListenAndServe(":"+cfg.AppPort, r))
