@@ -10,10 +10,10 @@ applied, the HTTP boundary layer is in place, and `POST /v1/auth/signup`
 creates an organization, a user, and an owner membership in a single
 transaction.
 
-JWT access tokens, hashed refresh tokens, and refresh-token rotation with
-reuse detection are implemented and tested, but not yet wired to HTTP
-endpoints — login, refresh, logout, and the auth middleware land in the next
-slice.
+JWT access tokens, hashed refresh tokens, refresh-token rotation with reuse
+detection, and the Login/Refresh/Logout services are implemented and tested.
+The HTTP layer — login, refresh, logout, `/v1/me`, and the `Authenticate` /
+`RequireRole` middleware — lands in the next slice.
 
 Everything else in the schema (tickets, comments, SLA, notifications, webhooks,
 API keys, invitations) is defined but not yet exposed.
@@ -99,8 +99,12 @@ Three kinds of tests:
   leaves no orphan organization row). The token tests prove rotation is atomic,
   replaying a spent refresh token fails, reuse detection revokes the whole
   family, soft-deleted orgs block both login and rotation, and expired tokens
-  are rejected.- **Unit** (`internal/auth/service_test.go`) — use a fake `Repo`, no database.
-  Prove validation, email normalization, and error passthrough.
+  are rejected.
+- **Unit** (`internal/auth/service_test.go`) — use a fake `Repo`, no database.
+  Prove signup validation and normalization, identical errors for unknown email
+  and wrong password (timing-safe dummy bcrypt), org selection (single / multi
+  without slug / multi with slug), reuse detection triggering family revocation,
+  unknown tokens not triggering it, and logout revoking by hash.
 - **Tokens** (`internal/auth/tokens_test.go`) — use a test secret, no database.
   Prove the access-token round trip, expiry rejection, tamper rejection,
   `alg: none` rejection, wrong-secret rejection, and refresh-token uniqueness

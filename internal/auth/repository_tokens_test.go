@@ -4,9 +4,18 @@ import (
 	"context"
 	"testing"
 	"time"
-
+	
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/google/uuid"
 )
+
+func cleanupRefreshTokens(t *testing.T, pool *pgxpool.Pool, userIDs ...uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	for _, uid := range userIDs {
+		_, _ = pool.Exec(ctx, `DELETE FROM refresh_tokens WHERE user_id = $1`, uid)
+	}
+}
 
 func setupLoginUser(t *testing.T, repo *Repository) (userID, orgID uuid.UUID) {
 	t.Helper()
@@ -28,8 +37,9 @@ func TestRotateRefreshToken_HappyPath(t *testing.T) {
 	ctx := context.Background()
 
 	userID, orgID := setupLoginUser(t, repo)
+	defer cleanupRefreshTokens(t, pool, userID)
 	family := uuid.New()
-	raw1 := "raw-token-1"
+	raw1 := "raw-token-1-" + uuid.NewString()
 	hash1 := HashRefreshToken(raw1)
 
 	if err := repo.CreateRefreshToken(ctx, RefreshToken{
@@ -54,9 +64,10 @@ func TestRotateRefreshToken_ReuseRevokesFamily(t *testing.T) {
 	ctx := context.Background()
 
 	userID, orgID := setupLoginUser(t, repo)
+	defer cleanupRefreshTokens(t, pool, userID)
 	family := uuid.New()
-	raw1 := "raw-reuse-1"
-	raw2 := "raw-reuse-2"
+	raw1 := "raw-token-1-" + uuid.NewString()
+	raw2 := "raw-token-2-" + uuid.NewString()
 	hash1 := HashRefreshToken(raw1)
 	hash2 := HashRefreshToken(raw2)
 
@@ -108,8 +119,9 @@ func TestRotateRefreshToken_DeletedOrgRejected(t *testing.T) {
 	ctx := context.Background()
 
 	userID, orgID := setupLoginUser(t, repo)
+	defer cleanupRefreshTokens(t, pool, userID)
 	family := uuid.New()
-	raw := "raw-deleted-org"
+	raw := "raw-token-1-" + uuid.NewString()
 	hash := HashRefreshToken(raw)
 
 	if err := repo.CreateRefreshToken(ctx, RefreshToken{
@@ -135,8 +147,9 @@ func TestRotateRefreshToken_ExpiredRejected(t *testing.T) {
 	ctx := context.Background()
 
 	userID, orgID := setupLoginUser(t, repo)
+	defer cleanupRefreshTokens(t, pool, userID)
 	family := uuid.New()
-	raw := "raw-expired"
+	raw := "raw-token-1-" + uuid.NewString()
 	hash := HashRefreshToken(raw)
 
 	if err := repo.CreateRefreshToken(ctx, RefreshToken{
@@ -158,7 +171,7 @@ func TestFindLoginCandidate_ExcludesDeletedOrgs(t *testing.T) {
 	ctx := context.Background()
 
 	userID, orgID := setupLoginUser(t, repo)
-
+	defer cleanupRefreshTokens(t, pool, userID)
 	var email string
 	if err := pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, userID).Scan(&email); err != nil {
 		t.Fatalf("email: %v", err)

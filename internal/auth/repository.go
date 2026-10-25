@@ -195,3 +195,21 @@ func (r *Repository) RevokeByHash(ctx context.Context, hash string) error {
 	}
 	return nil
 }
+
+func (r *Repository) FindMembership(ctx context.Context, userID, orgID uuid.UUID) (string, error) {
+	var role string
+	err := r.pool.QueryRow(ctx,
+		`SELECT m.role
+		 FROM memberships m
+		 JOIN organizations o ON o.id = m.org_id
+		 WHERE m.user_id = $1 AND m.org_id = $2 AND o.deleted_at IS NULL`,
+		userID, orgID,
+	).Scan(&role)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrInvalidToken
+		}
+		return "", fmt.Errorf("find membership: %w", err)
+	}
+	return role, nil
+}
