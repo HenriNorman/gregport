@@ -31,3 +31,31 @@ type Membership struct {
 	Role      string
 	CreatedAt time.Time
 }
+
+type RefreshToken struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	OrgID     uuid.UUID
+	FamilyID  uuid.UUID
+	TokenHash string
+	UserAgent string
+	IP        string
+	ExpiresAt time.Time
+	RevokedAt *time.Time
+	CreatedAt time.Time
+}
+
+type MembershipInfo struct {
+	OrgID   uuid.UUID
+	OrgSlug string
+	OrgName string
+	Role    string
+}
+
+type LoginCandidate struct {
+	UserID       uuid.UUID
+	Email        string
+	PasswordHash string
+	Name         string
+	Memberships  []MembershipInfo
+}
