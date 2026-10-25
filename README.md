@@ -86,6 +86,10 @@ curl localhost:8080/healthz
 # {"status":"unhealthy"}   with DB down
 ```
 
+## Database Schema
+
+![ERD](docs/ERD.svg)
+
 ## Testing
 
 ```bash
