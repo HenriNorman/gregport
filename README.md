@@ -10,9 +10,10 @@ applied, the HTTP boundary layer is in place, and `POST /v1/auth/signup`
 creates an organization, a user, and an owner membership in a single
 transaction.
 
-JWT access tokens and hashed refresh tokens are implemented and tested, but
-not yet wired to HTTP endpoints — login, refresh, logout, and the auth
-middleware land in the next slice.
+JWT access tokens, hashed refresh tokens, and refresh-token rotation with
+reuse detection are implemented and tested, but not yet wired to HTTP
+endpoints — login, refresh, logout, and the auth middleware land in the next
+slice.
 
 Everything else in the schema (tickets, comments, SLA, notifications, webhooks,
 API keys, invitations) is defined but not yet exposed.
@@ -32,7 +33,7 @@ API keys, invitations) is defined but not yet exposed.
 cmd/api/                     entry point (main.go)
 internal/
   auth/                      signup + tokens: models, repo, service, handler,
-                             errors, tokens, tests
+                             errors, tokens, tests (incl. repository_tokens_test.go)
   middleware/                RequestID, Recovery
   platform/
     config/                  Config + Load (env)
@@ -92,10 +93,13 @@ go test ./internal/auth/ -v
 
 Three kinds of tests:
 
-- **Integration** (`internal/auth/repository_test.go`) — run against a real
-  Postgres. Prove the signup transaction rolls back: a duplicate-email signup
-  leaves no orphan organization row.
-- **Unit** (`internal/auth/service_test.go`) — use a fake `Repo`, no database.
+- **Integration** (`internal/auth/repository_test.go`,
+  `internal/auth/repository_tokens_test.go`) — run against a real Postgres.
+  The signup tests prove the transaction rolls back (a duplicate-email signup
+  leaves no orphan organization row). The token tests prove rotation is atomic,
+  replaying a spent refresh token fails, reuse detection revokes the whole
+  family, soft-deleted orgs block both login and rotation, and expired tokens
+  are rejected.- **Unit** (`internal/auth/service_test.go`) — use a fake `Repo`, no database.
   Prove validation, email normalization, and error passthrough.
 - **Tokens** (`internal/auth/tokens_test.go`) — use a test secret, no database.
   Prove the access-token round trip, expiry rejection, tamper rejection,
