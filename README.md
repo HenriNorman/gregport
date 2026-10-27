@@ -14,7 +14,7 @@ tickets, comments, SLA policies, notifications, and webhooks.
 | Auth (signup, login, refresh, logout, `/v1/me`) | Complete |
 | JWT · refresh rotation · reuse detection | Complete + tested |
 | HTTP layer (login, refresh, logout, `/v1/me`, `Authenticate`, `RequireRole`) | Next slice |
-| Tickets domain | In progress — models, handlers, migrations, status state machine |
+| Tickets domain | Complete — create, list, get, update, delete, comments; state machine, keyset pagination, optimistic concurrency |
 | Comments · SLA · notifications · webhooks · API keys · invitations | Schema defined, not exposed |
 
 </div>
@@ -27,11 +27,11 @@ JWT access tokens, hashed refresh tokens, refresh-token rotation with reuse
 detection, and the Login / Refresh / Logout services are implemented and
 tested. The HTTP layer lands in the next slice.
 
-Tickets: creation (single transaction across counter, customer, ticket,
-comment, event), keyset pagination, and get/update with optimistic concurrency
-(`If-Match` on the `version` column) are implemented and tested. The status
-state machine is table-driven. Delete, comments endpoints, and the HTTP layer
-land next.
+Tickets: create (single transaction across counter, customer, ticket, comment,
+event), list (keyset pagination), get/update (optimistic concurrency via
+`If-Match` on `version`), soft delete (admin/owner), and comments are
+implemented and tested at the repository layer. The status state machine is
+table-driven. HTTP-level tenant and concurrency tests land next.
 
 ---
 
@@ -75,11 +75,13 @@ land next.
 
 - `models.go`
 - `repository.go`
+- `service.go`
+- `handler.go`
 - `transitions.go`
 - `events.go`
 - `pagination.go`
+- `policy.go`
 - `errors.go`
-- `handler.go` (DTOs; handlers land next)
 - `repository_test.go`
 - `pagination_test.go`
 - `update_test.go`
@@ -87,7 +89,6 @@ land next.
 - `testhelpers_test.go`
 
 </details>
-
 <details>
 <summary><code>internal/middleware/</code></summary>
 
@@ -272,3 +273,14 @@ The response includes `next_cursor`; absent means last page.
 </div>
 
 Order is `created_at DESC, id DESC`.
+
+## Rules
+- **Tickets use per-org numbers, not UUIDs, in URLs.** `(org_id, number)` is
+  the lookup key. A ticket in another org returns 404, never 403 — the API
+  never confirms existence in someone else's tenant.
+- **PATCH requires `If-Match`.** Missing header → 428, stale version → 412.
+  Every ticket update bumps `version`, so two agents editing the same ticket
+  fail visibly instead of silently overwriting.
+- **Ticket list is keyset-paginated.** `?limit=N&cursor=<opaque>`,
+  `next_cursor` in the response, absent means last page. Cursor is opaque.
+  Order is `created_at DESC, id DESC`. Limit caps at 100.
