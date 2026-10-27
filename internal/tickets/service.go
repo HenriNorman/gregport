@@ -1,1 +1,125 @@
 package tickets
+
+import (
+	"context"
+	"strings"
+
+	"github.com/HenriNorman/gregport/internal/platform/requestctx"
+)
+
+type Service struct {
+	repo *Repository
+}
+
+func NewService(repo *Repository) *Service {
+	return &Service{repo: repo}
+}
+
+func (s *Service) CreateTicket(ctx context.Context, p requestctx.Principal, req CreateTicketRequest) (Ticket, error) {
+	subject := strings.TrimSpace(req.Subject)
+	if subject == "" || len(subject) > 500 {
+		return Ticket{}, ErrInvalidInput
+	}
+	if len(req.Body) > 20_000 {
+		return Ticket{}, ErrInvalidInput
+	}
+	if strings.TrimSpace(req.RequesterEmail) == "" {
+		return Ticket{}, ErrInvalidInput
+	}
+	priority := req.Priority
+	if priority == "" {
+		priority = "normal"
+	}
+	if !validPriority(priority) {
+		return Ticket{}, ErrInvalidInput
+	}
+
+	tk, _, err := s.repo.CreateTicket(ctx, CreateInput{
+		OrgID:          p.OrgID,
+		Actor:          Actor{Type: "user", ID: &p.UserID},
+		RequesterEmail: strings.ToLower(strings.TrimSpace(req.RequesterEmail)),
+		RequesterName:  strings.TrimSpace(req.RequesterName),
+		Subject:        subject,
+		Body:           req.Body,
+		Priority:       priority,
+	})
+	return tk, err
+}
+
+func (s *Service) ListTickets(ctx context.Context, p requestctx.Principal, f ListFilter) (ListResult, error) {
+	return s.repo.ListTickets(ctx, p.OrgID, f)
+}
+
+func (s *Service) GetTicket(ctx context.Context, p requestctx.Principal, number int64) (Ticket, error) {
+	return s.repo.GetTicket(ctx, p.OrgID, number)
+}
+
+func (s *Service) UpdateTicket(ctx context.Context, p requestctx.Principal, number int64, version int, req UpdateTicketRequest) (Ticket, error) {
+	if req.Status != nil && !validStatus(*req.Status) {
+		return Ticket{}, ErrInvalidInput
+	}
+	if req.Priority != nil && !validPriority(*req.Priority) {
+		return Ticket{}, ErrInvalidInput
+	}
+	if req.Subject != nil {
+		v := strings.TrimSpace(*req.Subject)
+		if v == "" || len(v) > 500 {
+			return Ticket{}, ErrInvalidInput
+		}
+		req.Subject = &v
+	}
+
+	return s.repo.UpdateTicket(ctx, UpdateInput{
+		OrgID:           p.OrgID,
+		Number:          number,
+		ExpectedVersion: version,
+		Actor:           Actor{Type: "user", ID: &p.UserID},
+		Status:          req.Status,
+		Priority:        req.Priority,
+		Subject:         req.Subject,
+	})
+}
+
+func (s *Service) DeleteTicket(ctx context.Context, p requestctx.Principal, number int64) error {
+	if !CanDelete(p) {
+		return ErrForbidden
+	}
+	return s.repo.SoftDeleteTicket(ctx, p.OrgID, number, Actor{Type: "user", ID: &p.UserID})
+}
+
+func (s *Service) CreateComment(ctx context.Context, p requestctx.Principal, number int64, req CreateCommentRequest) (Comment, error) {
+	body := strings.TrimSpace(req.Body)
+	if body == "" || len(body) > 20_000 {
+		return Comment{}, ErrInvalidInput
+	}
+	if req.IsInternal && p.Role != "owner" && p.Role != "admin" && p.Role != "agent" {
+		return Comment{}, ErrForbidden
+	}
+	return s.repo.CreateComment(ctx, CreateCommentInput{
+		OrgID:      p.OrgID,
+		Number:     number,
+		Actor:      Actor{Type: "user", ID: &p.UserID},
+		Body:       body,
+		IsInternal: req.IsInternal,
+	})
+}
+
+func (s *Service) ListComments(ctx context.Context, p requestctx.Principal, number int64, includeInternal bool) ([]Comment, error) {
+	return s.repo.ListComments(ctx, p.OrgID, number, includeInternal)
+}
+
+func validStatus(s string) bool {
+	switch s {
+	case "new", "open", "pending", "solved", "closed":
+		return true
+	}
+	return false
+}
+
+func validPriority(s string) bool {
+	switch s {
+	case "low", "normal", "high", "urgent":
+		return true
+	}
+	return false
+}

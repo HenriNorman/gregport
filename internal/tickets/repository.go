@@ -2,8 +2,9 @@ package tickets
 
 import (
 	"context"
-	"fmt"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/HenriNorman/gregport/internal/platform/database"
 )
-
 
 type ListFilter struct {
 	Status      *string
@@ -104,6 +104,9 @@ func (r *Repository) CreateTicket(ctx context.Context, in CreateInput) (Ticket, 
 			return fmt.Errorf("insert ticket: %w", err)
 		}
 
+		ticket.RequesterEmail = in.RequesterEmail
+		ticket.RequesterName = in.RequesterName
+
 		if err := tx.QueryRow(ctx,
 			`INSERT INTO comments (org_id, ticket_id, author_type, author_customer_id, body, is_internal)
 			 VALUES ($1, $2, 'customer', $3, $4, false)
@@ -148,38 +151,41 @@ func (r *Repository) ListTickets(ctx context.Context, orgID uuid.UUID, f ListFil
 	}
 
 	args := []any{orgID}
-	where := "WHERE org_id = $1 AND deleted_at IS NULL"
+	where := "WHERE t.org_id = $1 AND t.deleted_at IS NULL"
 	add := func(clause string, val any) {
 		args = append(args, val)
 		where += fmt.Sprintf(" AND %s = $%d", clause, len(args))
 	}
 
 	if f.Status != nil {
-		add("status", *f.Status)
+		add("t.status", *f.Status)
 	}
 	if f.Priority != nil {
-		add("priority", *f.Priority)
+		add("t.priority", *f.Priority)
 	}
 	if f.AssigneeID != nil {
-		add("assignee_id", *f.AssigneeID)
+		add("t.assignee_id", *f.AssigneeID)
 	}
 	if f.RequesterID != nil {
-		add("requester_id", *f.RequesterID)
+		add("t.requester_id", *f.RequesterID)
 	}
 	if !cur.CreatedAt.IsZero() {
 		args = append(args, cur.CreatedAt, cur.ID)
-		where += fmt.Sprintf(" AND (created_at, id) < ($%d, $%d)", len(args)-1, len(args))
+		where += fmt.Sprintf(" AND (t.created_at, t.id) < ($%d, $%d)", len(args)-1, len(args))
 	}
 
 	args = append(args, f.Limit+1)
 	query := fmt.Sprintf(
-		`SELECT id, org_id, number, requester_id, assignee_id, team_id, sla_policy_id,
-		        merged_into_id, subject, status, priority, channel,
-		        first_response_due_at, resolution_due_at, first_response_at,
-		        resolved_at, closed_at, version, created_at, updated_at, deleted_at
-		 FROM tickets
+		`SELECT t.id, t.org_id, t.number, t.requester_id, t.assignee_id, t.team_id,
+		        t.sla_policy_id, t.merged_into_id, t.subject, t.status, t.priority,
+		        t.channel, t.first_response_due_at, t.resolution_due_at,
+		        t.first_response_at, t.resolved_at, t.closed_at, t.version,
+		        t.created_at, t.updated_at, t.deleted_at,
+		        c.email, COALESCE(c.name, '')
+		 FROM tickets t
+		 JOIN customers c ON c.id = t.requester_id
 		 %s
-		 ORDER BY created_at DESC, id DESC
+		 ORDER BY t.created_at DESC, t.id DESC
 		 LIMIT $%d`,
 		where, len(args),
 	)
@@ -198,6 +204,7 @@ func (r *Repository) ListTickets(ctx context.Context, orgID uuid.UUID, f ListFil
 			&t.SLAPolicyID, &t.MergedIntoID, &t.Subject, &t.Status, &t.Priority,
 			&t.Channel, &t.FirstResponseDueAt, &t.ResolutionDueAt, &t.FirstResponseAt,
 			&t.ResolvedAt, &t.ClosedAt, &t.Version, &t.CreatedAt, &t.UpdatedAt, &t.DeletedAt,
+			&t.RequesterEmail, &t.RequesterName,
 		); err != nil {
 			return ListResult{}, fmt.Errorf("scan ticket: %w", err)
 		}
@@ -220,18 +227,22 @@ func (r *Repository) ListTickets(ctx context.Context, orgID uuid.UUID, f ListFil
 func (r *Repository) GetTicket(ctx context.Context, orgID uuid.UUID, number int64) (Ticket, error) {
 	var t Ticket
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, org_id, number, requester_id, assignee_id, team_id, sla_policy_id,
-		        merged_into_id, subject, status, priority, channel,
-		        first_response_due_at, resolution_due_at, first_response_at,
-		        resolved_at, closed_at, version, created_at, updated_at, deleted_at
-		 FROM tickets
-		 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL`,
+		`SELECT t.id, t.org_id, t.number, t.requester_id, t.assignee_id, t.team_id,
+		        t.sla_policy_id, t.merged_into_id, t.subject, t.status, t.priority,
+		        t.channel, t.first_response_due_at, t.resolution_due_at,
+		        t.first_response_at, t.resolved_at, t.closed_at, t.version,
+		        t.created_at, t.updated_at, t.deleted_at,
+		        c.email, COALESCE(c.name, '')
+		 FROM tickets t
+		 JOIN customers c ON c.id = t.requester_id
+		 WHERE t.org_id = $1 AND t.number = $2 AND t.deleted_at IS NULL`,
 		orgID, number,
 	).Scan(
 		&t.ID, &t.OrgID, &t.Number, &t.RequesterID, &t.AssigneeID, &t.TeamID,
 		&t.SLAPolicyID, &t.MergedIntoID, &t.Subject, &t.Status, &t.Priority,
 		&t.Channel, &t.FirstResponseDueAt, &t.ResolutionDueAt, &t.FirstResponseAt,
 		&t.ResolvedAt, &t.ClosedAt, &t.Version, &t.CreatedAt, &t.UpdatedAt, &t.DeletedAt,
+		&t.RequesterEmail, &t.RequesterName,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -246,7 +257,6 @@ func (r *Repository) UpdateTicket(ctx context.Context, in UpdateInput) (Ticket, 
 	var out Ticket
 
 	err := database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
-		// 1. lock the row and read current state
 		var (
 			curID       uuid.UUID
 			curStatus   string
@@ -266,12 +276,10 @@ func (r *Repository) UpdateTicket(ctx context.Context, in UpdateInput) (Ticket, 
 			return fmt.Errorf("lock ticket: %w", err)
 		}
 
-		// 2. optimistic concurrency check
 		if curVersion != in.ExpectedVersion {
 			return ErrVersionMismatch
 		}
 
-		// 3. state machine
 		newStatus := curStatus
 		if in.Status != nil && *in.Status != curStatus {
 			if !CanTransition(curStatus, *in.Status) {
@@ -280,7 +288,6 @@ func (r *Repository) UpdateTicket(ctx context.Context, in UpdateInput) (Ticket, 
 			newStatus = *in.Status
 		}
 
-		// 4. build the UPDATE dynamically, positional params only
 		args := []any{}
 		sets := []string{"version = version + 1", "updated_at = now()"}
 		add := func(col string, val any) {
@@ -293,10 +300,8 @@ func (r *Repository) UpdateTicket(ctx context.Context, in UpdateInput) (Ticket, 
 			switch *in.Status {
 			case "open":
 				if curStatus == "solved" {
-					// reopen: clear resolved_at
 					sets = append(sets, "resolved_at = NULL")
 				} else {
-					// first move out of new: set first_response_at if unset
 					sets = append(sets, "first_response_at = COALESCE(first_response_at, now())")
 				}
 			case "solved":
@@ -312,7 +317,6 @@ func (r *Repository) UpdateTicket(ctx context.Context, in UpdateInput) (Ticket, 
 			add("subject", *in.Subject)
 		}
 
-		// WHERE uses org_id, number, and expected version
 		args = append(args, in.OrgID, in.Number, in.ExpectedVersion)
 		whereOrg := len(args) - 2
 		whereNum := len(args) - 1
@@ -326,7 +330,7 @@ func (r *Repository) UpdateTicket(ctx context.Context, in UpdateInput) (Ticket, 
 			           channel, first_response_due_at, resolution_due_at,
 			           first_response_at, resolved_at, closed_at, version,
 			           created_at, updated_at, deleted_at`,
-			joinComma(sets), whereOrg, whereNum, whereVer,
+			strings.Join(sets, ", "), whereOrg, whereNum, whereVer,
 		)
 
 		if err := tx.QueryRow(ctx, query, args...).Scan(
@@ -342,7 +346,6 @@ func (r *Repository) UpdateTicket(ctx context.Context, in UpdateInput) (Ticket, 
 			return fmt.Errorf("update ticket: %w", err)
 		}
 
-		// 5. event on status change
 		if newStatus != curStatus {
 			if err := Record(ctx, tx, in.OrgID, out.ID, in.Actor, "ticket.status_changed", map[string]any{
 				"old": curStatus,
@@ -350,6 +353,13 @@ func (r *Repository) UpdateTicket(ctx context.Context, in UpdateInput) (Ticket, 
 			}); err != nil {
 				return err
 			}
+		}
+
+		if err := tx.QueryRow(ctx,
+			`SELECT c.email, COALESCE(c.name, '') FROM customers c WHERE c.id = $1`,
+			out.RequesterID,
+		).Scan(&out.RequesterEmail, &out.RequesterName); err != nil {
+			return fmt.Errorf("load requester: %w", err)
 		}
 
 		return nil
@@ -360,13 +370,126 @@ func (r *Repository) UpdateTicket(ctx context.Context, in UpdateInput) (Ticket, 
 	return out, nil
 }
 
-func joinComma(parts []string) string {
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += ", "
+type CreateCommentInput struct {
+	OrgID      uuid.UUID
+	Number     int64
+	Actor      Actor
+	Body       string
+	IsInternal bool
+}
+
+func (r *Repository) SoftDeleteTicket(ctx context.Context, orgID uuid.UUID, number int64, actor Actor) error {
+	return database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
+		var ticketID uuid.UUID
+		if err := tx.QueryRow(ctx,
+			`UPDATE tickets
+			 SET deleted_at = now(), version = version + 1, updated_at = now()
+			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL
+			 RETURNING id`,
+			orgID, number,
+		).Scan(&ticketID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrTicketNotFound
+			}
+			return fmt.Errorf("soft delete ticket: %w", err)
 		}
-		out += p
+
+		return Record(ctx, tx, orgID, ticketID, actor, "ticket.deleted", nil)
+	})
+}
+
+func (r *Repository) CreateComment(ctx context.Context, in CreateCommentInput) (Comment, error) {
+	var out Comment
+
+	err := database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
+		var ticketID uuid.UUID
+		if err := tx.QueryRow(ctx,
+			`SELECT id FROM tickets
+			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL`,
+			in.OrgID, in.Number,
+		).Scan(&ticketID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrTicketNotFound
+			}
+			return fmt.Errorf("find ticket: %w", err)
+		}
+
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO comments (org_id, ticket_id, author_type, author_user_id, body, is_internal)
+			 VALUES ($1, $2, 'user', $3, $4, $5)
+			 RETURNING id, org_id, ticket_id, author_type, author_user_id,
+			           author_customer_id, body, is_internal, created_at`,
+			in.OrgID, ticketID, in.Actor.ID, in.Body, in.IsInternal,
+		).Scan(
+			&out.ID, &out.OrgID, &out.TicketID, &out.AuthorType,
+			&out.AuthorUserID, &out.AuthorCustomerID, &out.Body,
+			&out.IsInternal, &out.CreatedAt,
+		); err != nil {
+			return fmt.Errorf("insert comment: %w", err)
+		}
+
+		// set first_response_at if this is the first public agent comment
+		if !in.IsInternal {
+			if _, err := tx.Exec(ctx,
+				`UPDATE tickets
+				 SET updated_at = now(),
+				     first_response_at = COALESCE(first_response_at, now())
+				 WHERE id = $1`,
+				ticketID,
+			); err != nil {
+				return fmt.Errorf("bump ticket: %w", err)
+			}
+		} else {
+			if _, err := tx.Exec(ctx,
+				`UPDATE tickets SET updated_at = now() WHERE id = $1`,
+				ticketID,
+			); err != nil {
+				return fmt.Errorf("bump ticket: %w", err)
+			}
+		}
+
+		return Record(ctx, tx, in.OrgID, ticketID, in.Actor, "comment.added", map[string]any{
+			"comment_id":  out.ID.String(),
+			"is_internal": out.IsInternal,
+		})
+	})
+	if err != nil {
+		return Comment{}, err
 	}
-	return out
+	return out, nil
+}
+
+func (r *Repository) ListComments(ctx context.Context, orgID uuid.UUID, number int64, includeInternal bool) ([]Comment, error) {
+	query := `SELECT c.id, c.org_id, c.ticket_id, c.author_type, c.author_user_id,
+	                 c.author_customer_id, c.body, c.is_internal, c.created_at
+	          FROM comments c
+	          JOIN tickets t ON t.id = c.ticket_id
+	          WHERE t.org_id = $1 AND t.number = $2 AND t.deleted_at IS NULL
+	            AND c.deleted_at IS NULL`
+	if !includeInternal {
+		query += " AND c.is_internal = false"
+	}
+	query += " ORDER BY c.created_at ASC, c.id ASC"
+
+	rows, err := r.pool.Query(ctx, query, orgID, number)
+	if err != nil {
+		return nil, fmt.Errorf("list comments: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Comment
+	for rows.Next() {
+		var c Comment
+		if err := rows.Scan(
+			&c.ID, &c.OrgID, &c.TicketID, &c.AuthorType, &c.AuthorUserID,
+			&c.AuthorCustomerID, &c.Body, &c.IsInternal, &c.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan comment: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
 }

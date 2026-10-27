@@ -7,27 +7,29 @@ import (
 )
 
 type Ticket struct {
-	ID                uuid.UUID
-	OrgID             uuid.UUID
-	Number            int64
-	RequesterID       uuid.UUID
-	AssigneeID        *uuid.UUID
-	TeamID            *uuid.UUID
-	SLAPolicyID       *uuid.UUID
-	MergedIntoID      *uuid.UUID
-	Subject           string
-	Status            string
-	Priority          string
-	Channel           string
+	ID                 uuid.UUID
+	OrgID              uuid.UUID
+	Number             int64
+	RequesterID        uuid.UUID
+	AssigneeID         *uuid.UUID
+	TeamID             *uuid.UUID
+	SLAPolicyID        *uuid.UUID
+	MergedIntoID       *uuid.UUID
+	Subject            string
+	Status             string
+	Priority           string
+	Channel            string
 	FirstResponseDueAt *time.Time
-	ResolutionDueAt   *time.Time
-	FirstResponseAt   *time.Time
-	ResolvedAt        *time.Time
-	ClosedAt          *time.Time
-	Version           int
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-	DeletedAt         *time.Time
+	ResolutionDueAt    *time.Time
+	FirstResponseAt    *time.Time
+	ResolvedAt         *time.Time
+	ClosedAt           *time.Time
+	Version            int
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	DeletedAt          *time.Time
+	RequesterEmail string
+	RequesterName  string
 }
 
 type Comment struct {
