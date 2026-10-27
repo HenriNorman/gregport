@@ -18,6 +18,8 @@ The HTTP layer — login, refresh, logout, `/v1/me`, and the `Authenticate` /
 Everything else in the schema (tickets, comments, SLA, notifications, webhooks,
 API keys, invitations) is defined but not yet exposed.
 
+tickets: status state machine with table-driven test added.
+
 ## Stack
 
 - Go 1.27
@@ -96,7 +98,7 @@ curl localhost:8080/healthz
 go test ./internal/auth/ -v
 ```
 
-Three kinds of tests:
+tests:
 
 - **Integration** (`internal/auth/repository_test.go`,
   `internal/auth/repository_tokens_test.go`) — run against a real Postgres.
@@ -110,18 +112,19 @@ Three kinds of tests:
   and wrong password (timing-safe dummy bcrypt), org selection (single / multi
   without slug / multi with slug), reuse detection triggering family revocation,
   unknown tokens not triggering it, and logout revoking by hash.
-- **Tokens** (`internal/auth/tokens_test.go`) — use a test secret, no database.
-  Prove the access-token round trip, expiry rejection, tamper rejection,
-  `alg: none` rejection, wrong-secret rejection, and refresh-token uniqueness
-  and hashing.
-
 The service tests exist because `Service` depends on the `auth.Repo` interface,
 not the concrete `*Repository`. Production injects the real repo; tests inject
 a fake. That's what makes the service testable without a database.
 
+- **Tokens** (`internal/auth/tokens_test.go`) — use a test secret, no database.
+  Prove the access-token round trip, expiry rejection, tamper rejection,
+  `alg: none` rejection, wrong-secret rejection, and refresh-token uniqueness
+  and hashing.
 The token tests run real JWT signing and verification — no mocks. They prove
 the security properties (algorithm pinning, expiry required, tamper detection)
 actually hold, not just that the code was written.
+- **Tickets** (`internal/tickets/tickets_test.go`) - CanTransition(from, to) via map-of-maps; closed is terminal
+27 table-driven sub-tests, written before the implementation (TDD)
 
 All 32 tests pass without a database except the two integration files
 (`repository_test.go`, `repository_tokens_test.go`), which need Postgres.
