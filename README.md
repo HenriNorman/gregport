@@ -3,77 +3,155 @@
 A multi-tenant support ticketing SaaS — organizations, users, memberships,
 tickets, comments, SLA policies, notifications, and webhooks.
 
+---
+
 ## Status
 
-**Signup, login, refresh, logout, and `/v1/me` are live.** The auth cycle is
-complete: a user can sign up, log in, call a protected route, rotate their
-refresh token, and log out. Every protected request carries a verified
-`user_id`, `org_id`, and `role` in its context. The ticket domain is next.
+<div align="center">
+
+| **Area** | **State** |
+|:--|:--|
+| Auth (signup, login, refresh, logout, `/v1/me`) | Complete |
+| JWT · refresh rotation · reuse detection | Complete + tested |
+| HTTP layer (login, refresh, logout, `/v1/me`, `Authenticate`, `RequireRole`) | Next slice |
+| Tickets domain | In progress — models, handlers, migrations, status state machine |
+| Comments · SLA · notifications · webhooks · API keys · invitations | Schema defined, not exposed |
+
+</div>
+
+The auth cycle is complete end to end: a user can sign up, log in, call a
+protected route, rotate their refresh token, and log out. Every protected
+request carries a verified `user_id`, `org_id`, and `role` in its context.
 
 JWT access tokens, hashed refresh tokens, refresh-token rotation with reuse
-detection, and the Login/Refresh/Logout services are implemented and tested.
-The HTTP layer — login, refresh, logout, `/v1/me`, and the `Authenticate` /
-`RequireRole` middleware — lands in the next slice.
+detection, and the Login / Refresh / Logout services are implemented and
+tested. The HTTP layer lands in the next slice.
 
-Everything else in the schema (comments, SLA, notifications, webhooks,
-API keys, invitations) is defined but not yet exposed.
+Tickets: creation (single transaction across counter, customer, ticket,
+comment, event), keyset pagination, and get/update with optimistic concurrency
+(`If-Match` on the `version` column) are implemented and tested. The status
+state machine is table-driven. Delete, comments endpoints, and the HTTP layer
+land next.
 
-tickets models and handlers are initiated.
-new migrations added, tickets table altered and now have a version column
-
-tickets: status state machine with table-driven test added.
+---
 
 ## Stack
 
-- Go 1.27
-- [chi](https://github.com) — router
-- [pgx/v5](https://github.com) — PostgreSQL driver and pool
-- PostgreSQL 16 (via Docker Compose)
-- [bcrypt](https://go.dev) — password hashing
-- [golang-jwt/jwt/v5](https://github.com) — access tokens
-- [google/uuid](https://github.com) — UUIDs
+<table>
+<tr><td><b>Language</b></td><td>Go 1.27</td></tr>
+<tr><td><b>Router</b></td><td><a href="https://github.com/go-chi/chi">chi</a></td></tr>
+<tr><td><b>Database</b></td><td>PostgreSQL 16 (Docker Compose)</td></tr>
+<tr><td><b>Driver</b></td><td><a href="https://github.com/jackc/pgx">pgx/v5</a> — pool + transactions</td></tr>
+<tr><td><b>Auth</b></td><td><a href="https://go.dev">bcrypt</a> · <a href="https://github.com/golang-jwt/jwt">golang-jwt/jwt/v5</a></td></tr>
+<tr><td><b>IDs</b></td><td><a href="https://github.com/google/uuid">google/uuid</a></td></tr>
+</table>
 
-## Layout
+---
 
-cmd/api/                     entry point (main.go)
-internal/
-  auth/                      signup + tokens: models, repo, service, handler,
-                             errors, tokens, tests (incl. repository_tokens_test.go).
-  tickets/                   ticket domain: models, repo, transitions, events,
-                             tests (service + policy land next).
-  middleware/                RequestID, Recovery.
-  platform/
-    config/                  Config + Load (env)
-    database/                pgxpool + WithTx
-    httpx/                   DecodeJSON, WriteJSON, WriteError, APIError
-    requestctx/              Principal in context
-migrations/                  SQL schema
+## Project layout
+
+<details>
+<summary><code>cmd/api/</code></summary>
+
+- `main.go` — entry point
+
+</details>
+
+<details>
+<summary><code>internal/auth/</code> — signup + tokens</summary>
+
+- `models.go`
+- `repo.go`
+- `service.go`
+- `handler.go`
+- `errors.go`
+- `tokens.go`
+- `repository_tokens_test.go`
+
+</details>
+
+<details>
+<summary><code>internal/tickets/</code> — ticket domain</summary>
+
+- `models.go`
+- `repository.go`
+- `transitions.go`
+- `events.go`
+- `pagination.go`
+- `errors.go`
+- `handler.go` (DTOs; handlers land next)
+- `repository_test.go`
+- `pagination_test.go`
+- `update_test.go`
+- `transitions_test.go`
+- `testhelpers_test.go`
+
+</details>
+
+<details>
+<summary><code>internal/middleware/</code></summary>
+
+- `requestid.go`
+- `recovery.go`
+
+</details>
+
+<details>
+<summary><code>internal/platform/</code> — shared infrastructure</summary>
+
+- `config/` — Config + Load (env)
+- `database/` — pgxpool + WithTx
+- `httpx/` — DecodeJSON, WriteJSON, WriteError, APIError
+- `requestctx/` — Principal in context
+
+</details>
+
+<details>
+<summary><code>migrations/</code></summary>
+
+- SQL schema
+
+</details>
+
+### Layering
 
 Each feature is a package under `internal/` containing its own models,
 repository, service, and handler. Dependencies point one way:
-`handler → service → repository → database`. The service layer is
-format-agnostic — it never touches JSON or SQL. The repository is the only
-place that speaks SQL. The handler is the only place that speaks JSON.
+
+<div align="center">
+
+`handler` → `service` → `repository` → `database`
+
+</div>
+
+The service layer is format-agnostic — it never touches JSON or SQL. The
+repository is the only place that speaks SQL. The handler is the only place
+that speaks JSON.
+
+---
 
 ## Configuration
 
 Copy `.env.example` to `.env` and fill in real values. The app refuses to
 start if required values are missing.
 
-| Variable            | Required | Default     | Notes                                                 |
-|---------------------|----------|-------------|-------------------------------------------------------|
-| `DB_HOST`           | no       | `localhost` |                                                       |
-| `DB_PORT`           | no       | `5432`      |                                                       |
-| `DB_USER`           | no       | `postgres`  |                                                       |
-| `DB_PASSWORD`       | yes      | —           |                                                       |
-| `DB_NAME`           | no       | `gregport`  |                                                       |
-| `APP_PORT`          | no       | `8080`      |                                                       |
-| `JWT_SECRET`        | **yes**  | —           | min 32 bytes; generate with `openssl rand -base64 32` |
-| `ACCESS_TOKEN_TTL`  | no       | `15m`       | Go duration                                           |
-| `REFRESH_TOKEN_TTL` | no       | `720h`      | Go duration (30 days)                                 |
+<table>
+<tr><th align="left">Variable</th><th align="left">Required</th><th align="left">Default</th><th align="left">Notes</th></tr>
+<tr><td><code>DB_HOST</code></td><td>no</td><td><code>localhost</code></td><td></td></tr>
+<tr><td><code>DB_PORT</code></td><td>no</td><td><code>5432</code></td><td></td></tr>
+<tr><td><code>DB_USER</code></td><td>no</td><td><code>postgres</code></td><td></td></tr>
+<tr><td><code>DB_PASSWORD</code></td><td>yes</td><td>—</td><td></td></tr>
+<tr><td><code>DB_NAME</code></td><td>no</td><td><code>gregport</code></td><td></td></tr>
+<tr><td><code>APP_PORT</code></td><td>no</td><td><code>8080</code></td><td></td></tr>
+<tr><td><code>JWT_SECRET</code></td><td><b>yes</b></td><td>—</td><td>min 32 bytes — <code>openssl rand -base64 32</code></td></tr>
+<tr><td><code>ACCESS_TOKEN_TTL</code></td><td>no</td><td><code>15m</code></td><td>Go duration</td></tr>
+<tr><td><code>REFRESH_TOKEN_TTL</code></td><td>no</td><td><code>720h</code></td><td>Go duration (30 days)</td></tr>
+</table>
 
 `JWT_SECRET` has no default and the app will `log.Fatal` without it. Never
 commit it, never log it, and don't reuse it across projects.
+
+---
 
 ## Running locally
 
@@ -85,7 +163,11 @@ go run cmd/api/main.go
 
 The app listens on `:8080` (override with `APP_PORT`).
 
-Health check:
+<div align="center">
+
+**Health check**
+
+</div>
 
 ```bash
 curl localhost:8080/healthz
@@ -93,9 +175,13 @@ curl localhost:8080/healthz
 # {"status":"unhealthy"}   with DB down
 ```
 
-## Database Schema
+---
+
+## Database schema
 
 ![ERD](docs/ERD.svg)
+
+---
 
 ## Testing
 
@@ -103,38 +189,86 @@ curl localhost:8080/healthz
 go test ./internal/auth/ -v
 ```
 
-tests:
+<details open>
+<summary><b>Integration</b> — real Postgres</summary>
 
-- **Integration** (`internal/auth/repository*.go`,
-  `internal/tickets/repository_test.go`) — real Postgres. Signup transaction
-  rollback, refresh-token rotation and reuse, and (tickets) 20 concurrent
-  creates produce numbers 1–20 with no gaps or duplicates, and a failed
-  create leaves no gap in the per-org numbering.
+- Signup transaction rollback
+- Refresh-token rotation and reuse
+- (Tickets) 20 concurrent creates produce numbers 1–20 with no gaps or
+  duplicates; a failed create leaves no gap in the per-org numbering
 
-- **Unit** (`internal/auth/service_test.go`) — use a fake `Repo`, no database.
-  Prove signup validation and normalization, identical errors for unknown email
-  and wrong password (timing-safe dummy bcrypt), org selection (single / multi
-  without slug / multi with slug), reuse detection triggering family revocation,
-  unknown tokens not triggering it, and logout revoking by hash.
-The service tests exist because `Service` depends on the `auth.Repo` interface,
-not the concrete `*Repository`. Production injects the real repo; tests inject
-a fake. That's what makes the service testable without a database.
+</details>
 
-- **Tokens** (`internal/auth/tokens_test.go`) — use a test secret, no database.
-  Prove the access-token round trip, expiry rejection, tamper rejection,
-  `alg: none` rejection, wrong-secret rejection, and refresh-token uniqueness
-  and hashing.
+<details>
+<summary><b>Unit</b> — fake <code>Repo</code>, no database</summary>
+
+- Signup validation and normalization
+- Identical errors for unknown email and wrong password (timing-safe dummy bcrypt)
+- Org selection (single / multi without slug / multi with slug)
+- Reuse detection triggering family revocation
+- Unknown tokens not triggering it
+- Logout revoking by hash
+
+The service tests exist because `Service` depends on the `auth.Repo`
+interface, not the concrete `*Repository`. Production injects the real repo;
+tests inject a fake. That's what makes the service testable without a
+database.
+
+</details>
+
+<details>
+<summary><b>Tokens</b> — real JWT signing, no database</summary>
+
+- Access-token round trip
+- Expiry rejection
+- Tamper rejection
+- `alg: none` rejection
+- Wrong-secret rejection
+- Refresh-token uniqueness and hashing
+
 The token tests run real JWT signing and verification — no mocks. They prove
 the security properties (algorithm pinning, expiry required, tamper detection)
 actually hold, not just that the code was written.
 
-- **Tickets** (`internal/tickets/tickets_test.go`) - CanTransition(from, to) via map-of-maps; closed is terminal
-27 table-driven sub-tests, written before the implementation (TDD)
+</details>
+
+<details>
+<summary><b>Tickets</b> — <code>CanTransition(from, to)</code>, table-driven</summary>
+
+- Map-of-maps transition table
+- `closed` is terminal
+- 27 table-driven sub-tests, written before the implementation (TDD)
+
+</details>
+
+<div align="center">
 
 All 32 tests pass without a database except the two integration files
 (`repository_test.go`, `repository_tokens_test.go`), which need Postgres.
+
+</div>
 
 The auth cycle was also verified end to end with `curl`: login returns a
 token pair, `/v1/me` accepts the access token and rejects requests without
 one, refresh rotates and replaying the old token returns 401, logout returns
 204, and wrong-password / unknown-email return **identical** 401 responses.
+
+---
+
+## Pagination
+
+Ticket listing uses **keyset pagination**. Pass `?limit=N&cursor=<opaque>`.
+The response includes `next_cursor`; absent means last page.
+
+<div align="center">
+
+<table>
+<tr><th align="left">Parameter</th><th align="left">Meaning</th></tr>
+<tr><td><code>limit</code></td><td>Page size. Caps at <b>100</b>.</td></tr>
+<tr><td><code>cursor</code></td><td>Opaque continuation token from the previous <code>next_cursor</code>. Do not parse it.</td></tr>
+<tr><td><code>next_cursor</code></td><td>Returned by the server. <b>Absent</b> = last page.</td></tr>
+</table>
+
+</div>
+
+Order is `created_at DESC, id DESC`.
