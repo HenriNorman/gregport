@@ -15,8 +15,11 @@ detection, and the Login/Refresh/Logout services are implemented and tested.
 The HTTP layer — login, refresh, logout, `/v1/me`, and the `Authenticate` /
 `RequireRole` middleware — lands in the next slice.
 
-Everything else in the schema (tickets, comments, SLA, notifications, webhooks,
+Everything else in the schema (comments, SLA, notifications, webhooks,
 API keys, invitations) is defined but not yet exposed.
+
+tickets models and handlers are initiated.
+new migrations added, tickets table altered and now have a version column
 
 tickets: status state machine with table-driven test added.
 
