@@ -38,8 +38,10 @@ tickets: status state machine with table-driven test added.
 cmd/api/                     entry point (main.go)
 internal/
   auth/                      signup + tokens: models, repo, service, handler,
-                             errors, tokens, tests (incl. repository_tokens_test.go)
-  middleware/                RequestID, Recovery
+                             errors, tokens, tests (incl. repository_tokens_test.go).
+  tickets/                   ticket domain: models, repo, transitions, events,
+                             tests (service + policy land next).
+  middleware/                RequestID, Recovery.
   platform/
     config/                  Config + Load (env)
     database/                pgxpool + WithTx
@@ -103,13 +105,12 @@ go test ./internal/auth/ -v
 
 tests:
 
-- **Integration** (`internal/auth/repository_test.go`,
-  `internal/auth/repository_tokens_test.go`) — run against a real Postgres.
-  The signup tests prove the transaction rolls back (a duplicate-email signup
-  leaves no orphan organization row). The token tests prove rotation is atomic,
-  replaying a spent refresh token fails, reuse detection revokes the whole
-  family, soft-deleted orgs block both login and rotation, and expired tokens
-  are rejected.
+- **Integration** (`internal/auth/repository*.go`,
+  `internal/tickets/repository_test.go`) — real Postgres. Signup transaction
+  rollback, refresh-token rotation and reuse, and (tickets) 20 concurrent
+  creates produce numbers 1–20 with no gaps or duplicates, and a failed
+  create leaves no gap in the per-org numbering.
+
 - **Unit** (`internal/auth/service_test.go`) — use a fake `Repo`, no database.
   Prove signup validation and normalization, identical errors for unknown email
   and wrong password (timing-safe dummy bcrypt), org selection (single / multi
@@ -126,6 +127,7 @@ a fake. That's what makes the service testable without a database.
 The token tests run real JWT signing and verification — no mocks. They prove
 the security properties (algorithm pinning, expiry required, tamper detection)
 actually hold, not just that the code was written.
+
 - **Tickets** (`internal/tickets/tickets_test.go`) - CanTransition(from, to) via map-of-maps; closed is terminal
 27 table-driven sub-tests, written before the implementation (TDD)
 
