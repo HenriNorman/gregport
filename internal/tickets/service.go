@@ -105,6 +105,9 @@ func (s *Service) CreateComment(ctx context.Context, p requestctx.Principal, num
 }
 
 func (s *Service) ListComments(ctx context.Context, p requestctx.Principal, number int64, includeInternal bool) ([]Comment, error) {
+	if _, err := s.repo.GetTicket(ctx, p.OrgID, number); err != nil {
+		return nil, err
+	}
 	return s.repo.ListComments(ctx, p.OrgID, number, includeInternal)
 }
 

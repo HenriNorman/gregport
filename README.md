@@ -29,9 +29,10 @@ tested. The HTTP layer lands in the next slice.
 
 Tickets: create (single transaction across counter, customer, ticket, comment,
 event), list (keyset pagination), get/update (optimistic concurrency via
-`If-Match` on `version`), soft delete (admin/owner), and comments are
-implemented and tested at the repository layer. The status state machine is
-table-driven. HTTP-level tenant and concurrency tests land next.
+`If-Match` on `version`), soft delete (admin/owner only), and comments are
+implemented and tested. The status state machine is table-driven. The tenant
+suite proves every ticket endpoint returns 404 for another org's ticket; 50
+tests cover the domain.
 
 ---
 
@@ -86,9 +87,13 @@ table-driven. HTTP-level tenant and concurrency tests land next.
 - `pagination_test.go`
 - `update_test.go`
 - `transitions_test.go`
+- `tenant_test.go`
+- `authz_test.go`
+- `rollback_test.go`
 - `testhelpers_test.go`
 
 </details>
+
 <details>
 <summary><code>internal/middleware/</code></summary>
 
