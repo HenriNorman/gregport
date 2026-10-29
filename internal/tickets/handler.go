@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+	"encoding/json"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -62,6 +63,102 @@ type CommentDTO struct {
 type TicketListResponse struct {
 	Tickets    []TicketDTO `json:"tickets"`
 	NextCursor string      `json:"next_cursor,omitempty"`
+}
+
+// --- Teams ---
+
+type CreateTeamRequest struct {
+	Name string `json:"name"`
+}
+
+type UpdateTeamRequest struct {
+	Name string `json:"name"`
+}
+
+type TeamDTO struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type TeamListResponse struct {
+	Teams []TeamDTO `json:"teams"`
+}
+
+// --- Assignment ---
+
+type AssignTicketRequest struct {
+	AssigneeID *string `json:"assignee_id,omitempty"`
+	TeamID     *string `json:"team_id,omitempty"`
+	Auto       bool    `json:"auto,omitempty"`
+}
+
+// --- Tags ---
+
+type CreateTagRequest struct {
+	Name string `json:"name"`
+}
+
+type TagDTO struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type TagListResponse struct {
+	Tags []TagDTO `json:"tags"`
+}
+
+// --- Events ---
+
+type TicketEventDTO struct {
+	ID        string          `json:"id"`
+	EventType string          `json:"event_type"`
+	ActorType string          `json:"actor_type"`
+	ActorID   *string         `json:"actor_id,omitempty"`
+	Data      json.RawMessage `json:"data"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+type TicketEventListResponse struct {
+	Events     []TicketEventDTO `json:"events"`
+	NextCursor string           `json:"next_cursor,omitempty"`
+}
+
+// --- Merge ---
+
+type MergeTicketRequest struct {
+	IntoNumber int64 `json:"into_number"`
+}
+
+// --- Macros ---
+
+type CreateMacroRequest struct {
+	Name    string          `json:"name"`
+	Actions MacroActionsDTO `json:"actions"`
+}
+
+type UpdateMacroRequest struct {
+	Name    string          `json:"name"`
+	Actions MacroActionsDTO `json:"actions"`
+}
+
+type MacroActionsDTO struct {
+	SetStatus   string   `json:"set_status,omitempty"`
+	SetPriority string   `json:"set_priority,omitempty"`
+	AddTags     []string `json:"add_tags,omitempty"`
+	Comment     string   `json:"comment,omitempty"`
+}
+
+type MacroDTO struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Actions   MacroActionsDTO `json:"actions"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+type MacroListResponse struct {
+	Macros []MacroDTO `json:"macros"`
 }
 
 // --- Handler ---

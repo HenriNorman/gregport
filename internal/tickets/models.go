@@ -71,3 +71,40 @@ type Actor struct {
 	Type string     // "user", "customer", "api_key", "system"
 	ID   *uuid.UUID
 }
+
+type Team struct{
+	ID uuid.UUID
+	OrgID uuid.UUID
+	Name string
+	CreatedAt time.Time
+}
+
+type TeamMember struct {
+	TeamID 		uuid.UUID 
+	UserID 		uuid.UUID
+	LastAssignedAt 	*time.Time
+}
+
+type Tag struct{
+	ID 		uuid.UUID
+	OrgID 		uuid.UUID
+	Namse 		string 
+	CreatedAt 	time.Time 
+}
+
+type Macro struct{
+	ID 		uuid.UUID
+	OrgID 		uuid.UUID
+	Name 		string 
+	Actions 	[]byte 
+	CreatedBy 	uuid.UUID
+	CreatedAT 	time.Time
+	UpdatedAt 	time.Time
+}
+
+type MacroActions struct {
+	SetStatus string   `json:"set_status,omitempty"`
+	SetPriority string `json:"set_priority,omitempty"`
+	AddTags   []string `json:"add_tags,omitempty"`
+	Comment   string   `json:"comment,omitempty"`
+}
