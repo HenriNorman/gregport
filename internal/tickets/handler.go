@@ -479,7 +479,153 @@ func mapTicketError(err error) *httpx.APIError {
 			Code:    "forbidden",
 			Message: "insufficient permissions",
 		}
+	case errors.Is(err, ErrTeamNotFound):
+		return &httpx.APIError{
+			Status: http.StatusNotFound, Code: "team_not_found",
+			Message: "team not found",
+		}
+	case errors.Is(err, ErrTeamNameTaken):
+		return httpx.Conflict("team_name_taken", "a team with that name already exists")
+	case errors.Is(err, ErrMemberNotInOrg):
+		return httpx.Unprocessable("member_not_in_org", "user is not a member of this organization")
 	default:
 		return httpx.InternalError(err)
+	}
+}
+
+func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	var req CreateTeamRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+	t, err := h.svc.CreateTeam(r.Context(), p, req.Name)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	_ = httpx.WriteJSON(w, http.StatusCreated, toTeamDTO(t))
+}
+
+func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	teams, err := h.svc.ListTeams(r.Context(), p)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	dtos := make([]TeamDTO, 0, len(teams))
+	for _, t := range teams {
+		dtos = append(dtos, toTeamDTO(t))
+	}
+	_ = httpx.WriteJSON(w, http.StatusOK, TeamListResponse{Teams: dtos})
+}
+
+func (h *Handler) UpdateTeam(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	teamID, err := parseUUIDParam(r, "id")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
+		return
+	}
+	var req UpdateTeamRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+	t, err := h.svc.UpdateTeam(r.Context(), p, teamID, req.Name)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	_ = httpx.WriteJSON(w, http.StatusOK, toTeamDTO(t))
+}
+
+func (h *Handler) DeleteTeam(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	teamID, err := parseUUIDParam(r, "id")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
+		return
+	}
+	if err := h.svc.DeleteTeam(r.Context(), p, teamID); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) AddTeamMember(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	teamID, err := parseUUIDParam(r, "id")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
+		return
+	}
+	userID, err := parseUUIDParam(r, "userId")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
+		return
+	}
+	if err := h.svc.AddTeamMember(r.Context(), p, teamID, userID); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) RemoveTeamMember(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	teamID, err := parseUUIDParam(r, "id")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
+		return
+	}
+	userID, err := parseUUIDParam(r, "userId")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
+		return
+	}
+	if err := h.svc.RemoveTeamMember(r.Context(), p, teamID, userID); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func parseUUIDParam(r *http.Request, name string) (uuid.UUID, error) {
+	return uuid.Parse(chi.URLParam(r, name))
+}
+
+func toTeamDTO(t Team) TeamDTO {
+	return TeamDTO{
+		ID:        t.ID.String(),
+		Name:      t.Name,
+		CreatedAt: t.CreatedAt,
 	}
 }

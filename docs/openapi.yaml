@@ -1,0 +1,539 @@
+openapi: 3.0.3
+info:
+  title: gregport API
+  version: 1.0.0
+  description: |
+    Multi-tenant support ticketing SaaS.
+
+    ## Authentication
+
+    All endpoints except `/v1/auth/*` and `/healthz` require
+    `Authorization: Bearer <access_token>`. The access token is a JWT
+    containing `sub` (user id), `org` (org id), and `role`. Missing, expired,
+    or invalid tokens return 401.
+
+    ## Authorization
+
+    Roles are `owner`, `admin`, `agent`. Only `DELETE /v1/tickets/{number}`
+    is role-gated (owner/admin). Internal notes on comments require an agent
+    role or above. Every other authenticated endpoint is open to any member
+    of the org.
+
+    ## Tenant isolation
+
+    `org_id` comes only from the token, never from the URL, body, or query
+    string. A ticket in another org returns 404, never 403 — the API never
+    confirms existence in someone else's tenant.
+servers:
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - name: auth
+    description: Signup, login, token refresh, logout
+  - name: me
+    description: The authenticated principal
+  - name: tickets
+    description: Ticket CRUD, state machine, optimistic concurrency
+  - name: comments
+    description: Ticket comments (public replies and internal notes)
+
+paths:
+  /healthz:
+    get:
+      tags: [me]
+      summary: Liveness and database check
+      operationId: healthz
+      security: []
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+        "503":
+          description: Database unreachable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: unhealthy }
+
+  /v1/auth/signup:
+    post:
+      tags: [auth]
+      summary: Create an organization, user, and owner membership
+      operationId: signup
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignupRequest" }
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignupResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Log in and receive an access token and a refresh token
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Token pair
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      summary: Rotate the refresh token and issue a new token pair
+      operationId: refresh
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200":
+          description: New token pair
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Revoke the refresh token's whole family
+      operationId: logout
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LogoutRequest" }
+      responses:
+        "204":
+          description: Logged out
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /v1/me:
+    get:
+      tags: [me]
+      summary: Return the authenticated principal
+      operationId: me
+      responses:
+        "200":
+          description: The principal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/tickets:
+    post:
+      tags: [tickets]
+      summary: Create a ticket and its first customer comment
+      description: |
+        Any member of the org may create a ticket. The requester is upserted
+        by `(org_id, requester_email)`. The ticket number is assigned per org
+        inside the same transaction as the ticket insert, so a failed create
+        leaves no gap in the sequence.
+      operationId: createTicket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTicketRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+    get:
+      tags: [tickets]
+      summary: List tickets (keyset pagination)
+      description: |
+        Any member of the org may list tickets. Results are scoped to the
+        caller's org. Order is `created_at DESC, id DESC`; the cursor is
+        opaque and stable under concurrent inserts.
+      operationId: listTickets
+      parameters:
+        - { in: query, name: limit,     schema: { type: integer, default: 25, maximum: 100 }, description: Page size }
+        - { in: query, name: cursor,    schema: { type: string }, description: Opaque cursor from a previous next_cursor }
+        - { in: query, name: status,    schema: { type: string, enum: [new, open, pending, solved, closed] } }
+        - { in: query, name: priority,  schema: { type: string, enum: [low, normal, high, urgent] } }
+        - { in: query, name: assignee_id,  schema: { type: string, format: uuid } }
+        - { in: query, name: requester_id, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: A page of tickets
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TicketList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /v1/tickets/{number}:
+    parameters:
+      - $ref: "#/components/parameters/TicketNumber"
+    get:
+      tags: [tickets]
+      summary: Fetch a ticket by its per-org number
+      description: |
+        Any member of the org may read a ticket. A ticket in another org
+        returns 404, never 403.
+      operationId: getTicket
+      responses:
+        "200":
+          description: The ticket
+          headers:
+            ETag:
+              description: Quoted version, use as If-Match on PATCH
+              schema: { type: string, example: '"3"' }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [tickets]
+      summary: Update status, priority, or subject
+      description: |
+        Any member of the org may update a ticket. Status changes are checked
+        against the state machine (`new -> open -> pending -> solved -> closed`,
+        with `solved -> open` as reopen; `closed` is terminal). A stale
+        `If-Match` returns 412; a missing one returns 428. A ticket in another
+        org returns 404, never 403.
+      operationId: updateTicket
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string, example: '"3"' }
+          description: The ticket's current ETag. Missing -> 428, stale -> 412.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateTicketRequest" }
+      responses:
+        "200":
+          description: Updated
+          headers:
+            ETag:
+              schema: { type: string, example: '"4"' }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+    delete:
+      tags: [tickets]
+      summary: Soft delete a ticket (admin and owner only)
+      description: |
+        Requires role `owner` or `admin`. Agents receive 403.
+        A ticket in another org returns 404, never 403.
+      operationId: deleteTicket
+      x-required-role: [owner, admin]
+      responses:
+        "204":
+          description: Deleted
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/tickets/{number}/comments:
+    parameters:
+      - $ref: "#/components/parameters/TicketNumber"
+    get:
+      tags: [comments]
+      summary: List comments on a ticket
+      description: |
+        Any member of the org may read comments. A ticket in another org
+        returns 404, never 403. Internal notes are excluded unless
+        `include_internal=true`.
+      operationId: listComments
+      parameters:
+        - in: query
+          name: include_internal
+          schema: { type: boolean, default: false }
+          description: Include agent-only internal notes
+      responses:
+        "200":
+          description: Comments in chronological order
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  comments:
+                    type: array
+                    items: { $ref: "#/components/schemas/Comment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [comments]
+      summary: Add a comment to a ticket
+      description: |
+        Any member of the org may add a public comment. Setting
+        `is_internal: true` (an agent-only internal note) requires role
+        `owner`, `admin`, or `agent`. A ticket in another org returns 404,
+        never 403.
+      operationId: createComment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateCommentRequest" }
+      responses:
+        "201":
+          description: Comment created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    TicketNumber:
+      in: path
+      name: number
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+      description: The per-org ticket number (e.g. 1042)
+
+  responses:
+    BadRequest:
+      description: Malformed request
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unauthorized:
+      description: Missing, malformed, expired, or invalid token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Forbidden:
+      description: |
+        Authenticated, but the role is not allowed to perform this operation.
+        - `DELETE /v1/tickets/{number}` requires role `owner` or `admin`.
+        - `POST /v1/tickets/{number}/comments` with `is_internal: true`
+          requires role `owner`, `admin`, or `agent`.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    NotFound:
+      description: Not found, or belongs to another org
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Conflict:
+      description: Unique constraint violation
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    PreconditionFailed:
+      description: If-Match version is stale
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    PreconditionRequired:
+      description: If-Match header is missing
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unprocessable:
+      description: Valid JSON but fails validation
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Internal:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:    { type: string, example: not_found }
+            message: { type: string, example: ticket not found }
+
+    SignupRequest:
+      type: object
+      required: [org_name, name, email, password]
+      properties:
+        org_name: { type: string, example: Acme }
+        name:     { type: string, example: Henri }
+        email:    { type: string, format: email, example: h@acme.com }
+        password: { type: string, minLength: 8, maxLength: 72, example: correct-horse-battery }
+
+    SignupResponse:
+      type: object
+      properties:
+        user:
+          type: object
+          properties:
+            id:    { type: string, format: uuid }
+            email: { type: string, format: email }
+            name:  { type: string }
+        organization:
+          type: object
+          properties:
+            id:   { type: string, format: uuid }
+            name: { type: string }
+            slug: { type: string }
+        role: { type: string, enum: [owner, admin, agent] }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:    { type: string, format: email }
+        password: { type: string }
+        org_slug: { type: string, description: Required when the user belongs to more than one org }
+
+    TokenResponse:
+      type: object
+      properties:
+        access_token:  { type: string }
+        refresh_token: { type: string }
+        expires_in:    { type: integer, description: Access token lifetime in seconds, example: 900 }
+        user_id:       { type: string, format: uuid }
+        org_id:        { type: string, format: uuid }
+        role:          { type: string, enum: [owner, admin, agent] }
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string }
+
+    LogoutRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string }
+
+    MeResponse:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        org_id:  { type: string, format: uuid }
+        role:    { type: string, enum: [owner, admin, agent] }
+
+    Requester:
+      type: object
+      properties:
+        email: { type: string, format: email }
+        name:  { type: string }
+
+    Ticket:
+      type: object
+      properties:
+        number:    { type: integer, format: int64, example: 1042 }
+        id:        { type: string, format: uuid }
+        subject:   { type: string }
+        status:    { type: string, enum: [new, open, pending, solved, closed] }
+        priority:  { type: string, enum: [low, normal, high, urgent] }
+        requester: { $ref: "#/components/schemas/Requester" }
+        version:   { type: integer, description: Optimistic concurrency version, also the ETag }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    TicketList:
+      type: object
+      properties:
+        tickets:
+          type: array
+          items: { $ref: "#/components/schemas/Ticket" }
+        next_cursor:
+          type: string
+          description: Opaque cursor for the next page; absent on the last page
+
+    CreateTicketRequest:
+      type: object
+      required: [requester_email, subject, body]
+      properties:
+        requester_email: { type: string, format: email }
+        requester_name:  { type: string }
+        subject:         { type: string, maxLength: 500 }
+        body:            { type: string, maxLength: 20000, description: First message, plain text or Markdown }
+        priority:        { type: string, enum: [low, normal, high, urgent], default: normal }
+
+    UpdateTicketRequest:
+      type: object
+      properties:
+        status:   { type: string, enum: [new, open, pending, solved, closed] }
+        priority: { type: string, enum: [low, normal, high, urgent] }
+        subject:  { type: string, maxLength: 500 }
+
+    CreateCommentRequest:
+      type: object
+      required: [body]
+      properties:
+        body:        { type: string, maxLength: 20000, description: Plain text or Markdown, never rendered as raw HTML }
+        is_internal: { type: boolean, default: false, description: Internal notes are agent-only; requires role owner/admin/agent }
+
+    Comment:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        body:        { type: string }
+        is_internal: { type: boolean }
+        author_type: { type: string, enum: [user, customer, system] }
+        created_at:  { type: string, format: date-time }
+
+security:
+  - BearerAuth: []

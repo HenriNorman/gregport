@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 )
 
@@ -125,4 +126,51 @@ func validPriority(s string) bool {
 		return true
 	}
 	return false
+}
+
+func (s *Service) CreateTeam(ctx context.Context, p requestctx.Principal, name string) (Team, error) {
+	if !CanManageTeams(p) {
+		return Team{}, ErrForbidden
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 100 {
+		return Team{}, ErrInvalidInput
+	}
+	return s.repo.CreateTeam(ctx, p.OrgID, name)
+}
+
+func (s *Service) ListTeams(ctx context.Context, p requestctx.Principal) ([]Team, error) {
+	return s.repo.ListTeams(ctx, p.OrgID)
+}
+
+func (s *Service) UpdateTeam(ctx context.Context, p requestctx.Principal, teamID uuid.UUID, name string) (Team, error) {
+	if !CanManageTeams(p) {
+		return Team{}, ErrForbidden
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 100 {
+		return Team{}, ErrInvalidInput
+	}
+	return s.repo.UpdateTeam(ctx, p.OrgID, teamID, name)
+}
+
+func (s *Service) DeleteTeam(ctx context.Context, p requestctx.Principal, teamID uuid.UUID) error {
+	if !CanManageTeams(p) {
+		return ErrForbidden
+	}
+	return s.repo.DeleteTeam(ctx, p.OrgID, teamID)
+}
+
+func (s *Service) AddTeamMember(ctx context.Context, p requestctx.Principal, teamID, userID uuid.UUID) error {
+	if !CanManageTeams(p) {
+		return ErrForbidden
+	}
+	return s.repo.AddTeamMember(ctx, p.OrgID, teamID, userID)
+}
+
+func (s *Service) RemoveTeamMember(ctx context.Context, p requestctx.Principal, teamID, userID uuid.UUID) error {
+	if !CanManageTeams(p) {
+		return ErrForbidden
+	}
+	return s.repo.RemoveTeamMember(ctx, p.OrgID, teamID, userID)
 }

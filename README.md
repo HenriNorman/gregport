@@ -16,6 +16,7 @@ tickets, comments, SLA policies, notifications, and webhooks.
 | HTTP layer (login, refresh, logout, `/v1/me`, `Authenticate`, `RequireRole`) | Next slice |
 | Tickets domain | Complete — create, list, get, update, delete, comments; state machine, keyset pagination, optimistic concurrency |
 | Comments · SLA · notifications · webhooks · API keys · invitations | Schema defined, not exposed |
+| Teams | Complete — create, list, update, delete; membership add/remove (admin/owner) |
 
 </div>
 

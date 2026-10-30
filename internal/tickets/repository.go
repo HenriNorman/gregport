@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/HenriNorman/gregport/internal/platform/database"
 )
 
@@ -492,4 +492,139 @@ func (r *Repository) ListComments(ctx context.Context, orgID uuid.UUID, number i
 		return nil, fmt.Errorf("rows: %w", err)
 	}
 	return out, nil
+}
+
+func (r *Repository) CreateTeam(ctx context.Context, orgID uuid.UUID, name string) (Team, error) {
+	var t Team
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO teams (org_id, name) VALUES ($1, $2)
+		 RETURNING id, org_id, name, created_at`,
+		orgID, name,
+	).Scan(&t.ID, &t.OrgID, &t.Name, &t.CreatedAt)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return Team{}, ErrTeamNameTaken
+		}
+		return Team{}, fmt.Errorf("create team: %w", err)
+	}
+	return t, nil
+}
+
+func (r *Repository) ListTeams(ctx context.Context, orgID uuid.UUID) ([]Team, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, org_id, name, created_at
+		 FROM teams WHERE org_id = $1 ORDER BY name`,
+		orgID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list teams: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Team
+	for rows.Next() {
+		var t Team
+		if err := rows.Scan(&t.ID, &t.OrgID, &t.Name, &t.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan team: %w", err)
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
+
+func (r *Repository) UpdateTeam(ctx context.Context, orgID, teamID uuid.UUID, name string) (Team, error) {
+	var t Team
+	err := r.pool.QueryRow(ctx,
+		`UPDATE teams SET name = $3
+		 WHERE org_id = $1 AND id = $2
+		 RETURNING id, org_id, name, created_at`,
+		orgID, teamID, name,
+	).Scan(&t.ID, &t.OrgID, &t.Name, &t.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Team{}, ErrTeamNotFound
+		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return Team{}, ErrTeamNameTaken
+		}
+		return Team{}, fmt.Errorf("update team: %w", err)
+	}
+	return t, nil
+}
+
+func (r *Repository) DeleteTeam(ctx context.Context, orgID, teamID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM teams WHERE org_id = $1 AND id = $2`,
+		orgID, teamID,
+	)
+	if err != nil {
+		return fmt.Errorf("delete team: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTeamNotFound
+	}
+	return nil
+}
+
+// AddTeamMember verifies org membership and inserts in one transaction.
+// The membership check is in the same query as the insert, so a user id
+// from the client is never trusted on its own.
+func (r *Repository) AddTeamMember(ctx context.Context, orgID, teamID, userID uuid.UUID) error {
+	return database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
+		var teamExists bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM teams WHERE org_id = $1 AND id = $2)`,
+			orgID, teamID,
+		).Scan(&teamExists); err != nil {
+			return fmt.Errorf("check team: %w", err)
+		}
+		if !teamExists {
+			return ErrTeamNotFound
+		}
+
+		var isMember bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS (
+			   SELECT 1 FROM memberships
+			   WHERE org_id = $1 AND user_id = $2
+			 )`,
+			orgID, userID,
+		).Scan(&isMember); err != nil {
+			return fmt.Errorf("check membership: %w", err)
+		}
+		if !isMember {
+			return ErrMemberNotInOrg
+		}
+
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO team_members (team_id, user_id)
+			 VALUES ($1, $2)
+			 ON CONFLICT (team_id, user_id) DO NOTHING`,
+			teamID, userID,
+		); err != nil {
+			return fmt.Errorf("insert team member: %w", err)
+		}
+		return nil
+	})
+}
+
+func (r *Repository) RemoveTeamMember(ctx context.Context, orgID, teamID, userID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM team_members
+		 WHERE team_id = (SELECT id FROM teams WHERE org_id = $1 AND id = $2)
+		   AND user_id = $3`,
+		orgID, teamID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("remove team member: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTeamNotFound
+	}
+	return nil
 }

@@ -6,3 +6,7 @@ import "github.com/HenriNorman/gregport/internal/platform/requestctx"
 func CanDelete(p requestctx.Principal) bool {
 	return p.Role == "owner" || p.Role == "admin"
 }
+
+func CanManageTeams(p requestctx.Principal) bool {
+	return p.Role == "owner" || p.Role == "admin"
+}

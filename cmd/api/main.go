@@ -82,6 +82,14 @@ func main() {
 				r.Get("/{number}/comments", ticketsHandler.ListComments)
 			})
 		})
+		r.Route("/teams", func(r chi.Router) {
+			r.With(auth.RequireRole("owner", "admin")).Post("/", ticketsHandler.CreateTeam)
+			r.Get("/", ticketsHandler.ListTeams)
+			r.With(auth.RequireRole("owner", "admin")).Patch("/{id}", ticketsHandler.UpdateTeam)
+			r.With(auth.RequireRole("owner", "admin")).Delete("/{id}", ticketsHandler.DeleteTeam)
+			r.With(auth.RequireRole("owner", "admin")).Put("/{id}/members/{userId}", ticketsHandler.AddTeamMember)
+			r.With(auth.RequireRole("owner", "admin")).Delete("/{id}/members/{userId}", ticketsHandler.RemoveTeamMember)
+		})
 	})
 
 	log.Printf("listening on :%s", cfg.AppPort)
