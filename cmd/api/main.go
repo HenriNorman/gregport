@@ -102,7 +102,8 @@ func main() {
 				r.With(auth.RequireRole("owner", "admin")).
 					Delete("/{number}", ticketsHandler.Delete)
 				r.Post("/{number}/assignment", ticketsHandler.Assign)
-
+				r.Put("/{number}/tags/{tag}", ticketsHandler.AttachTag)
+				r.Delete("/{number}/tags/{tag}", ticketsHandler.DetachTag)
 				r.Post("/{number}/comments", ticketsHandler.CreateComment)
 				r.Get("/{number}/comments", ticketsHandler.ListComments)
 			})
@@ -114,6 +115,10 @@ func main() {
 				r.With(auth.RequireRole("owner", "admin")).Delete("/{id}", ticketsHandler.DeleteTeam)
 				r.With(auth.RequireRole("owner", "admin")).Put("/{id}/members/{userId}", ticketsHandler.AddTeamMember)
 				r.With(auth.RequireRole("owner", "admin")).Delete("/{id}/members/{userId}", ticketsHandler.RemoveTeamMember)
+			})
+			r.Route("/tags", func(r chi.Router) {
+				r.Post("/", ticketsHandler.CreateTag)
+				r.Get("/", ticketsHandler.ListTags)
 			})
 		})
 	})

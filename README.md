@@ -13,6 +13,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Tickets | Complete — CRUD, comments, state machine, keyset pagination, optimistic concurrency |
 | Teams | Complete — CRUD and membership management |
 | Ticket assignment | Complete — manual (assignee or team) and round-robin (auto: true) |
+| Tags | Complete — create, list, attach, detach (idempotent) |
 | SLA, notifications, webhooks, API keys, invitations | Schema defined, not exposed |
 
 ### Authentication
@@ -307,6 +308,15 @@ The pick runs inside the same transaction as the ticket update, with `FOR UPDATE
 so concurrent auto-assigns to the same team do not both choose the same agent.
 The join on `memberships` excludes agents removed from the org. A team with no assignable members returns 422.
 
+- **Tags are lowercase and unique per org.** `POST /v1/tags` normalizes the
+  name (trim, lowercase) before insert; a duplicate in the same org returns
+  409. Attach and detach take the tag **name** in the URL, not the UUID, and
+  normalize it the same way before the lookup.
+- **Tag attach and detach are idempotent.** `ON CONFLICT DO NOTHING` on
+  attach, `DELETE` returning zero rows on detach — both return 204 with no
+  error. `ticket.tagged` and `ticket.untagged` fire only on an actual
+  change; a no-op writes no event.
+
 ### Pagination
 
 Ticket listing uses keyset pagination.
@@ -376,6 +386,10 @@ These tests use a real PostgreSQL database.
 - Duplicate team creation returns `409`.
 - Agent team-management attempt returns `403`.
 - Adding a cross-organization member returns `422`.
+- Tags: create lowercases and trims the name; duplicate per org returns 409;
+  attach and detach are idempotent (one event per actual change); attaching
+  a nonexistent tag returns 404; attaching a tag to another org's ticket
+  returns 404.
 
 ### Unit Tests
 

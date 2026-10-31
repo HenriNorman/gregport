@@ -168,6 +168,12 @@ definitions:
         example: false
         type: boolean
     type: object
+  tickets.CreateTagRequest:
+    properties:
+      name:
+        example: billing
+        type: string
+    type: object
   tickets.CreateTeamRequest:
     properties:
       name:
@@ -205,6 +211,22 @@ definitions:
       name:
         example: Henri
         type: string
+    type: object
+  tickets.TagDTO:
+    properties:
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      name:
+        example: billing
+        type: string
+    type: object
+  tickets.TagListResponse:
+    properties:
+      tags:
+        items:
+          $ref: '#/definitions/tickets.TagDTO'
+        type: array
     type: object
   tickets.TeamDTO:
     properties:
@@ -472,6 +494,65 @@ paths:
       summary: Return the authenticated principal
       tags:
       - me
+  /v1/tags:
+    get:
+      description: Any member of the org may list tags.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tickets.TagListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: List tags in the org
+      tags:
+      - tags
+    post:
+      consumes:
+      - application/json
+      description: Any member of the org may create a tag. Names are lowercased and
+        trimmed. Unique per org.
+      parameters:
+      - description: Tag payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tickets.CreateTagRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/tickets.TagDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "409":
+          description: Tag name already exists in this org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Create a tag
+      tags:
+      - tags
   /v1/teams:
     get:
       description: Any member of the org may list teams.
@@ -1082,6 +1163,80 @@ paths:
       summary: Add a comment to a ticket
       tags:
       - comments
+  /v1/tickets/{number}/tags/{tag}:
+    delete:
+      description: 'Any member of the org may detach a tag. Idempotent: a second detach
+        of a tag that is not attached writes no event and returns 204.'
+      parameters:
+      - description: Per-org ticket number
+        in: path
+        name: number
+        required: true
+        type: string
+      - description: Tag name (lowercased)
+        in: path
+        name: tag
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Ticket or tag not found, or belongs to another org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Detach a tag from a ticket
+      tags:
+      - tags
+    put:
+      description: 'Any member of the org may attach a tag. Idempotent: a second attach
+        of the same tag writes no event and returns 204. The tag must already exist
+        in the org; attach does not create it.'
+      parameters:
+      - description: Per-org ticket number
+        in: path
+        name: number
+        required: true
+        type: string
+      - description: Tag name (lowercased)
+        in: path
+        name: tag
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Ticket or tag not found, or belongs to another org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Attach a tag to a ticket
+      tags:
+      - tags
 schemes:
 - http
 securityDefinitions:

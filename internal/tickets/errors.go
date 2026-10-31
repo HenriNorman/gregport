@@ -14,4 +14,6 @@ var (
 	ErrMemberNotInOrg 	= errors.New("user is not a member of this organization")
 	ErrAssigneeNotAgent 	= errors.New("assignee must be an org member with agent role or higher")
 	ErrNoTeamMembers = errors.New("team has no assignable members")
+	ErrTagNotFound  = errors.New("tag not found")
+	ErrTagNameTaken = errors.New("tag name already taken")
 )

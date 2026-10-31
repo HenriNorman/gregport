@@ -220,3 +220,31 @@ func (s *Service) AssignTicket(ctx context.Context, p requestctx.Principal, numb
 		TeamID:     teamID,
 	})
 }
+
+func (s *Service) CreateTag(ctx context.Context, p requestctx.Principal, name string) (Tag, error) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" || len(name) > 50 {
+		return Tag{}, ErrInvalidInput
+	}
+	return s.repo.CreateTag(ctx, p.OrgID, name)
+}
+
+func (s *Service) ListTags(ctx context.Context, p requestctx.Principal) ([]Tag, error) {
+	return s.repo.ListTags(ctx, p.OrgID)
+}
+
+func (s *Service) AttachTag(ctx context.Context, p requestctx.Principal, number int64, tagName string) error {
+	name := strings.ToLower(strings.TrimSpace(tagName))
+	if name == "" {
+		return ErrInvalidInput
+	}
+	return s.repo.AttachTag(ctx, p.OrgID, number, name, Actor{Type: "user", ID: &p.UserID})
+}
+
+func (s *Service) DetachTag(ctx context.Context, p requestctx.Principal, number int64, tagName string) error {
+	name := strings.ToLower(strings.TrimSpace(tagName))
+	if name == "" {
+		return ErrInvalidInput
+	}
+	return s.repo.DetachTag(ctx, p.OrgID, number, name, Actor{Type: "user", ID: &p.UserID})
+}

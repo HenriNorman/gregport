@@ -856,3 +856,134 @@ func (r *Repository) AssignAuto(ctx context.Context, in AssignInput) (Ticket, er
 	}
 	return out, nil
 }
+
+func (r *Repository) CreateTag(ctx context.Context, orgID uuid.UUID, name string) (Tag, error) {
+	var t Tag
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO tags (org_id, name) VALUES ($1, $2)
+		 RETURNING id, org_id, name, created_at`,
+		orgID, name,
+	).Scan(&t.ID, &t.OrgID, &t.Name, &t.CreatedAt)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return Tag{}, ErrTagNameTaken
+		}
+		return Tag{}, fmt.Errorf("create tag: %w", err)
+	}
+	return t, nil
+}
+
+func (r *Repository) ListTags(ctx context.Context, orgID uuid.UUID) ([]Tag, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, org_id, name, created_at
+		 FROM tags WHERE org_id = $1 ORDER BY name`,
+		orgID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list tags: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Tag
+	for rows.Next() {
+		var t Tag
+		if err := rows.Scan(&t.ID, &t.OrgID, &t.Name, &t.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan tag: %w", err)
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
+
+// AttachTag adds a tag to a ticket by name. Idempotent: a second attach
+// writes no event and returns nil.
+func (r *Repository) AttachTag(ctx context.Context, orgID uuid.UUID, number int64, tagName string, actor Actor) error {
+	return database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
+		var ticketID uuid.UUID
+		if err := tx.QueryRow(ctx,
+			`SELECT id FROM tickets
+			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL`,
+			orgID, number,
+		).Scan(&ticketID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrTicketNotFound
+			}
+			return fmt.Errorf("find ticket: %w", err)
+		}
+
+		var tagID uuid.UUID
+		if err := tx.QueryRow(ctx,
+			`SELECT id FROM tags WHERE org_id = $1 AND name = $2`,
+			orgID, tagName,
+		).Scan(&tagID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrTagNotFound
+			}
+			return fmt.Errorf("find tag: %w", err)
+		}
+
+		tag, err := tx.Exec(ctx,
+			`INSERT INTO ticket_tags (ticket_id, tag_id) VALUES ($1, $2)
+			 ON CONFLICT (ticket_id, tag_id) DO NOTHING`,
+			ticketID, tagID,
+		)
+		if err != nil {
+			return fmt.Errorf("insert ticket_tag: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return nil
+		}
+
+		return Record(ctx, tx, orgID, ticketID, actor, "ticket.tagged", map[string]any{
+			"tag": tagName,
+		})
+	})
+}
+
+// DetachTag removes a tag from a ticket by name. Idempotent: a second detach
+// writes no event and returns nil.
+func (r *Repository) DetachTag(ctx context.Context, orgID uuid.UUID, number int64, tagName string, actor Actor) error {
+	return database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
+		var ticketID uuid.UUID
+		if err := tx.QueryRow(ctx,
+			`SELECT id FROM tickets
+			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL`,
+			orgID, number,
+		).Scan(&ticketID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrTicketNotFound
+			}
+			return fmt.Errorf("find ticket: %w", err)
+		}
+
+		var tagID uuid.UUID
+		if err := tx.QueryRow(ctx,
+			`SELECT id FROM tags WHERE org_id = $1 AND name = $2`,
+			orgID, tagName,
+		).Scan(&tagID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrTagNotFound
+			}
+			return fmt.Errorf("find tag: %w", err)
+		}
+
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM ticket_tags WHERE ticket_id = $1 AND tag_id = $2`,
+			ticketID, tagID,
+		)
+		if err != nil {
+			return fmt.Errorf("delete ticket_tag: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return nil
+		}
+
+		return Record(ctx, tx, orgID, ticketID, actor, "ticket.untagged", map[string]any{
+			"tag": tagName,
+		})
+	})
+}

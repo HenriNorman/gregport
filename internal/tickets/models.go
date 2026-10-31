@@ -88,7 +88,7 @@ type TeamMember struct {
 type Tag struct{
 	ID 		uuid.UUID
 	OrgID 		uuid.UUID
-	Namse 		string 
+	Name 		string 
 	CreatedAt 	time.Time 
 }
 

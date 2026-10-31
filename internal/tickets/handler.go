@@ -110,6 +110,13 @@ func toTicketDTO(t Ticket) TicketDTO {
 	}
 }
 
+func toTagDTO(t Tag) TagDTO {
+	return TagDTO{
+		ID:   t.ID.String(),
+		Name: t.Name,
+	}
+}
+
 func toCommentDTO(c Comment) CommentDTO {
 	return CommentDTO{
 		ID:         c.ID.String(),
@@ -787,6 +794,134 @@ func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) {
 	_ = httpx.WriteJSON(w, http.StatusOK, toTicketDTO(tk))
 }
 
+// CreateTag creates a tag in the caller's org.
+//
+//	@Summary		Create a tag
+//	@Description	Any member of the org may create a tag. Names are lowercased and trimmed. Unique per org.
+//	@Tags			tags
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			body	body		CreateTagRequest	true	"Tag payload"
+//	@Success		201		{object}	TagDTO
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		409		{object}	httpx.APIError	"Tag name already exists in this org"
+//	@Failure		422		{object}	httpx.APIError
+//	@Router			/v1/tags [post]
+func (h *Handler) CreateTag(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	var req CreateTagRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+	t, err := h.svc.CreateTag(r.Context(), p, req.Name)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	_ = httpx.WriteJSON(w, http.StatusCreated, toTagDTO(t))
+}
+
+// ListTags lists tags in the caller's org.
+//
+//	@Summary		List tags in the org
+//	@Description	Any member of the org may list tags.
+//	@Tags			tags
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	TagListResponse
+//	@Failure		401	{object}	httpx.APIError
+//	@Router			/v1/tags [get]
+func (h *Handler) ListTags(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	tags, err := h.svc.ListTags(r.Context(), p)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	dtos := make([]TagDTO, 0, len(tags))
+	for _, t := range tags {
+		dtos = append(dtos, toTagDTO(t))
+	}
+	_ = httpx.WriteJSON(w, http.StatusOK, TagListResponse{Tags: dtos})
+}
+
+// AttachTag attaches a tag to a ticket by name.
+//
+//	@Summary		Attach a tag to a ticket
+//	@Description	Any member of the org may attach a tag. Idempotent: a second attach of the same tag writes no event and returns 204. The tag must already exist in the org; attach does not create it.
+//	@Tags			tags
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			number	path	string	true	"Per-org ticket number"
+//	@Param			tag		path	string	true	"Tag name (lowercased)"
+//	@Success		204		"No Content"
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		404		{object}	httpx.APIError	"Ticket or tag not found, or belongs to another org"
+//	@Router			/v1/tickets/{number}/tags/{tag} [put]
+func (h *Handler) AttachTag(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	number, err := parseNumber(r)
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		return
+	}
+	tagName := chi.URLParam(r, "tag")
+	if err := h.svc.AttachTag(r.Context(), p, number, tagName); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DetachTag removes a tag from a ticket by name.
+//
+//	@Summary		Detach a tag from a ticket
+//	@Description	Any member of the org may detach a tag. Idempotent: a second detach of a tag that is not attached writes no event and returns 204.
+//	@Tags			tags
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			number	path	string	true	"Per-org ticket number"
+//	@Param			tag		path	string	true	"Tag name (lowercased)"
+//	@Success		204		"No Content"
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		404		{object}	httpx.APIError	"Ticket or tag not found, or belongs to another org"
+//	@Router			/v1/tickets/{number}/tags/{tag} [delete]
+func (h *Handler) DetachTag(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	number, err := parseNumber(r)
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		return
+	}
+	tagName := chi.URLParam(r, "tag")
+	if err := h.svc.DetachTag(r.Context(), p, number, tagName); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- helpers ---
 
 func parseNumber(r *http.Request) (int64, error) {
@@ -878,6 +1013,13 @@ func mapTicketError(err error) *httpx.APIError {
 		return httpx.Unprocessable("assignee_not_agent", "assignee must be an org member with agent role or higher")
 	case errors.Is(err, ErrNoTeamMembers):
 		return httpx.Unprocessable("no_team_members", "team has no assignable members")
+	case errors.Is(err, ErrTagNotFound):
+		return &httpx.APIError{
+			Status: http.StatusNotFound, Code: "tag_not_found",
+			Message: "tag not found",
+		}
+	case errors.Is(err, ErrTagNameTaken):
+		return httpx.Conflict("tag_name_taken", "a tag with that name already exists")
 	default:
 		return httpx.InternalError(err)
 	}
