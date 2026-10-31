@@ -16,6 +16,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Tags | Complete — create, list, attach, detach (idempotent) |
 | SLA, notifications, webhooks, API keys, invitations | Schema defined, not exposed |
 | Watchers | Complete — add/remove (idempotent); assignee and agent commenters auto-watch |
+| Timeline | Complete — cursor-paginated ticket_events, oldest first |
 
 ### Authentication
 
@@ -318,6 +319,25 @@ The join on `memberships` excludes agents removed from the org. A team with no a
   error. `ticket.tagged` and `ticket.untagged` fire only on an actual
   change; a no-op writes no event.
 
+- **The ticket timeline is append-only and cursor-paginated oldest-first.**
+  `GET /v1/tickets/{number}/events` reads `ticket_events` joined to the
+  ticket by `(org_id, number)`. Order is `created_at ASC, id ASC` — a
+  timeline reads chronologically, unlike the ticket list. Cursor is opaque,
+  limit defaults to 50 and caps at 100. No code path issues `UPDATE` or
+  `DELETE` on `ticket_events`; the table is an append-only log.
+- **Event types and their `data` shapes.** The client switches on
+  `event_type`; each type carries a different JSON object in `data`:
+
+  | `event_type` | `data` fields |
+  |---|---|
+  | `ticket.created` | `number`, `subject`, `priority` |
+  | `ticket.status_changed` | `old`, `new` |
+  | `ticket.assigned` | `old_assignee_id`, `new_assignee_id`, `old_team_id`, `new_team_id`, `auto` (round-robin only) |
+  | `ticket.tagged` | `tag` |
+  | `ticket.untagged` | `tag` |
+  | `comment.added` | `comment_id`, `is_internal` |
+  | `ticket.deleted` | — |
+
 ### Pagination
 
 Ticket listing uses keyset pagination.
@@ -394,6 +414,9 @@ These tests use a real PostgreSQL database.
 - Watchers: add is idempotent; adding a non-member returns 422; remove is
   idempotent; removing a watcher from another org's ticket returns 404; an
   agent who comments is auto-added as a watcher.
+- Timeline: events appear in order (created, assigned, tagged, comment,
+  status); cursor pagination returns every event exactly once; another
+  org's ticket returns 404.
 
 ### Unit Tests
 

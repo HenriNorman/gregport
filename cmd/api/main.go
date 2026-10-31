@@ -106,6 +106,7 @@ func main() {
 				r.Delete("/{number}/tags/{tag}", ticketsHandler.DetachTag)
 				r.Put("/{number}/watchers/{userId}", ticketsHandler.AddWatcher)
 				r.Delete("/{number}/watchers/{userId}", ticketsHandler.RemoveWatcher)
+				r.Get("/{number}/events", ticketsHandler.ListEvents)
 				r.Post("/{number}/comments", ticketsHandler.CreateComment)
 				r.Get("/{number}/comments", ticketsHandler.ListComments)
 			})

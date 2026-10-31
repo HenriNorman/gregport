@@ -256,3 +256,10 @@ func (s *Service) AddWatcher(ctx context.Context, p requestctx.Principal, number
 func (s *Service) RemoveWatcher(ctx context.Context, p requestctx.Principal, number int64, userID uuid.UUID) error {
 	return s.repo.RemoveWatcher(ctx, p.OrgID, number, userID)
 }
+
+func (s *Service) ListEvents(ctx context.Context, p requestctx.Principal, number int64, cursor string, limit int) ([]TicketEvent, string, error) {
+	if _, err := s.repo.GetTicket(ctx, p.OrgID, number); err != nil {
+		return nil, "", err
+	}
+	return s.repo.ListTicketEvents(ctx, p.OrgID, number, cursor, limit)
+}

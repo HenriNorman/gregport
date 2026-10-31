@@ -287,6 +287,38 @@ definitions:
         example: 3
         type: integer
     type: object
+  tickets.TicketEventDTO:
+    properties:
+      actor_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      actor_type:
+        enum:
+        - user
+        - customer
+        - api_key
+        - system
+        example: user
+        type: string
+      created_at:
+        example: "2026-01-15T10:00:00Z"
+        type: string
+      event_type:
+        example: ticket.status_changed
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  tickets.TicketEventListResponse:
+    properties:
+      events:
+        items:
+          $ref: '#/definitions/tickets.TicketEventDTO'
+        type: array
+      next_cursor:
+        type: string
+    type: object
   tickets.TicketListResponse:
     properties:
       next_cursor:
@@ -1163,6 +1195,50 @@ paths:
       summary: Add a comment to a ticket
       tags:
       - comments
+  /v1/tickets/{number}/events:
+    get:
+      description: Any member of the org may read the timeline. Events are append-only
+        and returned oldest-first. Each event has event_type and an opaque data object
+        whose shape depends on the type. A ticket in another org returns 404, never
+        403.
+      parameters:
+      - description: Per-org ticket number
+        in: path
+        name: number
+        required: true
+        type: integer
+      - description: Page size (default 50, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Opaque cursor from a previous next_cursor
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tickets.TicketEventListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not found, or belongs to another org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: List the ticket timeline
+      tags:
+      - tickets
   /v1/tickets/{number}/tags/{tag}:
     delete:
       description: 'Any member of the org may detach a tag. Idempotent: a second detach
@@ -1237,6 +1313,84 @@ paths:
       summary: Attach a tag to a ticket
       tags:
       - tags
+  /v1/tickets/{number}/watchers/{userId}:
+    delete:
+      description: 'Any member of the org may remove a watcher. Idempotent: removing
+        a user who is not a watcher is a no-op, 204.'
+      parameters:
+      - description: Per-org ticket number
+        in: path
+        name: number
+        required: true
+        type: string
+      - description: User UUID
+        in: path
+        name: userId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Ticket not found, or belongs to another org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Remove a watcher from a ticket
+      tags:
+      - watchers
+    put:
+      description: 'Any member of the org may add a watcher. The user must already
+        be an org member; a user from another org returns 422. Idempotent: adding
+        an existing watcher is a no-op, 204.'
+      parameters:
+      - description: Per-org ticket number
+        in: path
+        name: number
+        required: true
+        type: string
+      - description: User UUID
+        in: path
+        name: userId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Ticket not found, or belongs to another org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: User is not a member of this org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Add a watcher to a ticket
+      tags:
+      - watchers
 schemes:
 - http
 securityDefinitions:

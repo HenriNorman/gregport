@@ -157,7 +157,7 @@ type TicketEventDTO struct {
 	EventType string          `json:"event_type" example:"ticket.status_changed"`
 	ActorType string          `json:"actor_type" example:"user" enums:"user,customer,api_key,system"`
 	ActorID   *string         `json:"actor_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440000"`
-	Data      json.RawMessage `json:"data"`
+	Data      json.RawMessage `json:"data" swaggerignore:"true"`
 	CreatedAt time.Time       `json:"created_at" example:"2026-01-15T10:00:00Z"`
 }
 
@@ -172,6 +172,24 @@ type MergeTicketRequest struct {
 	IntoNumber int64 `json:"into_number" example:"1043"`
 }
 
+func toTicketEventDTO(e TicketEvent) TicketEventDTO {
+	return TicketEventDTO{
+		ID:        e.ID.String(),
+		EventType: e.EventType,
+		ActorType: e.ActorType,
+		ActorID:   uuidPtrToString(e.ActorID),
+		Data:      json.RawMessage(e.Data),
+		CreatedAt: e.CreatedAt,
+	}
+}
+
+func uuidPtrToString(id *uuid.UUID) *string {
+	if id == nil {
+		return nil
+	}
+	s := id.String()
+	return &s
+}
 // --- Macros ---
 
 type CreateMacroRequest struct {
@@ -1098,4 +1116,55 @@ func (h *Handler) RemoveWatcher(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListEvents returns the ticket's timeline.
+//
+//	@Summary		List the ticket timeline
+//	@Description	Any member of the org may read the timeline. Events are append-only and returned oldest-first. Each event has event_type and an opaque data object whose shape depends on the type. A ticket in another org returns 404, never 403.
+//	@Tags			tickets
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			number	path	int		true	"Per-org ticket number"
+//	@Param			limit	query	int		false	"Page size (default 50, max 100)"
+//	@Param			cursor	query	string	false	"Opaque cursor from a previous next_cursor"
+//	@Success		200		{object}	TicketEventListResponse
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		404		{object}	httpx.APIError	"Not found, or belongs to another org"
+//	@Router			/v1/tickets/{number}/events [get]
+func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	number, err := parseNumber(r)
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		return
+	}
+
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+	cursor := r.URL.Query().Get("cursor")
+
+	events, next, err := h.svc.ListEvents(r.Context(), p, number, cursor, limit)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+
+	dtos := make([]TicketEventDTO, 0, len(events))
+	for _, e := range events {
+		dtos = append(dtos, toTicketEventDTO(e))
+	}
+	_ = httpx.WriteJSON(w, http.StatusOK, TicketEventListResponse{
+		Events:     dtos,
+		NextCursor: next,
+	})
 }

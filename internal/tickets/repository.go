@@ -1060,3 +1060,67 @@ func (r *Repository) RemoveWatcher(ctx context.Context, orgID uuid.UUID, number 
 		return nil
 	})
 }
+
+func (r *Repository) ListTicketEvents(ctx context.Context, orgID uuid.UUID, number int64, cursorStr string, limit int) ([]TicketEvent, string, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	cur, err := decodeCursor(cursorStr)
+	if err != nil {
+		return nil, "", err
+	}
+
+	args := []any{orgID, number}
+	where := `WHERE t.org_id = $1 AND t.number = $2 AND t.deleted_at IS NULL`
+
+	if !cur.CreatedAt.IsZero() {
+		args = append(args, cur.CreatedAt, cur.ID)
+		where += fmt.Sprintf(" AND (e.created_at, e.id) > ($%d, $%d)", len(args)-1, len(args))
+	}
+
+	args = append(args, limit+1)
+	query := fmt.Sprintf(
+		`SELECT e.id, e.org_id, e.ticket_id, e.actor_type, e.actor_id,
+		        e.event_type, e.data, e.created_at
+		 FROM ticket_events e
+		 JOIN tickets t ON t.id = e.ticket_id
+		 %s
+		 ORDER BY e.created_at ASC, e.id ASC
+		 LIMIT $%d`,
+		where, len(args),
+	)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("list events: %w", err)
+	}
+	defer rows.Close()
+
+	var out []TicketEvent
+	for rows.Next() {
+		var e TicketEvent
+		if err := rows.Scan(
+			&e.ID, &e.OrgID, &e.TicketID, &e.ActorType, &e.ActorID,
+			&e.EventType, &e.Data, &e.CreatedAt,
+		); err != nil {
+			return nil, "", fmt.Errorf("scan event: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("rows: %w", err)
+	}
+
+	var next string
+	if len(out) > limit {
+		out = out[:limit]
+		last := out[len(out)-1]
+		next = encodeCursor(last.CreatedAt, last.ID)
+	}
+
+	return out, next, nil
+}
