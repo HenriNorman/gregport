@@ -12,13 +12,13 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | JWT and refresh tokens | Complete and tested — refresh rotation, hashing, and reuse detection |
 | Tickets | Complete — CRUD, comments, state machine, keyset pagination, optimistic concurrency |
 | Teams | Complete — CRUD and membership management |
-| Ticket assignment | Complete — manual (assignee or team) and round-robin (auto: true) |
+| Ticket assignment | Complete — manual (assignee or team) and round-robin (`auto: true`) |
 | Tags | Complete — create, list, attach, detach (idempotent) |
-| SLA, notifications, webhooks, API keys, invitations | Schema defined, not exposed |
 | Watchers | Complete — add/remove (idempotent); assignee and agent commenters auto-watch |
-| Timeline | Complete — cursor-paginated ticket_events, oldest first |
+| Timeline | Complete — cursor-paginated `ticket_events`, oldest first |
 | Merge | Complete — source closed and pointed at target; merged tickets read-only |
 | Macros | Complete — CRUD (admin/owner) and apply to a ticket (any member) |
+| SLA, notifications, webhooks, API keys, invitations | Schema defined, not exposed |
 
 ### Authentication
 
@@ -46,13 +46,14 @@ The ticket domain is implemented and tested.
 
 Tenant isolation is tested across ticket endpoints. Requests for tickets belonging to another organization return `404`, preventing the API from revealing their existence.
 
-The ticket domain currently has **54 tests**.
+The ticket domain's test suite covers CRUD, concurrency, tenant isolation, and every sub-resource (tags, watchers, timeline, merge, macros). Run `go test ./internal/tickets/ -v` for the current count.
 
 ### Teams and Assignment
 
 Teams support creation, listing, updating, and deletion, along with adding and removing members (admin/owner only).
 
 Ticket assignment supports manual assignment to an individual agent or a team, and round-robin (`auto: true`) within a team.
+
 Round-robin picks the team member with the oldest `last_assigned_at` inside the same transaction, with `SKIP LOCKED` so concurrent assigns do not pick the same agent.
 
 ---
@@ -171,19 +172,18 @@ The service layer depends on repository interfaces rather than concrete implemen
 
 ---
 
----
-
 ## API Reference
 
 <details open>
 <summary><b>Interactive docs</b></summary>
 
-- **Live (local dev):** [`/swagger/`](http://localhost:8080/swagger/) — start the API, then open this.
-- **View spec (Swagger Editor):** [Open `swagger.yaml`](https://editor.swagger.io/?url=https://raw.githubusercontent.com/YOUR_USER/gregport/main/swagger.yaml)
+- **View spec (Swagger Editor):** [Open `docs/swagger.yaml`](https://editor.swagger.io/?url=https://raw.githubusercontent.com/HenriNorman/gregport/main/docs/swagger.yaml)
 
 </details>
 
-The OpenAPI spec lives at [`swagger.yaml`](./swagger.yaml).
+The OpenAPI spec lives at [`docs/swagger.yaml`](./docs/swagger.yaml).
+
+---
 
 ## Getting Started
 
@@ -304,69 +304,50 @@ Assignment also produces a `ticket.assigned` event containing the old and new as
 
 The new assignee is automatically added to `ticket_watchers`. The insertion uses `ON CONFLICT DO NOTHING`, making repeated assignments idempotent.
 
-
 ### Round-robin Assignment
 
 `auto: true` with a `team_id` picks the team member with the oldest `last_assigned_at`.
-The pick runs inside the same transaction as the ticket update, with `FOR UPDATE OF team_members SKIP LOCKED`
-so concurrent auto-assigns to the same team do not both choose the same agent.
-The join on `memberships` excludes agents removed from the org. A team with no assignable members returns 422.
 
-- **Tags are lowercase and unique per org.** `POST /v1/tags` normalizes the
-  name (trim, lowercase) before insert; a duplicate in the same org returns
-  409. Attach and detach take the tag **name** in the URL, not the UUID, and
-  normalize it the same way before the lookup.
-- **Tag attach and detach are idempotent.** `ON CONFLICT DO NOTHING` on
-  attach, `DELETE` returning zero rows on detach — both return 204 with no
-  error. `ticket.tagged` and `ticket.untagged` fire only on an actual
-  change; a no-op writes no event.
+The pick runs inside the same transaction as the ticket update, with `FOR UPDATE OF team_members SKIP LOCKED` so concurrent auto-assigns to the same team do not both choose the same agent.
 
-- **The ticket timeline is append-only and cursor-paginated oldest-first.**
-  `GET /v1/tickets/{number}/events` reads `ticket_events` joined to the
-  ticket by `(org_id, number)`. Order is `created_at ASC, id ASC` — a
-  timeline reads chronologically, unlike the ticket list. Cursor is opaque,
-  limit defaults to 50 and caps at 100. No code path issues `UPDATE` or
-  `DELETE` on `ticket_events`; the table is an append-only log.
-- **Event types and their `data` shapes.** The client switches on
-  `event_type`; each type carries a different JSON object in `data`:
+The join on `memberships` excludes agents removed from the org. A team with no assignable members returns `422`.
 
-- **Merge closes the source and points it at the target.** `POST
-  /v1/tickets/{number}/merge` with `{into_number}` runs one transaction that
-  locks both rows by id ascending (`FOR UPDATE`, deadlock-safe), checks the
-  rules (same org, different tickets, target not closed or already merged,
-  same requester), sets `source.merged_into_id = target.id`, closes the
-  source, adds a system comment on both tickets, and writes `ticket.merged`
-  on the source. A second concurrent merge of the same pair sees the source
-  already merged and returns 409.
-- **Merged tickets are read-only.** Every mutation — update, assign,
-  comment, delete, tag attach/detach — selects `merged_into_id` under
-  `FOR UPDATE` and returns 409 if it is set. The check is in the repository,
-  next to the lock, so it cannot be bypassed by a caller that skips the
-  service.
-- **Macros store validated JSON actions and apply through the service.**
-  `macros.body` holds `{"set_status", "set_priority", "add_tags", "comment"}`,
-  validated at create/update (enum values, non-empty tags, 20k comment cap).
-  Applying a macro calls the same service methods as the normal endpoints —
-  `UpdateTicket`, `AttachTag`, `CreateComment` — so the state machine, events,
-  and authorization apply. A macro that sets an illegal transition fails with
-  422, exactly like `PATCH /v1/tickets/{number}` would.
-- **Macro application is ordered, not atomic.** Actions run in order: status,
-  priority, tags, comment. Status first means an illegal transition fails
-  before anything is written. If a later action fails (e.g. a tag does not
-  exist), earlier actions stay applied. This is deliberate and documented.
-- **Macro mutations are admin/owner; GET and apply are any member.** Creating,
-  updating, and deleting a macro require role owner or admin. Listing and
-  applying a macro are open to any org member.
+### Tags
 
-  | `event_type` | `data` fields |
-  |---|---|
-  | `ticket.created` | `number`, `subject`, `priority` |
-  | `ticket.status_changed` | `old`, `new` |
-  | `ticket.assigned` | `old_assignee_id`, `new_assignee_id`, `old_team_id`, `new_team_id`, `auto` (round-robin only) |
-  | `ticket.tagged` | `tag` |
-  | `ticket.untagged` | `tag` |
-  | `comment.added` | `comment_id`, `is_internal` |
-  | `ticket.deleted` | — |
+- **Tags are lowercase and unique per org.** `POST /v1/tags` normalizes the name (trim, lowercase) before insert; a duplicate in the same org returns `409`. Attach and detach take the tag **name** in the URL, not the UUID, and normalize it the same way before the lookup.
+- **Tag attach and detach are idempotent.** `ON CONFLICT DO NOTHING` on attach, `DELETE` returning zero rows on detach — both return `204` with no error. `ticket.tagged` and `ticket.untagged` fire only on an actual change; a no-op writes no event.
+
+### Watchers
+
+- Watcher addition and removal are idempotent.
+- The ticket assignee is automatically added as a watcher.
+- Agents who comment on a ticket are automatically added as watchers.
+
+### Timeline
+
+- **The ticket timeline is append-only and cursor-paginated oldest-first.** `GET /v1/tickets/{number}/events` reads `ticket_events` joined to the ticket by `(org_id, number)`. Order is `created_at ASC, id ASC` — a timeline reads chronologically, unlike the ticket list. Cursor is opaque, limit defaults to 50 and caps at 100. No code path issues `UPDATE` or `DELETE` on `ticket_events`; the table is an append-only log.
+- **Event types and their `data` shapes.** The client switches on `event_type`; each type carries a different JSON object in `data`:
+
+| `event_type` | `data` fields |
+|---|---|
+| `ticket.created` | `number`, `subject`, `priority` |
+| `ticket.status_changed` | `old`, `new` |
+| `ticket.assigned` | `old_assignee_id`, `new_assignee_id`, `old_team_id`, `new_team_id`, `auto` (round-robin only) |
+| `ticket.tagged` | `tag` |
+| `ticket.untagged` | `tag` |
+| `comment.added` | `comment_id`, `is_internal` |
+| `ticket.deleted` | — |
+
+### Merge
+
+- **Merge closes the source and points it at the target.** `POST /v1/tickets/{number}/merge` with `{into_number}` runs one transaction that locks both rows by id ascending (`FOR UPDATE`, deadlock-safe), checks the rules (same org, different tickets, target not closed or already merged, same requester), sets `source.merged_into_id = target.id`, closes the source, adds a system comment on both tickets, and writes `ticket.merged` on the source. A second concurrent merge of the same pair sees the source already merged and returns `409`.
+- **Merged tickets are read-only.** Every mutation — update, assign, comment, delete, tag attach/detach — selects `merged_into_id` under `FOR UPDATE` and returns `409` if it is set. The check is in the repository, next to the lock, so it cannot be bypassed by a caller that skips the service.
+
+### Macros
+
+- **Macros store validated JSON actions and apply through the service.** `macros.body` holds `{"set_status", "set_priority", "add_tags", "comment"}`, validated at create/update (enum values, non-empty tags, 20k comment cap). Applying a macro calls the same service methods as the normal endpoints — `UpdateTicket`, `AttachTag`, `CreateComment` — so the state machine, events, and authorization apply. A macro that sets an illegal transition fails with `422`, exactly like `PATCH /v1/tickets/{number}` would.
+- **Macro application is ordered, not atomic.** Actions run in order: status, priority, tags, comment. Status first means an illegal transition fails before anything is written. If a later action fails (e.g. a tag does not exist), earlier actions stay applied. This is deliberate and documented.
+- **Macro mutations are admin/owner; GET and apply are any member.** Creating, updating, and deleting a macro require role owner or admin. Listing and applying a macro are open to any org member.
 
 ### Pagination
 
@@ -437,24 +418,11 @@ These tests use a real PostgreSQL database.
 - Duplicate team creation returns `409`.
 - Agent team-management attempt returns `403`.
 - Adding a cross-organization member returns `422`.
-- Tags: create lowercases and trims the name; duplicate per org returns 409;
-  attach and detach are idempotent (one event per actual change); attaching
-  a nonexistent tag returns 404; attaching a tag to another org's ticket
-  returns 404.
-- Watchers: add is idempotent; adding a non-member returns 422; remove is
-  idempotent; removing a watcher from another org's ticket returns 404; an
-  agent who comments is auto-added as a watcher.
-- Timeline: events appear in order (created, assigned, tagged, comment,
-  status); cursor pagination returns every event exactly once; another
-  org's ticket returns 404.
-- Merge: happy path closes the source and writes one `ticket.merged` event;
-  merge into self returns 422; merging into another org's ticket returns 404;
-  two concurrent merges of the same pair yield exactly one success; a comment
-  on a merged source returns 409.
-- Macros: create validates status/priority enums and rejects unknown fields;
-  duplicate name returns 409; applying a macro sets status, attaches tags,
-  and adds a comment; an illegal status transition in a macro returns 422
-  (state machine applies); another org's macro returns 404.
+- Tags: create lowercases and trims the name; duplicate per org returns `409`; attach and detach are idempotent (one event per actual change); attaching a nonexistent tag returns `404`; attaching a tag to another org's ticket returns `404`.
+- Watchers: add is idempotent; adding a non-member returns `422`; remove is idempotent; removing a watcher from another org's ticket returns `404`; an agent who comments is auto-added as a watcher.
+- Timeline: events appear in order (created, assigned, tagged, comment, status); cursor pagination returns every event exactly once; another org's ticket returns `404`.
+- Merge: happy path closes the source and writes one `ticket.merged` event; merge into self returns `422`; merging into another org's ticket returns `404`; two concurrent merges of the same pair yield exactly one success; a comment on a merged source returns `409`.
+- Macros: create validates status/priority enums and rejects unknown fields; duplicate name returns `409`; applying a macro sets status, attaches tags, and adds a comment; an illegal status transition in a macro returns `422` (state machine applies); another org's macro returns `404`.
 
 ### Unit Tests
 
@@ -495,9 +463,9 @@ The ticket transition logic is implemented through `CanTransition(from, to)` and
 - `closed` is a terminal state.
 - 27 table-driven sub-tests, written before implementation using Test-Driven Development (TDD).
 
-### Round-robin assignment
+### Round-robin Assignment
 
-20 concurrent auto-assigns to one team spread across all 3 agents without errors; an empty team returns 422.
+20 concurrent auto-assigns to one team spread across all 3 agents without errors; an empty team returns `422`.
 
 ### Test Summary
 
@@ -516,6 +484,6 @@ The authentication cycle has also been verified end to end using `curl`:
 
 ## Current Development Direction
 
-round-robin assignment, tags, watchers, the ticket timeline, merge, and macros. Each is a new endpoint on the existing ticket domain, behind the same tenant isolation and role rules.
+Slice 4 (teams, assignment, tags, watchers, timeline, merge, macros) is complete.
 
-Future domain work includes exposing the schema-defined functionality: SLA policies, notifications, webhooks, API keys, and invitations.
+The next slice exposes the schema-defined functionality still not surfaced: SLA policies, notifications, webhooks, API keys, and invitations.
