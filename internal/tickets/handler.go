@@ -93,6 +93,41 @@ type AssignTicketRequest struct {
 	Auto       bool    `json:"auto,omitempty"        example:"false"`
 }
 
+func toTicketDTO(t Ticket) TicketDTO {
+	return TicketDTO{
+		Number:   t.Number,
+		ID:       t.ID.String(),
+		Subject:  t.Subject,
+		Status:   t.Status,
+		Priority: t.Priority,
+		Requester: RequesterDTO{
+			Email: t.RequesterEmail,
+			Name:  t.RequesterName,
+		},
+		Version:   t.Version,
+		CreatedAt: t.CreatedAt,
+		UpdatedAt: t.UpdatedAt,
+	}
+}
+
+func toCommentDTO(c Comment) CommentDTO {
+	return CommentDTO{
+		ID:         c.ID.String(),
+		Body:       c.Body,
+		IsInternal: c.IsInternal,
+		AuthorType: c.AuthorType,
+		CreatedAt:  c.CreatedAt,
+	}
+}
+
+func toTeamDTO(t Team) TeamDTO {
+	return TeamDTO{
+		ID:        t.ID.String(),
+		Name:      t.Name,
+		CreatedAt: t.CreatedAt,
+	}
+}
+
 // --- Tags ---
 
 type CreateTagRequest struct {
@@ -707,6 +742,51 @@ func (h *Handler) RemoveTeamMember(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// Assign assigns a ticket to a user or a team.
+//
+//	@Summary		Assign a ticket to a user or a team
+//	@Description	Any member of the org may assign a ticket. Body must contain exactly one of assignee_id or team_id. Round-robin (auto: true) is not yet available. The assignee must be an org member with role owner, admin, or agent. A ticket in another org returns 404, never 403.
+//	@Tags			tickets
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			number	path		int					true	"Per-org ticket number"
+//	@Param			body	body		AssignTicketRequest	true	"Assignment payload"
+//	@Success		200		{object}	TicketDTO
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		404		{object}	httpx.APIError	"Ticket or team not found, or belongs to another org"
+//	@Failure		422		{object}	httpx.APIError	"Invalid input, or assignee is not an agent-or-higher org member"
+//	@Router			/v1/tickets/{number}/assignment [post]
+func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+
+	number, err := parseNumber(r)
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		return
+	}
+
+	var req AssignTicketRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+
+	tk, err := h.svc.AssignTicket(r.Context(), p, number, req)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+
+	w.Header().Set("ETag", strconv.Quote(strconv.Itoa(tk.Version)))
+	_ = httpx.WriteJSON(w, http.StatusOK, toTicketDTO(tk))
+}
+
 // --- helpers ---
 
 func parseNumber(r *http.Request) (int64, error) {
@@ -746,41 +826,6 @@ func parseIfMatch(r *http.Request) (int, error) {
 		return 0, errors.New("not an integer")
 	}
 	return n, nil
-}
-
-func toTicketDTO(t Ticket) TicketDTO {
-	return TicketDTO{
-		Number:   t.Number,
-		ID:       t.ID.String(),
-		Subject:  t.Subject,
-		Status:   t.Status,
-		Priority: t.Priority,
-		Requester: RequesterDTO{
-			Email: t.RequesterEmail,
-			Name:  t.RequesterName,
-		},
-		Version:   t.Version,
-		CreatedAt: t.CreatedAt,
-		UpdatedAt: t.UpdatedAt,
-	}
-}
-
-func toCommentDTO(c Comment) CommentDTO {
-	return CommentDTO{
-		ID:         c.ID.String(),
-		Body:       c.Body,
-		IsInternal: c.IsInternal,
-		AuthorType: c.AuthorType,
-		CreatedAt:  c.CreatedAt,
-	}
-}
-
-func toTeamDTO(t Team) TeamDTO {
-	return TeamDTO{
-		ID:        t.ID.String(),
-		Name:      t.Name,
-		CreatedAt: t.CreatedAt,
-	}
 }
 
 func parseUUIDParam(r *http.Request, name string) (uuid.UUID, error) {
@@ -829,6 +874,8 @@ func mapTicketError(err error) *httpx.APIError {
 		return httpx.Conflict("team_name_taken", "a team with that name already exists")
 	case errors.Is(err, ErrMemberNotInOrg):
 		return httpx.Unprocessable("member_not_in_org", "user is not a member of this organization")
+	case errors.Is(err, ErrAssigneeNotAgent):
+		return httpx.Unprocessable("assignee_not_agent", "assignee must be an org member with agent role or higher")
 	default:
 		return httpx.InternalError(err)
 	}

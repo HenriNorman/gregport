@@ -101,6 +101,7 @@ func main() {
 
 				r.With(auth.RequireRole("owner", "admin")).
 					Delete("/{number}", ticketsHandler.Delete)
+				r.Post("/{number}/assignment", ticketsHandler.Assign)
 
 				r.Post("/{number}/comments", ticketsHandler.CreateComment)
 				r.Get("/{number}/comments", ticketsHandler.ListComments)

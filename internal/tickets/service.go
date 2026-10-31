@@ -174,3 +174,40 @@ func (s *Service) RemoveTeamMember(ctx context.Context, p requestctx.Principal, 
 	}
 	return s.repo.RemoveTeamMember(ctx, p.OrgID, teamID, userID)
 }
+
+func (s *Service) AssignTicket(ctx context.Context, p requestctx.Principal, number int64, req AssignTicketRequest) (Ticket, error) {
+	if req.Auto {
+		return Ticket{}, ErrInvalidInput
+	}
+
+	var assigneeID, teamID *uuid.UUID
+	if req.AssigneeID != nil && *req.AssigneeID != "" {
+		id, err := uuid.Parse(*req.AssigneeID)
+		if err != nil {
+			return Ticket{}, ErrInvalidInput
+		}
+		assigneeID = &id
+	}
+	if req.TeamID != nil && *req.TeamID != "" {
+		id, err := uuid.Parse(*req.TeamID)
+		if err != nil {
+			return Ticket{}, ErrInvalidInput
+		}
+		teamID = &id
+	}
+
+	if assigneeID == nil && teamID == nil {
+		return Ticket{}, ErrInvalidInput
+	}
+	if assigneeID != nil && teamID != nil {
+		return Ticket{}, ErrInvalidInput
+	}
+
+	return s.repo.AssignTicket(ctx, AssignInput{
+		OrgID:      p.OrgID,
+		Number:     number,
+		Actor:      Actor{Type: "user", ID: &p.UserID},
+		AssigneeID: assigneeID,
+		TeamID:     teamID,
+	})
+}

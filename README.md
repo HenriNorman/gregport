@@ -1,66 +1,101 @@
-# gregport
+# Gregport
 
-A multi-tenant support ticketing SaaS — organizations, users, memberships,
-tickets, comments, SLA policies, notifications, and webhooks.
+A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports organizations, users, memberships, tickets, comments, SLA policies, notifications, and webhooks.
 
 ---
 
-## Status
+## Project Status
 
-<div align="center">
-
-| **Area** | **State** |
+| Area | Status |
 |:--|:--|
-| Auth (signup, login, refresh, logout, `/v1/me`) | Complete |
-| JWT · refresh rotation · reuse detection | Complete + tested |
-| HTTP layer (login, refresh, logout, `/v1/me`, `Authenticate`, `RequireRole`) | Next slice |
-| Tickets domain | Complete — create, list, get, update, delete, comments; state machine, keyset pagination, optimistic concurrency |
-| Comments · SLA · notifications · webhooks · API keys · invitations | Schema defined, not exposed |
-| Teams | Complete — create, list, update, delete; membership add/remove (admin/owner) |
+| Authentication | Complete — signup, login, refresh, logout, `/v1/me` |
+| JWT and refresh tokens | Complete and tested — refresh rotation, hashing, and reuse detection |
+| Tickets | Complete — CRUD, comments, state machine, keyset pagination, optimistic concurrency |
+| Teams | Complete — CRUD and membership management |
+| Ticket assignment | Complete — manual assignment to users or teams; round-robin planned |
+| SLA, notifications, webhooks, API keys, invitations | Schema defined, not exposed |
 
-</div>
+### Authentication
 
-The auth cycle is complete end to end: a user can sign up, log in, call a
-protected route, rotate their refresh token, and log out. Every protected
-request carries a verified `user_id`, `org_id`, and `role` in its context.
+The authentication implementation includes:
 
-JWT access tokens, hashed refresh tokens, refresh-token rotation with reuse
-detection, and the Login / Refresh / Logout services are implemented and
-tested. The HTTP layer lands in the next slice.
+- JWT access tokens.
+- Hashed refresh tokens.
+- Refresh-token rotation.
+- Refresh-token reuse detection.
+- Token-family revocation.
+- Login, refresh, and logout services.
 
-Tickets: create (single transaction across counter, customer, ticket, comment,
-event), list (keyset pagination), get/update (optimistic concurrency via
-`If-Match` on `version`), soft delete (admin/owner only), and comments are
-implemented and tested. The status state machine is table-driven. The tenant
-suite proves every ticket endpoint returns 404 for another org's ticket; 50
-tests cover the domain.
+Every authenticated request carries a verified `user_id`, `org_id`, and `role` in its request context.
+
+### Tickets
+
+The ticket domain is implemented and tested.
+
+- **Create:** Single transaction covering the counter, customer, ticket, comment, and event.
+- **List:** Keyset pagination.
+- **Get and update:** Optimistic concurrency using `If-Match` and the ticket's `version`.
+- **Delete:** Soft deletion, restricted to admins and owners.
+- **Comments:** Implemented and exposed.
+- **State transitions:** Table-driven state machine.
+
+Tenant isolation is tested across ticket endpoints. Requests for tickets belonging to another organization return `404`, preventing the API from revealing their existence.
+
+The ticket domain currently has **54 tests**.
+
+### Teams and Assignment
+
+Teams support creation, listing, updating, and deletion, along with adding and removing members (admin/owner only).
+
+Ticket assignment currently supports manual assignment to an individual agent or a team. Round-robin assignment is planned.
 
 ---
 
-## Stack
+## Tech Stack
 
-<table>
-<tr><td><b>Language</b></td><td>Go 1.27</td></tr>
-<tr><td><b>Router</b></td><td><a href="https://github.com/go-chi/chi">chi</a></td></tr>
-<tr><td><b>Database</b></td><td>PostgreSQL 16 (Docker Compose)</td></tr>
-<tr><td><b>Driver</b></td><td><a href="https://github.com/jackc/pgx">pgx/v5</a> — pool + transactions</td></tr>
-<tr><td><b>Auth</b></td><td><a href="https://go.dev">bcrypt</a> · <a href="https://github.com/golang-jwt/jwt">golang-jwt/jwt/v5</a></td></tr>
-<tr><td><b>IDs</b></td><td><a href="https://github.com/google/uuid">google/uuid</a></td></tr>
-</table>
+| Component | Technology |
+|:--|:--|
+| Language | Go 1.27 |
+| Router | [chi](https://github.com/go-chi/chi) |
+| Database | PostgreSQL 16 |
+| Database environment | Docker Compose |
+| PostgreSQL driver | [pgx/v5](https://github.com/jackc/pgx) |
+| Authentication | bcrypt, [golang-jwt/jwt/v5](https://github.com/golang-jwt/jwt) |
+| IDs | [google/uuid](https://github.com/google/uuid) |
+| Env loading | [godotenv](https://github.com/joho/godotenv) |
 
 ---
 
-## Project layout
+## Architecture
+
+Gregport follows a layered architecture. Each feature lives in its own package under `internal/`, containing its models, repository, service, and handler.
+
+The dependency direction is:
+
+```text
+handler → service → repository → database
+```
+
+Each layer has a defined responsibility:
+
+- **Handler:** Handles HTTP requests, JSON decoding, and responses.
+- **Service:** Contains business logic and remains independent of HTTP and SQL.
+- **Repository:** Handles database queries and persistence.
+- **Database:** Provides shared database infrastructure, connection pooling, and transactions.
+
+The service layer depends on repository interfaces rather than concrete implementations. This allows tests to inject fake repositories without requiring a database.
+
+### Project Structure
 
 <details>
-<summary><code>cmd/api/</code></summary>
+<summary><code>cmd/api/</code> — application entry point</summary>
 
-- `main.go` — entry point
+- `main.go` — application initialization and entry point.
 
 </details>
 
 <details>
-<summary><code>internal/auth/</code> — signup + tokens</summary>
+<summary><code>internal/auth/</code> — authentication and tokens</summary>
 
 - `models.go`
 - `repo.go`
@@ -91,12 +126,14 @@ tests cover the domain.
 - `tenant_test.go`
 - `authz_test.go`
 - `rollback_test.go`
-- `testhelpers_test.go`
+- `assignment_test.go`
+- `teams_test.go`
+- `testhelpers_test.go` — shared test helpers, including `seedMembership`, `freshOrg`, and `dropOrg`.
 
 </details>
 
 <details>
-<summary><code>internal/middleware/</code></summary>
+<summary><code>internal/middleware/</code> — HTTP middleware</summary>
 
 - `requestid.go`
 - `recovery.go`
@@ -106,187 +143,275 @@ tests cover the domain.
 <details>
 <summary><code>internal/platform/</code> — shared infrastructure</summary>
 
-- `config/` — Config + Load (env)
-- `database/` — pgxpool + WithTx
-- `httpx/` — DecodeJSON, WriteJSON, WriteError, APIError
-- `requestctx/` — Principal in context
+- `config/` — configuration loading from environment variables.
+- `database/` — pgx connection pool and transaction management.
+- `httpx/` — `DecodeJSON`, `WriteJSON`, `WriteError`, and `APIError`.
+- `requestctx/` — authenticated principal stored in request context.
 
 </details>
 
 <details>
-<summary><code>migrations/</code></summary>
+<summary><code>migrations/</code> — database migrations</summary>
 
-- SQL schema
+- SQL schema and migrations.
 
 </details>
 
-### Layering
+---
 
-Each feature is a package under `internal/` containing its own models,
-repository, service, and handler. Dependencies point one way:
+## Database Schema
 
-<div align="center">
+![Entity Relationship Diagram](docs/ERD.svg)
 
-`handler` → `service` → `repository` → `database`
+---
 
-</div>
+## Getting Started
 
-The service layer is format-agnostic — it never touches JSON or SQL. The
-repository is the only place that speaks SQL. The handler is the only place
-that speaks JSON.
+### Prerequisites
+
+- Go 1.27
+- Docker and Docker Compose
+- PostgreSQL 16 (provided through Docker Compose)
+
+### Installation
+
+Clone the repository and enter the project directory.
+
+Copy the example environment file:
+
+```bash
+cp .env.example .env
+```
+
+Configure the required environment variables, especially `DB_PASSWORD` and `JWT_SECRET`.
+
+Start PostgreSQL:
+
+```bash
+docker compose up -d --wait
+```
+
+Run the application:
+
+```bash
+go run cmd/api/main.go
+```
+
+The API listens on port `8080` by default. You can override this using `APP_PORT`.
+
+### Health Check
+
+```bash
+curl localhost:8080/healthz
+```
+
+Expected responses:
+
+```json
+{"status":"ok"}
+```
+
+Returned when the database is available.
+
+```json
+{"status":"unhealthy"}
+```
+
+Returned when the database is unavailable.
 
 ---
 
 ## Configuration
 
-Copy `.env.example` to `.env` and fill in real values. The app refuses to
-start if required values are missing.
+The application reads its configuration from environment variables.
 
-<table>
-<tr><th align="left">Variable</th><th align="left">Required</th><th align="left">Default</th><th align="left">Notes</th></tr>
-<tr><td><code>DB_HOST</code></td><td>no</td><td><code>localhost</code></td><td></td></tr>
-<tr><td><code>DB_PORT</code></td><td>no</td><td><code>5432</code></td><td></td></tr>
-<tr><td><code>DB_USER</code></td><td>no</td><td><code>postgres</code></td><td></td></tr>
-<tr><td><code>DB_PASSWORD</code></td><td>yes</td><td>—</td><td></td></tr>
-<tr><td><code>DB_NAME</code></td><td>no</td><td><code>gregport</code></td><td></td></tr>
-<tr><td><code>APP_PORT</code></td><td>no</td><td><code>8080</code></td><td></td></tr>
-<tr><td><code>JWT_SECRET</code></td><td><b>yes</b></td><td>—</td><td>min 32 bytes — <code>openssl rand -base64 32</code></td></tr>
-<tr><td><code>ACCESS_TOKEN_TTL</code></td><td>no</td><td><code>15m</code></td><td>Go duration</td></tr>
-<tr><td><code>REFRESH_TOKEN_TTL</code></td><td>no</td><td><code>720h</code></td><td>Go duration (30 days)</td></tr>
-</table>
+| Variable | Required | Default | Notes |
+|:--|:--:|:--|:--|
+| `DB_HOST` | No | `localhost` | PostgreSQL host |
+| `DB_PORT` | No | `5432` | PostgreSQL port |
+| `DB_USER` | No | `postgres` | Database user |
+| `DB_PASSWORD` | Yes | — | Database password |
+| `DB_NAME` | No | `gregport` | Database name |
+| `APP_PORT` | No | `8080` | HTTP server port |
+| `JWT_SECRET` | Yes | — | Minimum 32 bytes |
+| `ACCESS_TOKEN_TTL` | No | `15m` | Go duration |
+| `REFRESH_TOKEN_TTL` | No | `720h` | Go duration (30 days) |
 
-`JWT_SECRET` has no default and the app will `log.Fatal` without it. Never
-commit it, never log it, and don't reuse it across projects.
+Generate a secure JWT secret using:
+
+```bash
+openssl rand -base64 32
+```
+
+`JWT_SECRET` has no default. The application terminates at startup if it is missing or invalid.
+
+Never commit the secret, log it, or reuse it across projects.
 
 ---
 
-## Running locally
+## API Design and Rules
 
-```bash
-cp .env.example .env      # fill in real values, including JWT_SECRET
-docker compose up -d --wait
-go run cmd/api/main.go
+### Tenant Isolation
+
+Tickets use per-organization numbers rather than UUIDs in their URLs.
+
+The lookup key is `(org_id, number)`. A ticket belonging to another organization returns `404`, never `403`.
+
+This prevents the API from confirming whether a resource exists in another tenant.
+
+### Optimistic Concurrency
+
+Ticket updates require an `If-Match` header.
+
+| Condition | HTTP Status |
+|:--|:--|
+| Missing `If-Match` header | `428 Precondition Required` |
+| Stale ticket version | `412 Precondition Failed` |
+
+Every successful ticket update increments its `version`.
+
+This prevents two agents from silently overwriting each other's changes.
+
+### Ticket Assignment
+
+Assignment is validated within the same transaction as the ticket update.
+
+- The assignee must have an organization membership with the `owner`, `admin`, or `agent` role.
+- Team assignment verifies that the team belongs to the caller's organization.
+- Client-provided user IDs are never trusted without membership verification.
+
+Assignment also produces a `ticket.assigned` event containing the old and new assignee/team information.
+
+The new assignee is automatically added to `ticket_watchers`. The insertion uses `ON CONFLICT DO NOTHING`, making repeated assignments idempotent.
+
+Round-robin assignment (`auto: true`) is the next step: the team member with the oldest `last_assigned_at` is picked inside the same transaction, with `SKIP LOCKED` so two concurrent assigns pick different agents.
+
+### Pagination
+
+Ticket listing uses keyset pagination.
+
+Pass `?limit=N&cursor=<opaque>` to the endpoint.
+
+| Parameter | Description |
+|:--|:--|
+| `limit` | Page size. Maximum value: `100`. |
+| `cursor` | Opaque continuation token returned by the previous response's `next_cursor`. |
+| `next_cursor` | Returned by the server. Its absence indicates the last page. |
+
+The ordering is:
+
+```sql
+ORDER BY created_at DESC, id DESC
 ```
 
-The app listens on `:8080` (override with `APP_PORT`).
-
-<div align="center">
-
-**Health check**
-
-</div>
-
-```bash
-curl localhost:8080/healthz
-# {"status":"ok"}          with DB up
-# {"status":"unhealthy"}   with DB down
-```
-
----
-
-## Database schema
-
-![ERD](docs/ERD.svg)
+The cursor is opaque and should never be parsed by clients.
 
 ---
 
 ## Testing
 
+The project includes integration tests, authentication unit tests, and security-focused token tests.
+
+### Running Tests
+
+Run the authentication package tests:
+
 ```bash
 go test ./internal/auth/ -v
 ```
 
-<details open>
-<summary><b>Integration</b> — real Postgres</summary>
+Run the entire test suite:
 
-- Signup transaction rollback
-- Refresh-token rotation and reuse
-- (Tickets) 20 concurrent creates produce numbers 1–20 with no gaps or
-  duplicates; a failed create leaves no gap in the per-org numbering
+```bash
+go test ./... -v
+```
 
-</details>
+Ticket tests are integration tests and require PostgreSQL.
 
-<details>
-<summary><b>Unit</b> — fake <code>Repo</code>, no database</summary>
+### Integration Tests
 
-- Signup validation and normalization
-- Identical errors for unknown email and wrong password (timing-safe dummy bcrypt)
-- Org selection (single / multi without slug / multi with slug)
-- Reuse detection triggering family revocation
-- Unknown tokens not triggering it
-- Logout revoking by hash
+These tests use a real PostgreSQL database.
 
-The service tests exist because `Service` depends on the `auth.Repo`
-interface, not the concrete `*Repository`. Production injects the real repo;
-tests inject a fake. That's what makes the service testable without a
-database.
+**Authentication:**
 
-</details>
+- Signup transaction rollback.
+- Refresh-token rotation and reuse detection.
 
-<details>
-<summary><b>Tokens</b> — real JWT signing, no database</summary>
+**Tickets:**
 
-- Access-token round trip
-- Expiry rejection
-- Tamper rejection
-- `alg: none` rejection
-- Wrong-secret rejection
-- Refresh-token uniqueness and hashing
+- Concurrent ticket creation: 20 concurrent creates produce ticket numbers `1–20` without gaps or duplicates.
+- Failed ticket creation does not leave a gap in per-organization numbering.
+- Tenant isolation: every ticket endpoint returns `404` when organization B accesses organization A's ticket.
+- Update concurrency: two simultaneous updates result in one successful update and one `412 Precondition Failed`.
+- Version mismatch rejection.
+- Invalid state transition rejection.
+- Valid state transition and event creation.
+- Transaction rollback when event creation fails, verified using a forced database trigger.
+- Manual assignment to an agent.
+- Assignment to a non-member returns `422`.
+- Team-only assignment.
+- Cross-organization team assignment returns `404`.
+- Team creation.
+- Duplicate team creation returns `409`.
+- Agent team-management attempt returns `403`.
+- Adding a cross-organization member returns `422`.
 
-The token tests run real JWT signing and verification — no mocks. They prove
-the security properties (algorithm pinning, expiry required, tamper detection)
-actually hold, not just that the code was written.
+### Unit Tests
 
-</details>
+Authentication unit tests use a fake `Repo` implementation and do not require a database.
 
-<details>
-<summary><b>Tickets</b> — <code>CanTransition(from, to)</code>, table-driven</summary>
+- Signup validation and normalization.
+- Identical responses for unknown email and incorrect password, using timing-safe dummy bcrypt verification.
+- Organization selection:
+  - Single organization.
+  - Multiple organizations without a slug.
+  - Multiple organizations with a slug.
+- Refresh-token reuse detection and token-family revocation.
+- Unknown tokens do not trigger reuse detection.
+- Logout revokes refresh tokens by hash.
 
-- Map-of-maps transition table
-- `closed` is terminal
-- 27 table-driven sub-tests, written before the implementation (TDD)
+The authentication service depends on the `auth.Repo` interface rather than the concrete `*Repository`. Production injects the real repository, while tests inject a fake implementation.
 
-</details>
+Ticket tests are integration tests and require PostgreSQL.
 
-<div align="center">
+### Token Tests
 
-All 32 tests pass without a database except the two integration files
-(`repository_test.go`, `repository_tokens_test.go`), which need Postgres.
+These tests perform real JWT signing and verification without a database.
 
-</div>
+- Access-token round trip.
+- Expiry rejection.
+- Tamper detection.
+- `alg: none` rejection.
+- Wrong-secret rejection.
+- Refresh-token uniqueness and hashing.
 
-The auth cycle was also verified end to end with `curl`: login returns a
-token pair, `/v1/me` accepts the access token and rejects requests without
-one, refresh rotates and replaying the old token returns 401, logout returns
-204, and wrong-password / unknown-email return **identical** 401 responses.
+They verify actual security behavior, including algorithm pinning, required expiration, and tamper detection.
+
+### Ticket State Machine Tests
+
+The ticket transition logic is implemented through `CanTransition(from, to)` and tested using a table-driven approach.
+
+- Map-of-maps transition table.
+- `closed` is a terminal state.
+- 27 table-driven sub-tests, written before implementation using Test-Driven Development (TDD).
+
+### Test Summary
+
+Run `go test ./... -v` and read the output to see the current test results.
+
+The authentication cycle has also been verified end to end using `curl`:
+
+1. Login returns an access and refresh token pair.
+2. `/v1/me` accepts a valid access token and rejects unauthenticated requests.
+3. Refresh rotates the refresh token.
+4. Replaying the previous refresh token returns `401`.
+5. Logout returns `204`.
+6. Incorrect passwords and unknown emails produce identical `401` responses.
 
 ---
 
-## Pagination
+## Current Development Direction
 
-Ticket listing uses **keyset pagination**. Pass `?limit=N&cursor=<opaque>`.
-The response includes `next_cursor`; absent means last page.
+round-robin assignment, tags, watchers, the ticket timeline, merge, and macros. Each is a new endpoint on the existing ticket domain, behind the same tenant isolation and role rules.
 
-<div align="center">
-
-<table>
-<tr><th align="left">Parameter</th><th align="left">Meaning</th></tr>
-<tr><td><code>limit</code></td><td>Page size. Caps at <b>100</b>.</td></tr>
-<tr><td><code>cursor</code></td><td>Opaque continuation token from the previous <code>next_cursor</code>. Do not parse it.</td></tr>
-<tr><td><code>next_cursor</code></td><td>Returned by the server. <b>Absent</b> = last page.</td></tr>
-</table>
-
-</div>
-
-Order is `created_at DESC, id DESC`.
-
-## Rules
-- **Tickets use per-org numbers, not UUIDs, in URLs.** `(org_id, number)` is
-  the lookup key. A ticket in another org returns 404, never 403 — the API
-  never confirms existence in someone else's tenant.
-- **PATCH requires `If-Match`.** Missing header → 428, stale version → 412.
-  Every ticket update bumps `version`, so two agents editing the same ticket
-  fail visibly instead of silently overwriting.
-- **Ticket list is keyset-paginated.** `?limit=N&cursor=<opaque>`,
-  `next_cursor` in the response, absent means last page. Cursor is opaque.
-  Order is `created_at DESC, id DESC`. Limit caps at 100.
+Future domain work includes exposing the schema-defined functionality: SLA policies, notifications, webhooks, API keys, and invitations.

@@ -56,6 +56,14 @@ type CreateInput struct {
 	Priority       string
 }
 
+type AssignInput struct {
+	OrgID      uuid.UUID
+	Number     int64
+	Actor      Actor
+	AssigneeID *uuid.UUID
+	TeamID     *uuid.UUID
+}
+
 func (r *Repository) CreateTicket(ctx context.Context, in CreateInput) (Ticket, Comment, error) {
 	var (
 		ticket  Ticket
@@ -627,4 +635,113 @@ func (r *Repository) RemoveTeamMember(ctx context.Context, orgID, teamID, userID
 		return ErrTeamNotFound
 	}
 	return nil
+}
+
+func (r *Repository) AssignTicket(ctx context.Context, in AssignInput) (Ticket, error) {
+	var out Ticket
+
+	err := database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
+		var ticketID uuid.UUID
+		var oldAssignee *uuid.UUID
+		var oldTeam *uuid.UUID
+		var curVersion int
+		if err := tx.QueryRow(ctx,
+			`SELECT id, assignee_id, team_id, version
+			 FROM tickets
+			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL
+			 FOR UPDATE`,
+			in.OrgID, in.Number,
+		).Scan(&ticketID, &oldAssignee, &oldTeam, &curVersion); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrTicketNotFound
+			}
+			return fmt.Errorf("lock ticket: %w", err)
+		}
+
+		if in.AssigneeID != nil {
+			var ok bool
+			if err := tx.QueryRow(ctx,
+				`SELECT EXISTS (
+				   SELECT 1 FROM memberships
+				   WHERE org_id = $1 AND user_id = $2
+				     AND role IN ('owner','admin','agent')
+				 )`,
+				in.OrgID, *in.AssigneeID,
+			).Scan(&ok); err != nil {
+				return fmt.Errorf("check assignee: %w", err)
+			}
+			if !ok {
+				return ErrAssigneeNotAgent
+			}
+		}
+
+		if in.TeamID != nil {
+			var ok bool
+			if err := tx.QueryRow(ctx,
+				`SELECT EXISTS (SELECT 1 FROM teams WHERE org_id = $1 AND id = $2)`,
+				in.OrgID, *in.TeamID,
+			).Scan(&ok); err != nil {
+				return fmt.Errorf("check team: %w", err)
+			}
+			if !ok {
+				return ErrTeamNotFound
+			}
+		}
+
+		if err := tx.QueryRow(ctx,
+			`UPDATE tickets
+			 SET assignee_id = COALESCE($3, assignee_id),
+			     team_id     = COALESCE($4, team_id),
+			     version     = version + 1,
+			     updated_at  = now()
+			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL
+			 RETURNING id, org_id, number, requester_id, assignee_id, team_id,
+			           sla_policy_id, merged_into_id, subject, status, priority,
+			           channel, first_response_due_at, resolution_due_at,
+			           first_response_at, resolved_at, closed_at, version,
+			           created_at, updated_at, deleted_at`,
+			in.OrgID, in.Number, in.AssigneeID, in.TeamID,
+		).Scan(
+			&out.ID, &out.OrgID, &out.Number, &out.RequesterID, &out.AssigneeID,
+			&out.TeamID, &out.SLAPolicyID, &out.MergedIntoID, &out.Subject,
+			&out.Status, &out.Priority, &out.Channel, &out.FirstResponseDueAt,
+			&out.ResolutionDueAt, &out.FirstResponseAt, &out.ResolvedAt,
+			&out.ClosedAt, &out.Version, &out.CreatedAt, &out.UpdatedAt, &out.DeletedAt,
+		); err != nil {
+			return fmt.Errorf("update ticket: %w", err)
+		}
+
+		if err := Record(ctx, tx, in.OrgID, out.ID, in.Actor, "ticket.assigned", map[string]any{
+			"old_assignee_id": oldAssignee,
+			"new_assignee_id": in.AssigneeID,
+			"old_team_id":     oldTeam,
+			"new_team_id":     in.TeamID,
+		}); err != nil {
+			return err
+		}
+
+		if in.AssigneeID != nil {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO ticket_watchers (ticket_id, user_id)
+				 VALUES ($1, $2)
+				 ON CONFLICT (ticket_id, user_id) DO NOTHING`,
+				out.ID, *in.AssigneeID,
+			); err != nil {
+				return fmt.Errorf("add watcher: %w", err)
+			}
+		}
+
+		if err := tx.QueryRow(ctx,
+			`SELECT c.email, COALESCE(c.name, '') FROM customers c WHERE c.id = $1`,
+			out.RequesterID,
+		).Scan(&out.RequesterEmail, &out.RequesterName); err != nil {
+			return fmt.Errorf("load requester: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return Ticket{}, err
+	}
+	return out, nil
 }
