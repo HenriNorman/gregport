@@ -125,6 +125,18 @@ definitions:
       message:
         type: string
     type: object
+  tickets.AssignTicketRequest:
+    properties:
+      assignee_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      auto:
+        example: false
+        type: boolean
+      team_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
   tickets.CommentDTO:
     properties:
       author_type:
@@ -927,6 +939,55 @@ paths:
       security:
       - BearerAuth: []
       summary: Update status, priority, or subject
+      tags:
+      - tickets
+  /v1/tickets/{number}/assignment:
+    post:
+      consumes:
+      - application/json
+      description: 'Any member of the org may assign a ticket. Exactly one form: assignee_id
+        (direct), team_id (set the team), or team_id plus auto:true (round-robin within
+        the team). The assignee must be an org member with role owner, admin, or agent.
+        A ticket in another org returns 404, never 403.'
+      parameters:
+      - description: Per-org ticket number
+        in: path
+        name: number
+        required: true
+        type: integer
+      - description: Assignment payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tickets.AssignTicketRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tickets.TicketDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Ticket or team not found, or belongs to another org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Invalid input, assignee not an agent, or team has no assignable
+            members
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Assign a ticket to a user, a team, or round-robin
       tags:
       - tickets
   /v1/tickets/{number}/comments:
