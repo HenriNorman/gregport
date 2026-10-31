@@ -110,6 +110,7 @@ func main() {
 				r.Post("/{number}/comments", ticketsHandler.CreateComment)
 				r.Post("/{number}/merge", ticketsHandler.Merge)
 				r.Get("/{number}/comments", ticketsHandler.ListComments)
+				r.Post("/{number}/macros/{id}", ticketsHandler.ApplyMacro)
 			})
 
 			r.Route("/teams", func(r chi.Router) {
@@ -123,6 +124,12 @@ func main() {
 			r.Route("/tags", func(r chi.Router) {
 				r.Post("/", ticketsHandler.CreateTag)
 				r.Get("/", ticketsHandler.ListTags)
+			})
+			r.Route("/macros", func(r chi.Router) {
+				r.With(auth.RequireRole("owner", "admin")).Post("/", ticketsHandler.CreateMacro)
+				r.Get("/", ticketsHandler.ListMacros)
+				r.With(auth.RequireRole("owner", "admin")).Patch("/{id}", ticketsHandler.UpdateMacro)
+				r.With(auth.RequireRole("owner", "admin")).Delete("/{id}", ticketsHandler.DeleteMacro)
 			})
 		})
 	})

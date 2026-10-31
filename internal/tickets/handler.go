@@ -172,6 +172,25 @@ type MergeTicketRequest struct {
 	IntoNumber int64 `json:"into_number" example:"1043"`
 }
 
+// --- Macro ---
+
+func toMacroDTO(m Macro) MacroDTO {
+	var actions MacroActions
+	_ = json.Unmarshal(m.Actions, &actions)
+	return MacroDTO{
+		ID:   m.ID.String(),
+		Name: m.Name,
+		Actions: MacroActionsDTO{
+			SetStatus:   actions.SetStatus,
+			SetPriority: actions.SetPriority,
+			AddTags:     actions.AddTags,
+			Comment:     actions.Comment,
+		},
+		CreatedAt: m.CreatedAT,
+		UpdatedAt: m.UpdatedAt,
+	}
+}
+
 func toTicketEventDTO(e TicketEvent) TicketEventDTO {
 	return TicketEventDTO{
 		ID:        e.ID.String(),
@@ -1114,6 +1133,181 @@ func (h *Handler) Merge(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// CreateMacro creates a saved reply macro.
+//
+//	@Summary		Create a macro
+//	@Description	Requires role owner or admin. Actions are validated: set_status and set_priority must be valid enums, tags non-empty, comment under 20k. Unknown fields in actions are rejected by the JSON decoder.
+//	@Tags			macros
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			body	body		CreateMacroRequest	true	"Macro payload"
+//	@Success		201		{object}	MacroDTO
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		403		{object}	httpx.APIError
+//	@Failure		409		{object}	httpx.APIError	"Macro name already exists in this org"
+//	@Failure		422		{object}	httpx.APIError
+//	@Router			/v1/macros [post]
+func (h *Handler) CreateMacro(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	var req CreateMacroRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+	m, err := h.svc.CreateMacro(r.Context(), p, req)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	_ = httpx.WriteJSON(w, http.StatusCreated, toMacroDTO(m))
+}
+
+// ListMacros lists macros in the caller's org.
+//
+//	@Summary		List macros in the org
+//	@Description	Any member of the org may list macros.
+//	@Tags			macros
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	MacroListResponse
+//	@Failure		401	{object}	httpx.APIError
+//	@Router			/v1/macros [get]
+func (h *Handler) ListMacros(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	macros, err := h.svc.ListMacros(r.Context(), p)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	dtos := make([]MacroDTO, 0, len(macros))
+	for _, m := range macros {
+		dtos = append(dtos, toMacroDTO(m))
+	}
+	_ = httpx.WriteJSON(w, http.StatusOK, MacroListResponse{Macros: dtos})
+}
+
+// UpdateMacro updates a macro's name and actions.
+//
+//	@Summary		Update a macro
+//	@Description	Requires role owner or admin.
+//	@Tags			macros
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string				true	"Macro UUID"
+//	@Param			body	body		UpdateMacroRequest	true	"Macro payload"
+//	@Success		200		{object}	MacroDTO
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		403		{object}	httpx.APIError
+//	@Failure		404		{object}	httpx.APIError
+//	@Failure		409		{object}	httpx.APIError
+//	@Failure		422		{object}	httpx.APIError
+//	@Router			/v1/macros/{id} [patch]
+func (h *Handler) UpdateMacro(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	macroID, err := parseUUIDParam(r, "id")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_id", "macro id must be a UUID"))
+		return
+	}
+	var req UpdateMacroRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+	m, err := h.svc.UpdateMacro(r.Context(), p, macroID, req)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	_ = httpx.WriteJSON(w, http.StatusOK, toMacroDTO(m))
+}
+
+// DeleteMacro deletes a macro.
+//
+//	@Summary		Delete a macro
+//	@Description	Requires role owner or admin.
+//	@Tags			macros
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path	string	true	"Macro UUID"
+//	@Success		204	"No Content"
+//	@Failure		400	{object}	httpx.APIError
+//	@Failure		401	{object}	httpx.APIError
+//	@Failure		403	{object}	httpx.APIError
+//	@Failure		404	{object}	httpx.APIError
+//	@Router			/v1/macros/{id} [delete]
+func (h *Handler) DeleteMacro(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	macroID, err := parseUUIDParam(r, "id")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_id", "macro id must be a UUID"))
+		return
+	}
+	if err := h.svc.DeleteMacro(r.Context(), p, macroID); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ApplyMacro applies a macro to a ticket.
+//
+//	@Summary		Apply a macro to a ticket
+//	@Description	Any member of the org may apply a macro. Actions run in order: status, priority, tags, comment. Each action calls the same service method as the equivalent endpoint, so the state machine, events, and authorization apply. Application is not atomic: if a later action fails, earlier actions stay applied. Ordering status first means an illegal transition fails before anything is written.
+//	@Tags			macros
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			number	path	string	true	"Per-org ticket number"
+//	@Param			id		path	string	true	"Macro UUID"
+//	@Success		204		"No Content"
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		404		{object}	httpx.APIError	"Macro or ticket not found, or belongs to another org"
+//	@Failure		422		{object}	httpx.APIError	"An action failed (e.g. illegal status transition, missing tag)"
+//	@Router			/v1/tickets/{number}/macros/{id} [post]
+func (h *Handler) ApplyMacro(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	number, err := parseNumber(r)
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		return
+	}
+	macroID, err := parseUUIDParam(r, "id")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_id", "macro id must be a UUID"))
+		return
+	}
+	if err := h.svc.ApplyMacro(r.Context(), p, number, macroID); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- helpers ---
 
 func parseNumber(r *http.Request) (int64, error) {
@@ -1222,6 +1416,13 @@ func mapTicketError(err error) *httpx.APIError {
 		return httpx.Unprocessable("merge_requester_mismatch", "both tickets must have the same requester")
 	case errors.Is(err, ErrSourceMerged):
 		return httpx.Conflict("source_merged", "source ticket is already merged")
+	case errors.Is(err, ErrMacroNotFound):
+		return &httpx.APIError{
+			Status: http.StatusNotFound, Code: "macro_not_found",
+			Message: "macro not found",
+		}
+	case errors.Is(err, ErrMacroNameTaken):
+		return httpx.Conflict("macro_name_taken", "a macro with that name already exists")
 	default:
 		return httpx.InternalError(err)
 	}

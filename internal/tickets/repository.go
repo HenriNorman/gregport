@@ -1288,3 +1288,100 @@ func (r *Repository) MergeTickets(ctx context.Context, orgID uuid.UUID, sourceNu
 	}
 	return source, target, nil
 }
+
+//in the Model it was Actions, not body
+//but in the DB its body, so now body fetched from the DB is assigned into 
+//actions field in internal/tickets/models.go
+func (r *Repository) CreateMacro(ctx context.Context, orgID, createdBy uuid.UUID, name string, actions []byte) (Macro, error) {
+	var m Macro
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO macros (org_id, name, body, created_by)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id, org_id, name, body, created_by, created_at, updated_at`,
+		orgID, name, actions, createdBy,
+	).Scan(&m.ID, &m.OrgID, &m.Name, &m.Actions, &m.CreatedBy, &m.CreatedAT, &m.UpdatedAt)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return Macro{}, ErrMacroNameTaken
+		}
+		return Macro{}, fmt.Errorf("create macro: %w", err)
+	}
+	return m, nil
+}
+
+func (r *Repository) ListMacros(ctx context.Context, orgID uuid.UUID) ([]Macro, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, org_id, name, body, created_by, created_at, updated_at
+		 FROM macros WHERE org_id = $1 ORDER BY name`,
+		orgID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list macros: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Macro
+	for rows.Next() {
+		var m Macro
+		if err := rows.Scan(&m.ID, &m.OrgID, &m.Name, &m.Actions, &m.CreatedBy, &m.CreatedAT, &m.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan macro: %w", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
+
+func (r *Repository) GetMacro(ctx context.Context, orgID, macroID uuid.UUID) (Macro, error) {
+	var m Macro
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, org_id, name, body, created_by, created_at, updated_at
+		 FROM macros WHERE org_id = $1 AND id = $2`,
+		orgID, macroID,
+	).Scan(&m.ID, &m.OrgID, &m.Name, &m.Actions, &m.CreatedBy, &m.CreatedAT, &m.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Macro{}, ErrMacroNotFound
+		}
+		return Macro{}, fmt.Errorf("get macro: %w", err)
+	}
+	return m, nil
+}
+
+func (r *Repository) UpdateMacro(ctx context.Context, orgID, macroID uuid.UUID, name string, actions []byte) (Macro, error) {
+	var m Macro
+	err := r.pool.QueryRow(ctx,
+		`UPDATE macros SET name = $3, body = $4, updated_at = now()
+		 WHERE org_id = $1 AND id = $2
+		 RETURNING id, org_id, name, body, created_by, created_at, updated_at`,
+		orgID, macroID, name, actions,
+	).Scan(&m.ID, &m.OrgID, &m.Name, &m.Actions, &m.CreatedBy, &m.CreatedAT, &m.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Macro{}, ErrMacroNotFound
+		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return Macro{}, ErrMacroNameTaken
+		}
+		return Macro{}, fmt.Errorf("update macro: %w", err)
+	}
+	return m, nil
+}
+
+func (r *Repository) DeleteMacro(ctx context.Context, orgID, macroID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM macros WHERE org_id = $1 AND id = $2`,
+		orgID, macroID,
+	)
+	if err != nil {
+		return fmt.Errorf("delete macro: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrMacroNotFound
+	}
+	return nil
+}

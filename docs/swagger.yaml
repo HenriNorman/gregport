@@ -168,6 +168,14 @@ definitions:
         example: false
         type: boolean
     type: object
+  tickets.CreateMacroRequest:
+    properties:
+      actions:
+        $ref: '#/definitions/tickets.MacroActionsDTO'
+      name:
+        example: Mark pending
+        type: string
+    type: object
   tickets.CreateTagRequest:
     properties:
       name:
@@ -202,6 +210,60 @@ definitions:
       subject:
         example: Cannot log in
         type: string
+    type: object
+  tickets.MacroActionsDTO:
+    properties:
+      add_tags:
+        example:
+        - billing
+        - refund
+        items:
+          type: string
+        type: array
+      comment:
+        example: Waiting on the customer.
+        type: string
+      set_priority:
+        enum:
+        - low
+        - normal
+        - high
+        - urgent
+        example: high
+        type: string
+      set_status:
+        enum:
+        - new
+        - open
+        - pending
+        - solved
+        - closed
+        example: pending
+        type: string
+    type: object
+  tickets.MacroDTO:
+    properties:
+      actions:
+        $ref: '#/definitions/tickets.MacroActionsDTO'
+      created_at:
+        example: "2026-01-15T10:00:00Z"
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      name:
+        example: Mark pending
+        type: string
+      updated_at:
+        example: "2026-01-15T10:00:00Z"
+        type: string
+    type: object
+  tickets.MacroListResponse:
+    properties:
+      macros:
+        items:
+          $ref: '#/definitions/tickets.MacroDTO'
+        type: array
     type: object
   tickets.MergeTicketRequest:
     properties:
@@ -334,6 +396,14 @@ definitions:
         items:
           $ref: '#/definitions/tickets.TicketDTO'
         type: array
+    type: object
+  tickets.UpdateMacroRequest:
+    properties:
+      actions:
+        $ref: '#/definitions/tickets.MacroActionsDTO'
+      name:
+        example: Mark pending
+        type: string
     type: object
   tickets.UpdateTeamRequest:
     properties:
@@ -512,6 +582,157 @@ paths:
       summary: Create an organization, user, and owner membership
       tags:
       - auth
+  /v1/macros:
+    get:
+      description: Any member of the org may list macros.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tickets.MacroListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: List macros in the org
+      tags:
+      - macros
+    post:
+      consumes:
+      - application/json
+      description: 'Requires role owner or admin. Actions are validated: set_status
+        and set_priority must be valid enums, tags non-empty, comment under 20k. Unknown
+        fields in actions are rejected by the JSON decoder.'
+      parameters:
+      - description: Macro payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tickets.CreateMacroRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/tickets.MacroDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "409":
+          description: Macro name already exists in this org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Create a macro
+      tags:
+      - macros
+  /v1/macros/{id}:
+    delete:
+      description: Requires role owner or admin.
+      parameters:
+      - description: Macro UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Delete a macro
+      tags:
+      - macros
+    patch:
+      consumes:
+      - application/json
+      description: Requires role owner or admin.
+      parameters:
+      - description: Macro UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Macro payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tickets.UpdateMacroRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tickets.MacroDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Update a macro
+      tags:
+      - macros
   /v1/me:
     get:
       description: Reads `user_id`, `org_id`, and `role` from the verified access
@@ -1245,6 +1466,51 @@ paths:
       summary: List the ticket timeline
       tags:
       - tickets
+  /v1/tickets/{number}/macros/{id}:
+    post:
+      description: 'Any member of the org may apply a macro. Actions run in order:
+        status, priority, tags, comment. Each action calls the same service method
+        as the equivalent endpoint, so the state machine, events, and authorization
+        apply. Application is not atomic: if a later action fails, earlier actions
+        stay applied. Ordering status first means an illegal transition fails before
+        anything is written.'
+      parameters:
+      - description: Per-org ticket number
+        in: path
+        name: number
+        required: true
+        type: string
+      - description: Macro UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Macro or ticket not found, or belongs to another org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: An action failed (e.g. illegal status transition, missing tag)
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Apply a macro to a ticket
+      tags:
+      - macros
   /v1/tickets/{number}/merge:
     post:
       consumes:

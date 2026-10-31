@@ -18,6 +18,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Watchers | Complete — add/remove (idempotent); assignee and agent commenters auto-watch |
 | Timeline | Complete — cursor-paginated ticket_events, oldest first |
 | Merge | Complete — source closed and pointed at target; merged tickets read-only |
+| Macros | Complete — CRUD (admin/owner) and apply to a ticket (any member) |
 
 ### Authentication
 
@@ -342,6 +343,20 @@ The join on `memberships` excludes agents removed from the org. A team with no a
   `FOR UPDATE` and returns 409 if it is set. The check is in the repository,
   next to the lock, so it cannot be bypassed by a caller that skips the
   service.
+- **Macros store validated JSON actions and apply through the service.**
+  `macros.body` holds `{"set_status", "set_priority", "add_tags", "comment"}`,
+  validated at create/update (enum values, non-empty tags, 20k comment cap).
+  Applying a macro calls the same service methods as the normal endpoints —
+  `UpdateTicket`, `AttachTag`, `CreateComment` — so the state machine, events,
+  and authorization apply. A macro that sets an illegal transition fails with
+  422, exactly like `PATCH /v1/tickets/{number}` would.
+- **Macro application is ordered, not atomic.** Actions run in order: status,
+  priority, tags, comment. Status first means an illegal transition fails
+  before anything is written. If a later action fails (e.g. a tag does not
+  exist), earlier actions stay applied. This is deliberate and documented.
+- **Macro mutations are admin/owner; GET and apply are any member.** Creating,
+  updating, and deleting a macro require role owner or admin. Listing and
+  applying a macro are open to any org member.
 
   | `event_type` | `data` fields |
   |---|---|
@@ -436,6 +451,10 @@ These tests use a real PostgreSQL database.
   merge into self returns 422; merging into another org's ticket returns 404;
   two concurrent merges of the same pair yield exactly one success; a comment
   on a merged source returns 409.
+- Macros: create validates status/priority enums and rejects unknown fields;
+  duplicate name returns 409; applying a macro sets status, attaches tags,
+  and adds a comment; an illegal status transition in a macro returns 422
+  (state machine applies); another org's macro returns 404.
 
 ### Unit Tests
 

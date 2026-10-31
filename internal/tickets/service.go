@@ -3,6 +3,8 @@ package tickets
 import (
 	"context"
 	"strings"
+	"encoding/json"
+	"fmt" 
 
 	"github.com/google/uuid"
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
@@ -270,4 +272,126 @@ func (s *Service) MergeTickets(ctx context.Context, p requestctx.Principal, sour
 	}
 	return s.repo.MergeTickets(ctx, p.OrgID, sourceNumber, targetNumber,
 		Actor{Type: "user", ID: &p.UserID})
+}
+
+func (s *Service) CreateMacro(ctx context.Context, p requestctx.Principal, req CreateMacroRequest) (Macro, error) {
+	if !CanManageTeams(p) {
+		return Macro{}, ErrForbidden
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" || len(name) > 100 {
+		return Macro{}, ErrInvalidInput
+	}
+	actions, err := validateActions(req.Actions)
+	if err != nil {
+		return Macro{}, err
+	}
+	return s.repo.CreateMacro(ctx, p.OrgID, p.UserID, name, actions)
+}
+
+func (s *Service) ListMacros(ctx context.Context, p requestctx.Principal) ([]Macro, error) {
+	return s.repo.ListMacros(ctx, p.OrgID)
+}
+
+func (s *Service) UpdateMacro(ctx context.Context, p requestctx.Principal, macroID uuid.UUID, req UpdateMacroRequest) (Macro, error) {
+	if !CanManageTeams(p) {
+		return Macro{}, ErrForbidden
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" || len(name) > 100 {
+		return Macro{}, ErrInvalidInput
+	}
+	actions, err := validateActions(req.Actions)
+	if err != nil {
+		return Macro{}, err
+	}
+	return s.repo.UpdateMacro(ctx, p.OrgID, macroID, name, actions)
+}
+
+func (s *Service) DeleteMacro(ctx context.Context, p requestctx.Principal, macroID uuid.UUID) error {
+	if !CanManageTeams(p) {
+		return ErrForbidden
+	}
+	return s.repo.DeleteMacro(ctx, p.OrgID, macroID)
+}
+
+// ApplyMacro applies a macro's actions in order: status, priority, tags,
+// comment. Each action calls the same service method as the equivalent
+// endpoint, so the state machine, events, and authorization apply. The
+// application is not atomic: if a later action fails, earlier actions stay
+// applied. Ordering status first means an illegal transition fails before
+// anything is written.
+func (s *Service) ApplyMacro(ctx context.Context, p requestctx.Principal, number int64, macroID uuid.UUID) error {
+	m, err := s.repo.GetMacro(ctx, p.OrgID, macroID)
+	if err != nil {
+		return err
+	}
+
+	var actions MacroActions
+	if err := json.Unmarshal(m.Actions, &actions); err != nil {
+		return fmt.Errorf("decode macro actions: %w", err)
+	}
+
+	if actions.SetStatus != "" {
+		tk, err := s.repo.GetTicket(ctx, p.OrgID, number)
+		if err != nil {
+			return err
+		}
+		if _, err := s.UpdateTicket(ctx, p, number, tk.Version, UpdateTicketRequest{
+			Status: &actions.SetStatus,
+		}); err != nil {
+			return err
+		}
+	}
+
+	if actions.SetPriority != "" {
+		tk, err := s.repo.GetTicket(ctx, p.OrgID, number)
+		if err != nil {
+			return err
+		}
+		if _, err := s.UpdateTicket(ctx, p, number, tk.Version, UpdateTicketRequest{
+			Priority: &actions.SetPriority,
+		}); err != nil {
+			return err
+		}
+	}
+
+	for _, tag := range actions.AddTags {
+		if err := s.AttachTag(ctx, p, number, tag); err != nil {
+			return err
+		}
+	}
+
+	if actions.Comment != "" {
+		if _, err := s.CreateComment(ctx, p, number, CreateCommentRequest{
+			Body: actions.Comment,
+		}); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateActions(a MacroActionsDTO) ([]byte, error) {
+	if a.SetStatus != "" && !validStatus(a.SetStatus) {
+		return nil, ErrInvalidInput
+	}
+	if a.SetPriority != "" && !validPriority(a.SetPriority) {
+		return nil, ErrInvalidInput
+	}
+	for _, t := range a.AddTags {
+		if strings.TrimSpace(t) == "" {
+			return nil, ErrInvalidInput
+		}
+	}
+	if len(a.Comment) > 20_000 {
+		return nil, ErrInvalidInput
+	}
+	return json.Marshal(MacroActions{
+		SetStatus:   a.SetStatus,
+		SetPriority: a.SetPriority,
+		AddTags:     a.AddTags,
+		Comment:     a.Comment,
+	})
 }

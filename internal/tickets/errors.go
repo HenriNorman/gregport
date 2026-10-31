@@ -21,4 +21,6 @@ var (
 	ErrMergeTargetInvalid 	= errors.New("merge target is closed or already merged")
 	ErrMergeRequester     	= errors.New("merge requires the same requester on both tickets")
 	ErrSourceMerged = errors.New("source ticket is already merged")
+	ErrMacroNotFound  = errors.New("macro not found")
+	ErrMacroNameTaken = errors.New("macro name already taken")
 )
