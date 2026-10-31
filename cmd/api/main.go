@@ -17,6 +17,30 @@ import (
 	"github.com/HenriNorman/gregport/internal/tickets"
 )
 
+//	@title			gregport API
+//	@version		1.0.0
+//	@description	Multi-tenant support ticketing SaaS.
+//	@description
+//	@description	## Authentication
+//	@description	All endpoints except `/v1/auth/*` and `/healthz` require `Authorization: Bearer <access_token>`.
+//	@description	The access token is a JWT containing `sub` (user id), `org` (org id), and `role`.
+//	@description	Missing, expired, or invalid tokens return 401.
+//	@description
+//	@description	## Authorization
+//	@description	Roles are `owner`, `admin`, `agent`. Teams and macro mutations require `owner` or `admin`.
+//	@description	Only `DELETE /v1/tickets/{number}` is role-gated among ticket operations (owner/admin).
+//	@description	Internal notes on comments require an agent role or above.
+//	@description
+//	@description	## Tenant isolation
+//	@description	`org_id` comes only from the token, never from the URL, body, or query string.
+//	@description	A ticket in another org returns 404, never 403 — the API never confirms existence in someone else's tenant.
+//	@host			localhost:8080
+//	@BasePath		/
+//	@schemes		http
+//	@securityDefinitions.apikey	BearerAuth
+//	@in							header
+//	@name						Authorization
+//	@description				Type "Bearer" followed by a space and the access token.
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("no .env file, relying on real env vars")
@@ -81,14 +105,15 @@ func main() {
 				r.Post("/{number}/comments", ticketsHandler.CreateComment)
 				r.Get("/{number}/comments", ticketsHandler.ListComments)
 			})
-		})
-		r.Route("/teams", func(r chi.Router) {
-			r.With(auth.RequireRole("owner", "admin")).Post("/", ticketsHandler.CreateTeam)
-			r.Get("/", ticketsHandler.ListTeams)
-			r.With(auth.RequireRole("owner", "admin")).Patch("/{id}", ticketsHandler.UpdateTeam)
-			r.With(auth.RequireRole("owner", "admin")).Delete("/{id}", ticketsHandler.DeleteTeam)
-			r.With(auth.RequireRole("owner", "admin")).Put("/{id}/members/{userId}", ticketsHandler.AddTeamMember)
-			r.With(auth.RequireRole("owner", "admin")).Delete("/{id}/members/{userId}", ticketsHandler.RemoveTeamMember)
+
+			r.Route("/teams", func(r chi.Router) {
+				r.With(auth.RequireRole("owner", "admin")).Post("/", ticketsHandler.CreateTeam)
+				r.Get("/", ticketsHandler.ListTeams)
+				r.With(auth.RequireRole("owner", "admin")).Patch("/{id}", ticketsHandler.UpdateTeam)
+				r.With(auth.RequireRole("owner", "admin")).Delete("/{id}", ticketsHandler.DeleteTeam)
+				r.With(auth.RequireRole("owner", "admin")).Put("/{id}/members/{userId}", ticketsHandler.AddTeamMember)
+				r.With(auth.RequireRole("owner", "admin")).Delete("/{id}/members/{userId}", ticketsHandler.RemoveTeamMember)
+			})
 		})
 	})
 

@@ -2,10 +2,11 @@ package auth
 
 import (
 	"errors"
-	"net/http"
 	"net"
-	
+	"net/http"
+
 	"github.com/google/uuid"
+
 	"github.com/HenriNorman/gregport/internal/platform/httpx"
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 )
@@ -18,61 +19,77 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
+// --- DTOs ---
 
 type SignupRequest struct {
-	OrgName  string `json:"org_name"`
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	OrgName  string `json:"org_name" example:"Acme"`
+	Name     string `json:"name"     example:"Henri"`
+	Email    string `json:"email"    example:"h@acme.com"`
+	Password string `json:"password" example:"correct-horse-battery"`
 }
 
 type UserDTO struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
-	Name  string `json:"name"`
+	ID    string `json:"id"    example:"550e8400-e29b-41d4-a716-446655440000"`
+	Email string `json:"email" example:"h@acme.com"`
+	Name  string `json:"name"  example:"Henri"`
 }
 
 type OrgDTO struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Slug string `json:"slug"`
+	ID   string `json:"id"   example:"550e8400-e29b-41d4-a716-446655440000"`
+	Name string `json:"name" example:"Acme"`
+	Slug string `json:"slug" example:"acme"`
 }
 
 type SignupResponse struct {
 	User         UserDTO `json:"user"`
 	Organization OrgDTO  `json:"organization"`
-	Role         string  `json:"role"`
+	Role         string  `json:"role" example:"owner" enums:"owner,admin,agent"`
 }
 
 type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	OrgSlug  string `json:"org_slug,omitempty"`
+	Email    string `json:"email"              example:"h@acme.com"`
+	Password string `json:"password"           example:"correct-horse-battery"`
+	OrgSlug  string `json:"org_slug,omitempty" example:"acme"`
 }
 
 type TokenResponse struct {
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
-	ExpiresIn    int       `json:"expires_in"`   // seconds
-	UserID       uuid.UUID `json:"user_id"`
-	OrgID        uuid.UUID `json:"org_id"`
-	Role         string    `json:"role"`
+	AccessToken  string    `json:"access_token"  example:"eyJhbGciOiJIUzI1NiIs..."`
+	RefreshToken string    `json:"refresh_token" example:"YToOokzD0OzvHq8-Nl5zm8tqOFgK8woyEqQbDwgEBxY"`
+	ExpiresIn    int       `json:"expires_in"    example:"900"`
+	UserID       uuid.UUID `json:"user_id"       example:"550e8400-e29b-41d4-a716-446655440000"`
+	OrgID        uuid.UUID `json:"org_id"        example:"550e8400-e29b-41d4-a716-446655440000"`
+	Role         string    `json:"role"          example:"owner" enums:"owner,admin,agent"`
 }
 
 type RefreshRequest struct {
-	RefreshToken string `json:"refresh_token"`
+	RefreshToken string `json:"refresh_token" example:"YToOokzD0OzvHq8-Nl5zm8tqOFgK8woyEqQbDwgEBxY"`
 }
 
 type LogoutRequest struct {
-	RefreshToken string `json:"refresh_token"`
+	RefreshToken string `json:"refresh_token" example:"YToOokzD0OzvHq8-Nl5zm8tqOFgK8woyEqQbDwgEBxY"`
 }
 
 type MeResponse struct {
-	UserID string `json:"user_id"`
-	OrgID  string `json:"org_id"`
-	Role   string `json:"role"`
+	UserID string `json:"user_id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	OrgID  string `json:"org_id"  example:"550e8400-e29b-41d4-a716-446655440000"`
+	Role   string `json:"role"    example:"owner" enums:"owner,admin,agent"`
 }
 
+// --- Handlers ---
+
+// Signup creates a new organization, user, and owner membership atomically.
+//
+//	@Summary		Create an organization, user, and owner membership
+//	@Description	Creates the three rows in a single transaction. Email is normalized (lowercased, trimmed). Passwords are bcrypt-hashed and never returned.
+//	@Tags			auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		SignupRequest	true	"Signup payload"
+//	@Success		201		{object}	SignupResponse
+//	@Failure		400		{object}	httpx.APIError	"Malformed JSON or unknown field"
+//	@Failure		409		{object}	httpx.APIError	"Email or organization slug already taken"
+//	@Failure		422		{object}	httpx.APIError	"Validation failed"
+//	@Router			/v1/auth/signup [post]
 func (h *Handler) Signup(w http.ResponseWriter, r *http.Request) {
 	var req SignupRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
@@ -99,25 +116,19 @@ func (h *Handler) Signup(w http.ResponseWriter, r *http.Request) {
 	_ = httpx.WriteJSON(w, http.StatusCreated, resp)
 }
 
-func mapSignupError(err error) *httpx.APIError {
-	switch {
-	case errors.Is(err, ErrInvalidEmail):
-		return httpx.Unprocessable("invalid_email", "email format is invalid")
-	case errors.Is(err, ErrWeakPassword):
-		return httpx.Unprocessable("weak_password", "password must be between 8 and 72 characters")
-	case errors.Is(err, ErrEmptyName):
-		return httpx.Unprocessable("empty_name", "name cannot be empty")
-	case errors.Is(err, ErrInvalidInput):
-		return httpx.Unprocessable("invalid_input", "org_name is required")
-	case errors.Is(err, ErrEmailTaken):
-		return httpx.Conflict("email_taken", "email is already registered")
-	case errors.Is(err, ErrSlugTaken):
-		return httpx.Conflict("slug_taken", "organization slug is already taken")
-	default:
-		return httpx.InternalError(err)
-	}
-}
-
+// Login authenticates a user and returns an access token and a refresh token.
+//
+//	@Summary		Log in and receive an access token and a refresh token
+//	@Description	Returns identical 401 responses for unknown email and wrong password. When the user belongs to multiple orgs, `org_slug` is required.
+//	@Tags			auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		LoginRequest	true	"Login payload"
+//	@Success		200		{object}	TokenResponse
+//	@Failure		400		{object}	httpx.APIError	"Malformed JSON or unknown field"
+//	@Failure		401		{object}	httpx.APIError	"Invalid credentials"
+//	@Failure		422		{object}	httpx.APIError	"org_slug required for multi-org users"
+//	@Router			/v1/auth/login [post]
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
@@ -147,6 +158,18 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Refresh rotates a refresh token and issues a new token pair.
+//
+//	@Summary		Rotate the refresh token and issue a new token pair
+//	@Description	Replaying a spent refresh token revokes the whole family — the correct response to probable theft. The legitimate user is logged out too.
+//	@Tags			auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		RefreshRequest	true	"Refresh token"
+//	@Success		200		{object}	TokenResponse
+//	@Failure		400		{object}	httpx.APIError	"Malformed JSON or unknown field"
+//	@Failure		401		{object}	httpx.APIError	"Unknown, expired, or already-used refresh token"
+//	@Router			/v1/auth/refresh [post]
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var req RefreshRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
@@ -170,6 +193,17 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Logout revokes the refresh token's whole family.
+//
+//	@Summary		Revoke the refresh token's whole family
+//	@Description	Idempotent — logging out an already-revoked token is a no-op, not an error.
+//	@Tags			auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body	LogoutRequest	true	"Refresh token"
+//	@Success		204		"No Content"
+//	@Failure		400		{object}	httpx.APIError	"Malformed JSON or unknown field"
+//	@Router			/v1/auth/logout [post]
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	var req LogoutRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
@@ -181,6 +215,16 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// Me returns the authenticated principal.
+//
+//	@Summary		Return the authenticated principal
+//	@Description	Reads `user_id`, `org_id`, and `role` from the verified access token. Proves the auth middleware works.
+//	@Tags			me
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	MeResponse
+//	@Failure		401	{object}	httpx.APIError	"Missing, malformed, expired, or invalid token"
+//	@Router			/v1/me [get]
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
@@ -194,6 +238,27 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		OrgID:  p.OrgID.String(),
 		Role:   p.Role,
 	})
+}
+
+// --- Error mapping ---
+
+func mapSignupError(err error) *httpx.APIError {
+	switch {
+	case errors.Is(err, ErrInvalidEmail):
+		return httpx.Unprocessable("invalid_email", "email format is invalid")
+	case errors.Is(err, ErrWeakPassword):
+		return httpx.Unprocessable("weak_password", "password must be between 8 and 72 characters")
+	case errors.Is(err, ErrEmptyName):
+		return httpx.Unprocessable("empty_name", "name cannot be empty")
+	case errors.Is(err, ErrInvalidInput):
+		return httpx.Unprocessable("invalid_input", "org_name is required")
+	case errors.Is(err, ErrEmailTaken):
+		return httpx.Conflict("email_taken", "email is already registered")
+	case errors.Is(err, ErrSlugTaken):
+		return httpx.Conflict("slug_taken", "organization slug is already taken")
+	default:
+		return httpx.InternalError(err)
+	}
 }
 
 func mapLoginError(err error) *httpx.APIError {

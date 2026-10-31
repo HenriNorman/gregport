@@ -1,0 +1,1032 @@
+basePath: /
+definitions:
+  auth.LoginRequest:
+    properties:
+      email:
+        example: h@acme.com
+        type: string
+      org_slug:
+        example: acme
+        type: string
+      password:
+        example: correct-horse-battery
+        type: string
+    type: object
+  auth.LogoutRequest:
+    properties:
+      refresh_token:
+        example: YToOokzD0OzvHq8-Nl5zm8tqOFgK8woyEqQbDwgEBxY
+        type: string
+    type: object
+  auth.MeResponse:
+    properties:
+      org_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      role:
+        enum:
+        - owner
+        - admin
+        - agent
+        example: owner
+        type: string
+      user_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  auth.OrgDTO:
+    properties:
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      name:
+        example: Acme
+        type: string
+      slug:
+        example: acme
+        type: string
+    type: object
+  auth.RefreshRequest:
+    properties:
+      refresh_token:
+        example: YToOokzD0OzvHq8-Nl5zm8tqOFgK8woyEqQbDwgEBxY
+        type: string
+    type: object
+  auth.SignupRequest:
+    properties:
+      email:
+        example: h@acme.com
+        type: string
+      name:
+        example: Henri
+        type: string
+      org_name:
+        example: Acme
+        type: string
+      password:
+        example: correct-horse-battery
+        type: string
+    type: object
+  auth.SignupResponse:
+    properties:
+      organization:
+        $ref: '#/definitions/auth.OrgDTO'
+      role:
+        enum:
+        - owner
+        - admin
+        - agent
+        example: owner
+        type: string
+      user:
+        $ref: '#/definitions/auth.UserDTO'
+    type: object
+  auth.TokenResponse:
+    properties:
+      access_token:
+        example: eyJhbGciOiJIUzI1NiIs...
+        type: string
+      expires_in:
+        example: 900
+        type: integer
+      org_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      refresh_token:
+        example: YToOokzD0OzvHq8-Nl5zm8tqOFgK8woyEqQbDwgEBxY
+        type: string
+      role:
+        enum:
+        - owner
+        - admin
+        - agent
+        example: owner
+        type: string
+      user_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  auth.UserDTO:
+    properties:
+      email:
+        example: h@acme.com
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      name:
+        example: Henri
+        type: string
+    type: object
+  httpx.APIError:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  tickets.CommentDTO:
+    properties:
+      author_type:
+        enum:
+        - user
+        - customer
+        - system
+        example: user
+        type: string
+      body:
+        example: We're looking into this.
+        type: string
+      created_at:
+        example: "2026-01-15T10:00:00Z"
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      is_internal:
+        example: false
+        type: boolean
+    type: object
+  tickets.CreateCommentRequest:
+    properties:
+      body:
+        example: We're looking into this.
+        type: string
+      is_internal:
+        example: false
+        type: boolean
+    type: object
+  tickets.CreateTeamRequest:
+    properties:
+      name:
+        example: Support
+        type: string
+    type: object
+  tickets.CreateTicketRequest:
+    properties:
+      body:
+        example: I get an error when I try to log in.
+        type: string
+      priority:
+        enum:
+        - low
+        - normal
+        - high
+        - urgent
+        example: normal
+        type: string
+      requester_email:
+        example: h@acme.com
+        type: string
+      requester_name:
+        example: Henri
+        type: string
+      subject:
+        example: Cannot log in
+        type: string
+    type: object
+  tickets.RequesterDTO:
+    properties:
+      email:
+        example: h@acme.com
+        type: string
+      name:
+        example: Henri
+        type: string
+    type: object
+  tickets.TeamDTO:
+    properties:
+      created_at:
+        example: "2026-01-15T10:00:00Z"
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      name:
+        example: Support
+        type: string
+    type: object
+  tickets.TeamListResponse:
+    properties:
+      teams:
+        items:
+          $ref: '#/definitions/tickets.TeamDTO'
+        type: array
+    type: object
+  tickets.TicketDTO:
+    properties:
+      created_at:
+        example: "2026-01-15T10:00:00Z"
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      number:
+        example: 1042
+        type: integer
+      priority:
+        enum:
+        - low
+        - normal
+        - high
+        - urgent
+        example: normal
+        type: string
+      requester:
+        $ref: '#/definitions/tickets.RequesterDTO'
+      status:
+        enum:
+        - new
+        - open
+        - pending
+        - solved
+        - closed
+        example: open
+        type: string
+      subject:
+        example: Cannot log in
+        type: string
+      updated_at:
+        example: "2026-01-15T10:00:00Z"
+        type: string
+      version:
+        example: 3
+        type: integer
+    type: object
+  tickets.TicketListResponse:
+    properties:
+      next_cursor:
+        example: eyJ0IjoiMjAyNi0wMS0xNVQxMDowMDowMFoiLCJpIjoiNTUwZTg0MDAtIn0
+        type: string
+      tickets:
+        items:
+          $ref: '#/definitions/tickets.TicketDTO'
+        type: array
+    type: object
+  tickets.UpdateTeamRequest:
+    properties:
+      name:
+        example: Support Tier 1
+        type: string
+    type: object
+  tickets.UpdateTicketRequest:
+    properties:
+      priority:
+        enum:
+        - low
+        - normal
+        - high
+        - urgent
+        example: high
+        type: string
+      status:
+        enum:
+        - new
+        - open
+        - pending
+        - solved
+        - closed
+        example: open
+        type: string
+      subject:
+        example: Updated subject
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: |-
+    Multi-tenant support ticketing SaaS.
+
+    ## Authentication
+    All endpoints except `/v1/auth/*` and `/healthz` require `Authorization: Bearer <access_token>`.
+    The access token is a JWT containing `sub` (user id), `org` (org id), and `role`.
+    Missing, expired, or invalid tokens return 401.
+
+    ## Authorization
+    Roles are `owner`, `admin`, `agent`. Teams and macro mutations require `owner` or `admin`.
+    Only `DELETE /v1/tickets/{number}` is role-gated among ticket operations (owner/admin).
+    Internal notes on comments require an agent role or above.
+
+    ## Tenant isolation
+    `org_id` comes only from the token, never from the URL, body, or query string.
+    A ticket in another org returns 404, never 403 — the API never confirms existence in someone else's tenant.
+  title: gregport API
+  version: 1.0.0
+paths:
+  /v1/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Returns identical 401 responses for unknown email and wrong password.
+        When the user belongs to multiple orgs, `org_slug` is required.
+      parameters:
+      - description: Login payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.TokenResponse'
+        "400":
+          description: Malformed JSON or unknown field
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Invalid credentials
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: org_slug required for multi-org users
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      summary: Log in and receive an access token and a refresh token
+      tags:
+      - auth
+  /v1/auth/logout:
+    post:
+      consumes:
+      - application/json
+      description: Idempotent — logging out an already-revoked token is a no-op, not
+        an error.
+      parameters:
+      - description: Refresh token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.LogoutRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Malformed JSON or unknown field
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      summary: Revoke the refresh token's whole family
+      tags:
+      - auth
+  /v1/auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: Replaying a spent refresh token revokes the whole family — the
+        correct response to probable theft. The legitimate user is logged out too.
+      parameters:
+      - description: Refresh token
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.TokenResponse'
+        "400":
+          description: Malformed JSON or unknown field
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unknown, expired, or already-used refresh token
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      summary: Rotate the refresh token and issue a new token pair
+      tags:
+      - auth
+  /v1/auth/signup:
+    post:
+      consumes:
+      - application/json
+      description: Creates the three rows in a single transaction. Email is normalized
+        (lowercased, trimmed). Passwords are bcrypt-hashed and never returned.
+      parameters:
+      - description: Signup payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/auth.SignupRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/auth.SignupResponse'
+        "400":
+          description: Malformed JSON or unknown field
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "409":
+          description: Email or organization slug already taken
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      summary: Create an organization, user, and owner membership
+      tags:
+      - auth
+  /v1/me:
+    get:
+      description: Reads `user_id`, `org_id`, and `role` from the verified access
+        token. Proves the auth middleware works.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/auth.MeResponse'
+        "401":
+          description: Missing, malformed, expired, or invalid token
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Return the authenticated principal
+      tags:
+      - me
+  /v1/teams:
+    get:
+      description: Any member of the org may list teams.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tickets.TeamListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: List teams in the org
+      tags:
+      - teams
+    post:
+      consumes:
+      - application/json
+      description: Requires role owner or admin. Team names are unique per org.
+      parameters:
+      - description: Team payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tickets.CreateTeamRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/tickets.TeamDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Role is not owner or admin
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "409":
+          description: Team name already exists in this org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Create a team
+      tags:
+      - teams
+  /v1/teams/{id}:
+    delete:
+      description: Requires role owner or admin.
+      parameters:
+      - description: Team UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Delete a team
+      tags:
+      - teams
+    patch:
+      consumes:
+      - application/json
+      description: Requires role owner or admin.
+      parameters:
+      - description: Team UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Team payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tickets.UpdateTeamRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tickets.TeamDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "409":
+          description: Team name already exists in this org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Rename a team
+      tags:
+      - teams
+  /v1/teams/{id}/members/{userId}:
+    delete:
+      description: Requires role owner or admin.
+      parameters:
+      - description: Team UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: User UUID
+        in: path
+        name: userId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Remove a member from a team
+      tags:
+      - teams
+    put:
+      description: Requires role owner or admin. The user must already be a member
+        of this org; a user from another org returns 422, never success.
+      parameters:
+      - description: Team UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: User UUID
+        in: path
+        name: userId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Team not found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: User is not a member of this org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Add a member to a team
+      tags:
+      - teams
+  /v1/tickets:
+    get:
+      description: Any member of the org may list tickets. Results are scoped to the
+        caller's org. Order is created_at DESC, id DESC; the cursor is opaque and
+        stable under concurrent inserts.
+      parameters:
+      - description: Page size (default 25, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Opaque cursor from a previous next_cursor
+        in: query
+        name: cursor
+        type: string
+      - description: Filter by status
+        enum:
+        - new
+        - open
+        - pending
+        - solved
+        - closed
+        in: query
+        name: status
+        type: string
+      - description: Filter by priority
+        enum:
+        - low
+        - normal
+        - high
+        - urgent
+        in: query
+        name: priority
+        type: string
+      - description: Filter by assignee UUID
+        in: query
+        name: assignee_id
+        type: string
+      - description: Filter by requester UUID
+        in: query
+        name: requester_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tickets.TicketListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: List tickets (keyset pagination)
+      tags:
+      - tickets
+    post:
+      consumes:
+      - application/json
+      description: Any member of the org may create a ticket. The requester is upserted
+        by (org_id, requester_email). The ticket number is assigned per org inside
+        the same transaction as the ticket insert, so a failed create leaves no gap
+        in the sequence.
+      parameters:
+      - description: Ticket payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tickets.CreateTicketRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/tickets.TicketDTO'
+        "400":
+          description: Malformed JSON or unknown field
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Missing, malformed, expired, or invalid token
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Create a ticket and its first customer comment
+      tags:
+      - tickets
+  /v1/tickets/{number}:
+    delete:
+      description: Requires role owner or admin. Agents receive 403. A ticket in another
+        org returns 404, never 403.
+      parameters:
+      - description: Per-org ticket number
+        in: path
+        name: number
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Role is not owner or admin
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not found, or belongs to another org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Soft delete a ticket (admin and owner only)
+      tags:
+      - tickets
+    get:
+      description: Any member of the org may read a ticket. A ticket in another org
+        returns 404, never 403.
+      parameters:
+      - description: Per-org ticket number (e.g. 1042)
+        in: path
+        name: number
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          headers:
+            ETag:
+              description: Quoted version, use as If-Match on PATCH
+              type: string
+          schema:
+            $ref: '#/definitions/tickets.TicketDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not found, or belongs to another org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Fetch a ticket by its per-org number
+      tags:
+      - tickets
+    patch:
+      consumes:
+      - application/json
+      description: Any member of the org may update a ticket. Status changes are checked
+        against the state machine (new -> open -> pending -> solved -> closed, with
+        solved -> open as reopen; closed is terminal). A stale If-Match returns 412;
+        a missing one returns 428. A ticket in another org returns 404, never 403.
+      parameters:
+      - description: Per-org ticket number
+        in: path
+        name: number
+        required: true
+        type: integer
+      - description: The ticket's current ETag. Missing -> 428, stale -> 412.
+        in: header
+        name: If-Match
+        required: true
+        type: string
+      - description: Fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tickets.UpdateTicketRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          headers:
+            ETag:
+              description: New quoted version
+              type: string
+          schema:
+            $ref: '#/definitions/tickets.TicketDTO'
+        "400":
+          description: Malformed If-Match, malformed JSON, or unknown field
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not found, or belongs to another org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "412":
+          description: If-Match version is stale
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Invalid transition or invalid input
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "428":
+          description: If-Match header is missing
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Update status, priority, or subject
+      tags:
+      - tickets
+  /v1/tickets/{number}/comments:
+    get:
+      description: Any member of the org may read comments. A ticket in another org
+        returns 404, never 403. Internal notes are excluded unless include_internal=true.
+      parameters:
+      - description: Per-org ticket number
+        in: path
+        name: number
+        required: true
+        type: integer
+      - description: Include agent-only internal notes
+        in: query
+        name: include_internal
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/tickets.CommentDTO'
+              type: array
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not found, or belongs to another org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: List comments on a ticket
+      tags:
+      - comments
+    post:
+      consumes:
+      - application/json
+      description: Any member of the org may add a public comment. Setting is_internal=true
+        (an agent-only internal note) requires role owner, admin, or agent. A ticket
+        in another org returns 404, never 403.
+      parameters:
+      - description: Per-org ticket number
+        in: path
+        name: number
+        required: true
+        type: integer
+      - description: Comment payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tickets.CreateCommentRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/tickets.CommentDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Internal note without an agent role or above
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not found, or belongs to another org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Add a comment to a ticket
+      tags:
+      - comments
+schemes:
+- http
+securityDefinitions:
+  BearerAuth:
+    description: Type "Bearer" followed by a space and the access token.
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

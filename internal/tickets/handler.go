@@ -1,11 +1,11 @@
 package tickets
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"time"
-	"encoding/json"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -17,68 +17,68 @@ import (
 // --- DTOs ---
 
 type CreateTicketRequest struct {
-	RequesterEmail string `json:"requester_email"`
-	RequesterName  string `json:"requester_name"`
-	Subject        string `json:"subject"`
-	Body           string `json:"body"`
-	Priority       string `json:"priority"`
+	RequesterEmail string `json:"requester_email" example:"h@acme.com"`
+	RequesterName  string `json:"requester_name"  example:"Henri"`
+	Subject        string `json:"subject"         example:"Cannot log in"`
+	Body           string `json:"body"            example:"I get an error when I try to log in."`
+	Priority       string `json:"priority"        example:"normal" enums:"low,normal,high,urgent"`
 }
 
 type UpdateTicketRequest struct {
-	Status   *string `json:"status,omitempty"`
-	Priority *string `json:"priority,omitempty"`
-	Subject  *string `json:"subject,omitempty"`
+	Status   *string `json:"status,omitempty"   example:"open"   enums:"new,open,pending,solved,closed"`
+	Priority *string `json:"priority,omitempty" example:"high"   enums:"low,normal,high,urgent"`
+	Subject  *string `json:"subject,omitempty"  example:"Updated subject"`
 }
 
 type CreateCommentRequest struct {
-	Body       string `json:"body"`
-	IsInternal bool   `json:"is_internal"`
+	Body       string `json:"body"        example:"We're looking into this."`
+	IsInternal bool   `json:"is_internal" example:"false"`
 }
 
 type RequesterDTO struct {
-	Email string `json:"email"`
-	Name  string `json:"name"`
+	Email string `json:"email" example:"h@acme.com"`
+	Name  string `json:"name"  example:"Henri"`
 }
 
 type TicketDTO struct {
-	Number    int64        `json:"number"`
-	ID        string       `json:"id"`
-	Subject   string       `json:"subject"`
-	Status    string       `json:"status"`
-	Priority  string       `json:"priority"`
+	Number    int64        `json:"number"    example:"1042"`
+	ID        string       `json:"id"        example:"550e8400-e29b-41d4-a716-446655440000"`
+	Subject   string       `json:"subject"   example:"Cannot log in"`
+	Status    string       `json:"status"    example:"open"   enums:"new,open,pending,solved,closed"`
+	Priority  string       `json:"priority"  example:"normal" enums:"low,normal,high,urgent"`
 	Requester RequesterDTO `json:"requester"`
-	Version   int          `json:"version"`
-	CreatedAt time.Time    `json:"created_at"`
-	UpdatedAt time.Time    `json:"updated_at"`
+	Version   int          `json:"version"   example:"3"`
+	CreatedAt time.Time    `json:"created_at" example:"2026-01-15T10:00:00Z"`
+	UpdatedAt time.Time    `json:"updated_at" example:"2026-01-15T10:00:00Z"`
 }
 
 type CommentDTO struct {
-	ID         string    `json:"id"`
-	Body       string    `json:"body"`
-	IsInternal bool      `json:"is_internal"`
-	AuthorType string    `json:"author_type"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID         string    `json:"id"          example:"550e8400-e29b-41d4-a716-446655440000"`
+	Body       string    `json:"body"        example:"We're looking into this."`
+	IsInternal bool      `json:"is_internal" example:"false"`
+	AuthorType string    `json:"author_type" example:"user" enums:"user,customer,system"`
+	CreatedAt  time.Time `json:"created_at"  example:"2026-01-15T10:00:00Z"`
 }
 
 type TicketListResponse struct {
 	Tickets    []TicketDTO `json:"tickets"`
-	NextCursor string      `json:"next_cursor,omitempty"`
+	NextCursor string      `json:"next_cursor,omitempty" example:"eyJ0IjoiMjAyNi0wMS0xNVQxMDowMDowMFoiLCJpIjoiNTUwZTg0MDAtIn0"`
 }
 
 // --- Teams ---
 
 type CreateTeamRequest struct {
-	Name string `json:"name"`
+	Name string `json:"name" example:"Support"`
 }
 
 type UpdateTeamRequest struct {
-	Name string `json:"name"`
+	Name string `json:"name" example:"Support Tier 1"`
 }
 
 type TeamDTO struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string    `json:"id"         example:"550e8400-e29b-41d4-a716-446655440000"`
+	Name      string    `json:"name"       example:"Support"`
+	CreatedAt time.Time `json:"created_at" example:"2026-01-15T10:00:00Z"`
 }
 
 type TeamListResponse struct {
@@ -88,20 +88,20 @@ type TeamListResponse struct {
 // --- Assignment ---
 
 type AssignTicketRequest struct {
-	AssigneeID *string `json:"assignee_id,omitempty"`
-	TeamID     *string `json:"team_id,omitempty"`
-	Auto       bool    `json:"auto,omitempty"`
+	AssigneeID *string `json:"assignee_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440000"`
+	TeamID     *string `json:"team_id,omitempty"     example:"550e8400-e29b-41d4-a716-446655440000"`
+	Auto       bool    `json:"auto,omitempty"        example:"false"`
 }
 
 // --- Tags ---
 
 type CreateTagRequest struct {
-	Name string `json:"name"`
+	Name string `json:"name" example:"billing"`
 }
 
 type TagDTO struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID   string `json:"id"   example:"550e8400-e29b-41d4-a716-446655440000"`
+	Name string `json:"name" example:"billing"`
 }
 
 type TagListResponse struct {
@@ -111,12 +111,12 @@ type TagListResponse struct {
 // --- Events ---
 
 type TicketEventDTO struct {
-	ID        string          `json:"id"`
-	EventType string          `json:"event_type"`
-	ActorType string          `json:"actor_type"`
-	ActorID   *string         `json:"actor_id,omitempty"`
+	ID        string          `json:"id"         example:"550e8400-e29b-41d4-a716-446655440000"`
+	EventType string          `json:"event_type" example:"ticket.status_changed"`
+	ActorType string          `json:"actor_type" example:"user" enums:"user,customer,api_key,system"`
+	ActorID   *string         `json:"actor_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440000"`
 	Data      json.RawMessage `json:"data"`
-	CreatedAt time.Time       `json:"created_at"`
+	CreatedAt time.Time       `json:"created_at" example:"2026-01-15T10:00:00Z"`
 }
 
 type TicketEventListResponse struct {
@@ -127,34 +127,34 @@ type TicketEventListResponse struct {
 // --- Merge ---
 
 type MergeTicketRequest struct {
-	IntoNumber int64 `json:"into_number"`
+	IntoNumber int64 `json:"into_number" example:"1043"`
 }
 
 // --- Macros ---
 
 type CreateMacroRequest struct {
-	Name    string          `json:"name"`
+	Name    string          `json:"name"    example:"Mark pending"`
 	Actions MacroActionsDTO `json:"actions"`
 }
 
 type UpdateMacroRequest struct {
-	Name    string          `json:"name"`
+	Name    string          `json:"name"    example:"Mark pending"`
 	Actions MacroActionsDTO `json:"actions"`
 }
 
 type MacroActionsDTO struct {
-	SetStatus   string   `json:"set_status,omitempty"`
-	SetPriority string   `json:"set_priority,omitempty"`
-	AddTags     []string `json:"add_tags,omitempty"`
-	Comment     string   `json:"comment,omitempty"`
+	SetStatus   string   `json:"set_status,omitempty"   example:"pending" enums:"new,open,pending,solved,closed"`
+	SetPriority string   `json:"set_priority,omitempty" example:"high"    enums:"low,normal,high,urgent"`
+	AddTags     []string `json:"add_tags,omitempty"     example:"billing,refund"`
+	Comment     string   `json:"comment,omitempty"      example:"Waiting on the customer."`
 }
 
 type MacroDTO struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
+	ID        string          `json:"id"         example:"550e8400-e29b-41d4-a716-446655440000"`
+	Name      string          `json:"name"       example:"Mark pending"`
 	Actions   MacroActionsDTO `json:"actions"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	CreatedAt time.Time       `json:"created_at" example:"2026-01-15T10:00:00Z"`
+	UpdatedAt time.Time       `json:"updated_at" example:"2026-01-15T10:00:00Z"`
 }
 
 type MacroListResponse struct {
@@ -171,6 +171,22 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
+// --- Tickets ---
+
+// Create creates a ticket and its first customer comment.
+//
+//	@Summary		Create a ticket and its first customer comment
+//	@Description	Any member of the org may create a ticket. The requester is upserted by (org_id, requester_email). The ticket number is assigned per org inside the same transaction as the ticket insert, so a failed create leaves no gap in the sequence.
+//	@Tags			tickets
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			body	body		CreateTicketRequest	true	"Ticket payload"
+//	@Success		201		{object}	TicketDTO
+//	@Failure		400		{object}	httpx.APIError	"Malformed JSON or unknown field"
+//	@Failure		401		{object}	httpx.APIError	"Missing, malformed, expired, or invalid token"
+//	@Failure		422		{object}	httpx.APIError	"Validation failed"
+//	@Router			/v1/tickets [post]
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
@@ -193,6 +209,23 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	_ = httpx.WriteJSON(w, http.StatusCreated, toTicketDTO(tk))
 }
 
+// List returns a page of tickets for the caller's org.
+//
+//	@Summary		List tickets (keyset pagination)
+//	@Description	Any member of the org may list tickets. Results are scoped to the caller's org. Order is created_at DESC, id DESC; the cursor is opaque and stable under concurrent inserts.
+//	@Tags			tickets
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			limit			query		int		false	"Page size (default 25, max 100)"
+//	@Param			cursor			query		string	false	"Opaque cursor from a previous next_cursor"
+//	@Param			status			query		string	false	"Filter by status"	Enums(new,open,pending,solved,closed)
+//	@Param			priority		query		string	false	"Filter by priority"	Enums(low,normal,high,urgent)
+//	@Param			assignee_id		query		string	false	"Filter by assignee UUID"
+//	@Param			requester_id	query		string	false	"Filter by requester UUID"
+//	@Success		200				{object}	TicketListResponse
+//	@Failure		401				{object}	httpx.APIError
+//	@Failure		422				{object}	httpx.APIError
+//	@Router			/v1/tickets [get]
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
@@ -237,6 +270,20 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Get fetches a ticket by its per-org number.
+//
+//	@Summary		Fetch a ticket by its per-org number
+//	@Description	Any member of the org may read a ticket. A ticket in another org returns 404, never 403.
+//	@Tags			tickets
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			number	path		int	true	"Per-org ticket number (e.g. 1042)"
+//	@Success		200		{object}	TicketDTO
+//	@Header			200		{string}	ETag	"Quoted version, use as If-Match on PATCH"
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		404		{object}	httpx.APIError	"Not found, or belongs to another org"
+//	@Router			/v1/tickets/{number} [get]
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
@@ -260,6 +307,26 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	_ = httpx.WriteJSON(w, http.StatusOK, toTicketDTO(tk))
 }
 
+// Update changes a ticket's status, priority, or subject.
+//
+//	@Summary		Update status, priority, or subject
+//	@Description	Any member of the org may update a ticket. Status changes are checked against the state machine (new -> open -> pending -> solved -> closed, with solved -> open as reopen; closed is terminal). A stale If-Match returns 412; a missing one returns 428. A ticket in another org returns 404, never 403.
+//	@Tags			tickets
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			number		path		int					true	"Per-org ticket number"
+//	@Param			If-Match	header		string				true	"The ticket's current ETag. Missing -> 428, stale -> 412."
+//	@Param			body		body		UpdateTicketRequest	true	"Fields to update"
+//	@Success		200			{object}	TicketDTO
+//	@Header			200			{string}	ETag	"New quoted version"
+//	@Failure		400			{object}	httpx.APIError	"Malformed If-Match, malformed JSON, or unknown field"
+//	@Failure		401			{object}	httpx.APIError
+//	@Failure		404			{object}	httpx.APIError	"Not found, or belongs to another org"
+//	@Failure		412			{object}	httpx.APIError	"If-Match version is stale"
+//	@Failure		422			{object}	httpx.APIError	"Invalid transition or invalid input"
+//	@Failure		428			{object}	httpx.APIError	"If-Match header is missing"
+//	@Router			/v1/tickets/{number} [patch]
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
@@ -303,6 +370,20 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	_ = httpx.WriteJSON(w, http.StatusOK, toTicketDTO(tk))
 }
 
+// Delete soft deletes a ticket.
+//
+//	@Summary		Soft delete a ticket (admin and owner only)
+//	@Description	Requires role owner or admin. Agents receive 403. A ticket in another org returns 404, never 403.
+//	@Tags			tickets
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			number	path	int	true	"Per-org ticket number"
+//	@Success		204		"No Content"
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		403		{object}	httpx.APIError	"Role is not owner or admin"
+//	@Failure		404		{object}	httpx.APIError	"Not found, or belongs to another org"
+//	@Router			/v1/tickets/{number} [delete]
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
@@ -323,6 +404,23 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// CreateComment adds a comment to a ticket.
+//
+//	@Summary		Add a comment to a ticket
+//	@Description	Any member of the org may add a public comment. Setting is_internal=true (an agent-only internal note) requires role owner, admin, or agent. A ticket in another org returns 404, never 403.
+//	@Tags			comments
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			number	path		int						true	"Per-org ticket number"
+//	@Param			body	body		CreateCommentRequest	true	"Comment payload"
+//	@Success		201		{object}	CommentDTO
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		403		{object}	httpx.APIError	"Internal note without an agent role or above"
+//	@Failure		404		{object}	httpx.APIError	"Not found, or belongs to another org"
+//	@Failure		422		{object}	httpx.APIError
+//	@Router			/v1/tickets/{number}/comments [post]
 func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
@@ -351,6 +449,20 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	_ = httpx.WriteJSON(w, http.StatusCreated, toCommentDTO(c))
 }
 
+// ListComments returns a ticket's comments.
+//
+//	@Summary		List comments on a ticket
+//	@Description	Any member of the org may read comments. A ticket in another org returns 404, never 403. Internal notes are excluded unless include_internal=true.
+//	@Tags			comments
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			number				path	int		true	"Per-org ticket number"
+//	@Param			include_internal	query	boolean	false	"Include agent-only internal notes"
+//	@Success		200					{object}	map[string][]CommentDTO
+//	@Failure		400					{object}	httpx.APIError
+//	@Failure		401					{object}	httpx.APIError
+//	@Failure		404					{object}	httpx.APIError	"Not found, or belongs to another org"
+//	@Router			/v1/tickets/{number}/comments [get]
 func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
@@ -377,6 +489,222 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 		dtos = append(dtos, toCommentDTO(c))
 	}
 	_ = httpx.WriteJSON(w, http.StatusOK, map[string]any{"comments": dtos})
+}
+
+// --- Teams ---
+
+// CreateTeam creates a team in the caller's org.
+//
+//	@Summary		Create a team
+//	@Description	Requires role owner or admin. Team names are unique per org.
+//	@Tags			teams
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			body	body		CreateTeamRequest	true	"Team payload"
+//	@Success		201		{object}	TeamDTO
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		403		{object}	httpx.APIError	"Role is not owner or admin"
+//	@Failure		409		{object}	httpx.APIError	"Team name already exists in this org"
+//	@Failure		422		{object}	httpx.APIError
+//	@Router			/v1/teams [post]
+func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	var req CreateTeamRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+	t, err := h.svc.CreateTeam(r.Context(), p, req.Name)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	_ = httpx.WriteJSON(w, http.StatusCreated, toTeamDTO(t))
+}
+
+// ListTeams lists teams in the caller's org.
+//
+//	@Summary		List teams in the org
+//	@Description	Any member of the org may list teams.
+//	@Tags			teams
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	TeamListResponse
+//	@Failure		401	{object}	httpx.APIError
+//	@Router			/v1/teams [get]
+func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	teams, err := h.svc.ListTeams(r.Context(), p)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	dtos := make([]TeamDTO, 0, len(teams))
+	for _, t := range teams {
+		dtos = append(dtos, toTeamDTO(t))
+	}
+	_ = httpx.WriteJSON(w, http.StatusOK, TeamListResponse{Teams: dtos})
+}
+
+// UpdateTeam renames a team.
+//
+//	@Summary		Rename a team
+//	@Description	Requires role owner or admin.
+//	@Tags			teams
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string				true	"Team UUID"
+//	@Param			body	body		UpdateTeamRequest	true	"Team payload"
+//	@Success		200		{object}	TeamDTO
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		403		{object}	httpx.APIError
+//	@Failure		404		{object}	httpx.APIError
+//	@Failure		409		{object}	httpx.APIError	"Team name already exists in this org"
+//	@Failure		422		{object}	httpx.APIError
+//	@Router			/v1/teams/{id} [patch]
+func (h *Handler) UpdateTeam(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	teamID, err := parseUUIDParam(r, "id")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
+		return
+	}
+	var req UpdateTeamRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+	t, err := h.svc.UpdateTeam(r.Context(), p, teamID, req.Name)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	_ = httpx.WriteJSON(w, http.StatusOK, toTeamDTO(t))
+}
+
+// DeleteTeam deletes a team.
+//
+//	@Summary		Delete a team
+//	@Description	Requires role owner or admin.
+//	@Tags			teams
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path	string	true	"Team UUID"
+//	@Success		204	"No Content"
+//	@Failure		400	{object}	httpx.APIError
+//	@Failure		401	{object}	httpx.APIError
+//	@Failure		403	{object}	httpx.APIError
+//	@Failure		404	{object}	httpx.APIError
+//	@Router			/v1/teams/{id} [delete]
+func (h *Handler) DeleteTeam(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	teamID, err := parseUUIDParam(r, "id")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
+		return
+	}
+	if err := h.svc.DeleteTeam(r.Context(), p, teamID); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AddTeamMember adds a user to a team.
+//
+//	@Summary		Add a member to a team
+//	@Description	Requires role owner or admin. The user must already be a member of this org; a user from another org returns 422, never success.
+//	@Tags			teams
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path	string	true	"Team UUID"
+//	@Param			userId	path	string	true	"User UUID"
+//	@Success		204		"No Content"
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		403		{object}	httpx.APIError
+//	@Failure		404		{object}	httpx.APIError	"Team not found"
+//	@Failure		422		{object}	httpx.APIError	"User is not a member of this org"
+//	@Router			/v1/teams/{id}/members/{userId} [put]
+func (h *Handler) AddTeamMember(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	teamID, err := parseUUIDParam(r, "id")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
+		return
+	}
+	userID, err := parseUUIDParam(r, "userId")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
+		return
+	}
+	if err := h.svc.AddTeamMember(r.Context(), p, teamID, userID); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// RemoveTeamMember removes a user from a team.
+//
+//	@Summary		Remove a member from a team
+//	@Description	Requires role owner or admin.
+//	@Tags			teams
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path	string	true	"Team UUID"
+//	@Param			userId	path	string	true	"User UUID"
+//	@Success		204		"No Content"
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		403		{object}	httpx.APIError
+//	@Failure		404		{object}	httpx.APIError
+//	@Router			/v1/teams/{id}/members/{userId} [delete]
+func (h *Handler) RemoveTeamMember(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	teamID, err := parseUUIDParam(r, "id")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
+		return
+	}
+	userID, err := parseUUIDParam(r, "userId")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
+		return
+	}
+	if err := h.svc.RemoveTeamMember(r.Context(), p, teamID, userID); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- helpers ---
@@ -447,6 +775,18 @@ func toCommentDTO(c Comment) CommentDTO {
 	}
 }
 
+func toTeamDTO(t Team) TeamDTO {
+	return TeamDTO{
+		ID:        t.ID.String(),
+		Name:      t.Name,
+		CreatedAt: t.CreatedAt,
+	}
+}
+
+func parseUUIDParam(r *http.Request, name string) (uuid.UUID, error) {
+	return uuid.Parse(chi.URLParam(r, name))
+}
+
 func unauthorized() *httpx.APIError {
 	return &httpx.APIError{
 		Status:  http.StatusUnauthorized,
@@ -481,7 +821,8 @@ func mapTicketError(err error) *httpx.APIError {
 		}
 	case errors.Is(err, ErrTeamNotFound):
 		return &httpx.APIError{
-			Status: http.StatusNotFound, Code: "team_not_found",
+			Status:  http.StatusNotFound,
+			Code:    "team_not_found",
 			Message: "team not found",
 		}
 	case errors.Is(err, ErrTeamNameTaken):
@@ -490,142 +831,5 @@ func mapTicketError(err error) *httpx.APIError {
 		return httpx.Unprocessable("member_not_in_org", "user is not a member of this organization")
 	default:
 		return httpx.InternalError(err)
-	}
-}
-
-func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
-	p, ok := requestctx.FromContext(r.Context())
-	if !ok {
-		httpx.WriteError(w, unauthorized())
-		return
-	}
-	var req CreateTeamRequest
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
-		return
-	}
-	t, err := h.svc.CreateTeam(r.Context(), p, req.Name)
-	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
-		return
-	}
-	_ = httpx.WriteJSON(w, http.StatusCreated, toTeamDTO(t))
-}
-
-func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
-	p, ok := requestctx.FromContext(r.Context())
-	if !ok {
-		httpx.WriteError(w, unauthorized())
-		return
-	}
-	teams, err := h.svc.ListTeams(r.Context(), p)
-	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
-		return
-	}
-	dtos := make([]TeamDTO, 0, len(teams))
-	for _, t := range teams {
-		dtos = append(dtos, toTeamDTO(t))
-	}
-	_ = httpx.WriteJSON(w, http.StatusOK, TeamListResponse{Teams: dtos})
-}
-
-func (h *Handler) UpdateTeam(w http.ResponseWriter, r *http.Request) {
-	p, ok := requestctx.FromContext(r.Context())
-	if !ok {
-		httpx.WriteError(w, unauthorized())
-		return
-	}
-	teamID, err := parseUUIDParam(r, "id")
-	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
-		return
-	}
-	var req UpdateTeamRequest
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
-		return
-	}
-	t, err := h.svc.UpdateTeam(r.Context(), p, teamID, req.Name)
-	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
-		return
-	}
-	_ = httpx.WriteJSON(w, http.StatusOK, toTeamDTO(t))
-}
-
-func (h *Handler) DeleteTeam(w http.ResponseWriter, r *http.Request) {
-	p, ok := requestctx.FromContext(r.Context())
-	if !ok {
-		httpx.WriteError(w, unauthorized())
-		return
-	}
-	teamID, err := parseUUIDParam(r, "id")
-	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
-		return
-	}
-	if err := h.svc.DeleteTeam(r.Context(), p, teamID); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) AddTeamMember(w http.ResponseWriter, r *http.Request) {
-	p, ok := requestctx.FromContext(r.Context())
-	if !ok {
-		httpx.WriteError(w, unauthorized())
-		return
-	}
-	teamID, err := parseUUIDParam(r, "id")
-	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
-		return
-	}
-	userID, err := parseUUIDParam(r, "userId")
-	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
-		return
-	}
-	if err := h.svc.AddTeamMember(r.Context(), p, teamID, userID); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) RemoveTeamMember(w http.ResponseWriter, r *http.Request) {
-	p, ok := requestctx.FromContext(r.Context())
-	if !ok {
-		httpx.WriteError(w, unauthorized())
-		return
-	}
-	teamID, err := parseUUIDParam(r, "id")
-	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
-		return
-	}
-	userID, err := parseUUIDParam(r, "userId")
-	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
-		return
-	}
-	if err := h.svc.RemoveTeamMember(r.Context(), p, teamID, userID); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func parseUUIDParam(r *http.Request, name string) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, name))
-}
-
-func toTeamDTO(t Team) TeamDTO {
-	return TeamDTO{
-		ID:        t.ID.String(),
-		Name:      t.Name,
-		CreatedAt: t.CreatedAt,
 	}
 }
