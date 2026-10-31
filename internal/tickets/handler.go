@@ -1024,3 +1024,78 @@ func mapTicketError(err error) *httpx.APIError {
 		return httpx.InternalError(err)
 	}
 }
+
+// AddWatcher adds a user as a watcher on a ticket.
+//
+//	@Summary		Add a watcher to a ticket
+//	@Description	Any member of the org may add a watcher. The user must already be an org member; a user from another org returns 422. Idempotent: adding an existing watcher is a no-op, 204.
+//	@Tags			watchers
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			number	path	string	true	"Per-org ticket number"
+//	@Param			userId	path	string	true	"User UUID"
+//	@Success		204		"No Content"
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		404		{object}	httpx.APIError	"Ticket not found, or belongs to another org"
+//	@Failure		422		{object}	httpx.APIError	"User is not a member of this org"
+//	@Router			/v1/tickets/{number}/watchers/{userId} [put]
+func (h *Handler) AddWatcher(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	number, err := parseNumber(r)
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		return
+	}
+	userID, err := parseUUIDParam(r, "userId")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
+		return
+	}
+	if err := h.svc.AddWatcher(r.Context(), p, number, userID); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// RemoveWatcher removes a user from a ticket's watchers.
+//
+//	@Summary		Remove a watcher from a ticket
+//	@Description	Any member of the org may remove a watcher. Idempotent: removing a user who is not a watcher is a no-op, 204.
+//	@Tags			watchers
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			number	path	string	true	"Per-org ticket number"
+//	@Param			userId	path	string	true	"User UUID"
+//	@Success		204		"No Content"
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		404		{object}	httpx.APIError	"Ticket not found, or belongs to another org"
+//	@Router			/v1/tickets/{number}/watchers/{userId} [delete]
+func (h *Handler) RemoveWatcher(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	number, err := parseNumber(r)
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		return
+	}
+	userID, err := parseUUIDParam(r, "userId")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
+		return
+	}
+	if err := h.svc.RemoveWatcher(r.Context(), p, number, userID); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

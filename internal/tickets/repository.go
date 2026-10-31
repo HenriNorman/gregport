@@ -447,6 +447,16 @@ func (r *Repository) CreateComment(ctx context.Context, in CreateCommentInput) (
 			); err != nil {
 				return fmt.Errorf("bump ticket: %w", err)
 			}
+		} 
+		// customer comments have actor_user_id NULL and can't be watchers)
+		if in.Actor.ID != nil {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO ticket_watchers (ticket_id, user_id) VALUES ($1, $2)
+				 ON CONFLICT (ticket_id, user_id) DO NOTHING`,
+				ticketID, *in.Actor.ID,
+			); err != nil {
+				return fmt.Errorf("auto-watch commenter: %w", err)
+			}
 		} else {
 			if _, err := tx.Exec(ctx,
 				`UPDATE tickets SET updated_at = now() WHERE id = $1`,
@@ -985,5 +995,68 @@ func (r *Repository) DetachTag(ctx context.Context, orgID uuid.UUID, number int6
 		return Record(ctx, tx, orgID, ticketID, actor, "ticket.untagged", map[string]any{
 			"tag": tagName,
 		})
+	})
+}
+
+func (r *Repository) AddWatcher(ctx context.Context, orgID uuid.UUID, number int64, userID uuid.UUID) error {
+	return database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
+		var ticketID uuid.UUID
+		if err := tx.QueryRow(ctx,
+			`SELECT id FROM tickets
+			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL`,
+			orgID, number,
+		).Scan(&ticketID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrTicketNotFound
+			}
+			return fmt.Errorf("find ticket: %w", err)
+		}
+
+		var isMember bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS (
+			   SELECT 1 FROM memberships WHERE org_id = $1 AND user_id = $2
+			 )`,
+			orgID, userID,
+		).Scan(&isMember); err != nil {
+			return fmt.Errorf("check membership: %w", err)
+		}
+		if !isMember {
+			return ErrMemberNotInOrg
+		}
+
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO ticket_watchers (ticket_id, user_id) VALUES ($1, $2)
+			 ON CONFLICT (ticket_id, user_id) DO NOTHING`,
+			ticketID, userID,
+		); err != nil {
+			return fmt.Errorf("insert watcher: %w", err)
+		}
+		return nil
+	})
+}
+
+func (r *Repository) RemoveWatcher(ctx context.Context, orgID uuid.UUID, number int64, userID uuid.UUID) error {
+	return database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
+		var ticketID uuid.UUID
+		if err := tx.QueryRow(ctx,
+			`SELECT id FROM tickets
+			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL`,
+			orgID, number,
+		).Scan(&ticketID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrTicketNotFound
+			}
+			return fmt.Errorf("find ticket: %w", err)
+		}
+
+		_, err := tx.Exec(ctx,
+			`DELETE FROM ticket_watchers WHERE ticket_id = $1 AND user_id = $2`,
+			ticketID, userID,
+		)
+		if err != nil {
+			return fmt.Errorf("delete watcher: %w", err)
+		}
+		return nil
 	})
 }

@@ -15,6 +15,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Ticket assignment | Complete — manual (assignee or team) and round-robin (auto: true) |
 | Tags | Complete — create, list, attach, detach (idempotent) |
 | SLA, notifications, webhooks, API keys, invitations | Schema defined, not exposed |
+| Watchers | Complete — add/remove (idempotent); assignee and agent commenters auto-watch |
 
 ### Authentication
 
@@ -390,6 +391,9 @@ These tests use a real PostgreSQL database.
   attach and detach are idempotent (one event per actual change); attaching
   a nonexistent tag returns 404; attaching a tag to another org's ticket
   returns 404.
+- Watchers: add is idempotent; adding a non-member returns 422; remove is
+  idempotent; removing a watcher from another org's ticket returns 404; an
+  agent who comments is auto-added as a watcher.
 
 ### Unit Tests
 

@@ -248,3 +248,11 @@ func (s *Service) DetachTag(ctx context.Context, p requestctx.Principal, number 
 	}
 	return s.repo.DetachTag(ctx, p.OrgID, number, name, Actor{Type: "user", ID: &p.UserID})
 }
+
+func (s *Service) AddWatcher(ctx context.Context, p requestctx.Principal, number int64, userID uuid.UUID) error {
+	return s.repo.AddWatcher(ctx, p.OrgID, number, userID)
+}
+
+func (s *Service) RemoveWatcher(ctx context.Context, p requestctx.Principal, number int64, userID uuid.UUID) error {
+	return s.repo.RemoveWatcher(ctx, p.OrgID, number, userID)
+}
