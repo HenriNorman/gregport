@@ -203,6 +203,12 @@ definitions:
         example: Cannot log in
         type: string
     type: object
+  tickets.MergeTicketRequest:
+    properties:
+      into_number:
+        example: 1043
+        type: integer
+    type: object
   tickets.RequesterDTO:
     properties:
       email:
@@ -1237,6 +1243,61 @@ paths:
       security:
       - BearerAuth: []
       summary: List the ticket timeline
+      tags:
+      - tickets
+  /v1/tickets/{number}/merge:
+    post:
+      consumes:
+      - application/json
+      description: 'Any member of the org may merge. The source ticket (in the path)
+        is closed and marked merged_into_id; the target (into_number) survives. Rules:
+        same org, different tickets, target not closed or already merged, same requester.
+        System comments are added on both tickets. A merged ticket is read-only afterward.
+        A ticket in another org returns 404, never 403.'
+      parameters:
+      - description: Source ticket number (the duplicate)
+        in: path
+        name: number
+        required: true
+        type: integer
+      - description: Target ticket number
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tickets.MergeTicketRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              $ref: '#/definitions/tickets.TicketDTO'
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Source or target not found, or belongs to another org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "409":
+          description: Target closed or already merged, or a merged ticket was modified
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Merge into self, or different requesters
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Merge a ticket into another
       tags:
       - tickets
   /v1/tickets/{number}/tags/{tag}:

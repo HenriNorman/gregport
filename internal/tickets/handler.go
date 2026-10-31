@@ -940,109 +940,6 @@ func (h *Handler) DetachTag(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- helpers ---
-
-func parseNumber(r *http.Request) (int64, error) {
-	s := chi.URLParam(r, "number")
-	n, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || n <= 0 {
-		return 0, errors.New("bad number")
-	}
-	return n, nil
-}
-
-func parseLimit(s string) int {
-	if s == "" {
-		return 25
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil || n <= 0 {
-		return 25
-	}
-	if n > 100 {
-		return 100
-	}
-	return n
-}
-
-func parseIfMatch(r *http.Request) (int, error) {
-	h := r.Header.Get("If-Match")
-	if h == "" {
-		return 0, ErrPreconditionRequired
-	}
-	unquoted, err := strconv.Unquote(h)
-	if err != nil {
-		return 0, errors.New("not quoted")
-	}
-	n, err := strconv.Atoi(unquoted)
-	if err != nil || n < 1 {
-		return 0, errors.New("not an integer")
-	}
-	return n, nil
-}
-
-func parseUUIDParam(r *http.Request, name string) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, name))
-}
-
-func unauthorized() *httpx.APIError {
-	return &httpx.APIError{
-		Status:  http.StatusUnauthorized,
-		Code:    "unauthorized",
-		Message: "authentication required",
-	}
-}
-
-func mapTicketError(err error) *httpx.APIError {
-	switch {
-	case errors.Is(err, ErrTicketNotFound):
-		return &httpx.APIError{
-			Status:  http.StatusNotFound,
-			Code:    "not_found",
-			Message: "ticket not found",
-		}
-	case errors.Is(err, ErrVersionMismatch):
-		return &httpx.APIError{
-			Status:  http.StatusPreconditionFailed,
-			Code:    "precondition_failed",
-			Message: "ticket was modified; re-fetch and retry with the new ETag",
-		}
-	case errors.Is(err, ErrInvalidTransition):
-		return httpx.Unprocessable("invalid_transition", "that status change is not allowed")
-	case errors.Is(err, ErrInvalidInput):
-		return httpx.Unprocessable("invalid_input", "invalid input")
-	case errors.Is(err, ErrForbidden):
-		return &httpx.APIError{
-			Status:  http.StatusForbidden,
-			Code:    "forbidden",
-			Message: "insufficient permissions",
-		}
-	case errors.Is(err, ErrTeamNotFound):
-		return &httpx.APIError{
-			Status:  http.StatusNotFound,
-			Code:    "team_not_found",
-			Message: "team not found",
-		}
-	case errors.Is(err, ErrTeamNameTaken):
-		return httpx.Conflict("team_name_taken", "a team with that name already exists")
-	case errors.Is(err, ErrMemberNotInOrg):
-		return httpx.Unprocessable("member_not_in_org", "user is not a member of this organization")
-	case errors.Is(err, ErrAssigneeNotAgent):
-		return httpx.Unprocessable("assignee_not_agent", "assignee must be an org member with agent role or higher")
-	case errors.Is(err, ErrNoTeamMembers):
-		return httpx.Unprocessable("no_team_members", "team has no assignable members")
-	case errors.Is(err, ErrTagNotFound):
-		return &httpx.APIError{
-			Status: http.StatusNotFound, Code: "tag_not_found",
-			Message: "tag not found",
-		}
-	case errors.Is(err, ErrTagNameTaken):
-		return httpx.Conflict("tag_name_taken", "a tag with that name already exists")
-	default:
-		return httpx.InternalError(err)
-	}
-}
-
 // AddWatcher adds a user as a watcher on a ticket.
 //
 //	@Summary		Add a watcher to a ticket
@@ -1167,4 +1064,165 @@ func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 		Events:     dtos,
 		NextCursor: next,
 	})
+}
+
+// Merge merges a ticket into another ticket.
+//
+//	@Summary		Merge a ticket into another
+//	@Description	Any member of the org may merge. The source ticket (in the path) is closed and marked merged_into_id; the target (into_number) survives. Rules: same org, different tickets, target not closed or already merged, same requester. System comments are added on both tickets. A merged ticket is read-only afterward. A ticket in another org returns 404, never 403.
+//	@Tags			tickets
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			number	path		int					true	"Source ticket number (the duplicate)"
+//	@Param			body	body		MergeTicketRequest	true	"Target ticket number"
+//	@Success		200		{object}	map[string]TicketDTO
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		404		{object}	httpx.APIError	"Source or target not found, or belongs to another org"
+//	@Failure		409		{object}	httpx.APIError	"Target closed or already merged, or a merged ticket was modified"
+//	@Failure		422		{object}	httpx.APIError	"Merge into self, or different requesters"
+//	@Router			/v1/tickets/{number}/merge [post]
+func (h *Handler) Merge(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	number, err := parseNumber(r)
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		return
+	}
+	var req MergeTicketRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+	if req.IntoNumber <= 0 {
+		httpx.WriteError(w, httpx.BadRequest("invalid_into_number", "into_number must be a positive integer"))
+		return
+	}
+	source, target, err := h.svc.MergeTickets(r.Context(), p, number, req.IntoNumber)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	_ = httpx.WriteJSON(w, http.StatusOK, map[string]TicketDTO{
+		"source": toTicketDTO(source),
+		"target": toTicketDTO(target),
+	})
+}
+
+// --- helpers ---
+
+func parseNumber(r *http.Request) (int64, error) {
+	s := chi.URLParam(r, "number")
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, errors.New("bad number")
+	}
+	return n, nil
+}
+
+func parseLimit(s string) int {
+	if s == "" {
+		return 25
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 25
+	}
+	if n > 100 {
+		return 100
+	}
+	return n
+}
+
+func parseIfMatch(r *http.Request) (int, error) {
+	h := r.Header.Get("If-Match")
+	if h == "" {
+		return 0, ErrPreconditionRequired
+	}
+	unquoted, err := strconv.Unquote(h)
+	if err != nil {
+		return 0, errors.New("not quoted")
+	}
+	n, err := strconv.Atoi(unquoted)
+	if err != nil || n < 1 {
+		return 0, errors.New("not an integer")
+	}
+	return n, nil
+}
+
+func parseUUIDParam(r *http.Request, name string) (uuid.UUID, error) {
+	return uuid.Parse(chi.URLParam(r, name))
+}
+
+func unauthorized() *httpx.APIError {
+	return &httpx.APIError{
+		Status:  http.StatusUnauthorized,
+		Code:    "unauthorized",
+		Message: "authentication required",
+	}
+}
+
+func mapTicketError(err error) *httpx.APIError {
+	switch {
+	case errors.Is(err, ErrTicketNotFound):
+		return &httpx.APIError{
+			Status:  http.StatusNotFound,
+			Code:    "not_found",
+			Message: "ticket not found",
+		}
+	case errors.Is(err, ErrVersionMismatch):
+		return &httpx.APIError{
+			Status:  http.StatusPreconditionFailed,
+			Code:    "precondition_failed",
+			Message: "ticket was modified; re-fetch and retry with the new ETag",
+		}
+	case errors.Is(err, ErrInvalidTransition):
+		return httpx.Unprocessable("invalid_transition", "that status change is not allowed")
+	case errors.Is(err, ErrInvalidInput):
+		return httpx.Unprocessable("invalid_input", "invalid input")
+	case errors.Is(err, ErrForbidden):
+		return &httpx.APIError{
+			Status:  http.StatusForbidden,
+			Code:    "forbidden",
+			Message: "insufficient permissions",
+		}
+	case errors.Is(err, ErrTeamNotFound):
+		return &httpx.APIError{
+			Status:  http.StatusNotFound,
+			Code:    "team_not_found",
+			Message: "team not found",
+		}
+	case errors.Is(err, ErrTeamNameTaken):
+		return httpx.Conflict("team_name_taken", "a team with that name already exists")
+	case errors.Is(err, ErrMemberNotInOrg):
+		return httpx.Unprocessable("member_not_in_org", "user is not a member of this organization")
+	case errors.Is(err, ErrAssigneeNotAgent):
+		return httpx.Unprocessable("assignee_not_agent", "assignee must be an org member with agent role or higher")
+	case errors.Is(err, ErrNoTeamMembers):
+		return httpx.Unprocessable("no_team_members", "team has no assignable members")
+	case errors.Is(err, ErrTagNotFound):
+		return &httpx.APIError{
+			Status: http.StatusNotFound, Code: "tag_not_found",
+			Message: "tag not found",
+		}
+	case errors.Is(err, ErrTagNameTaken):
+		return httpx.Conflict("tag_name_taken", "a tag with that name already exists")
+	case errors.Is(err, ErrTicketMerged):
+		return httpx.Conflict("ticket_merged", "ticket is merged and read-only")
+	case errors.Is(err, ErrMergeSelf):
+		return httpx.Unprocessable("merge_self", "cannot merge a ticket into itself")
+	case errors.Is(err, ErrMergeTargetInvalid):
+		return httpx.Unprocessable("merge_target_invalid", "merge target is closed or already merged")
+	case errors.Is(err, ErrMergeRequester):
+		return httpx.Unprocessable("merge_requester_mismatch", "both tickets must have the same requester")
+	case errors.Is(err, ErrSourceMerged):
+		return httpx.Conflict("source_merged", "source ticket is already merged")
+	default:
+		return httpx.InternalError(err)
+	}
 }

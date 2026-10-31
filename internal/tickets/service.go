@@ -263,3 +263,11 @@ func (s *Service) ListEvents(ctx context.Context, p requestctx.Principal, number
 	}
 	return s.repo.ListTicketEvents(ctx, p.OrgID, number, cursor, limit)
 }
+
+func (s *Service) MergeTickets(ctx context.Context, p requestctx.Principal, sourceNumber, targetNumber int64) (Ticket, Ticket, error) {
+	if sourceNumber == targetNumber {
+		return Ticket{}, Ticket{}, ErrMergeSelf
+	}
+	return s.repo.MergeTickets(ctx, p.OrgID, sourceNumber, targetNumber,
+		Actor{Type: "user", ID: &p.UserID})
+}

@@ -270,18 +270,23 @@ func (r *Repository) UpdateTicket(ctx context.Context, in UpdateInput) (Ticket, 
 			curStatus   string
 			curVersion  int
 			curResolved *time.Time
+			curMerged   *uuid.UUID
 		)
 		if err := tx.QueryRow(ctx,
-			`SELECT id, status, version, resolved_at
+			`SELECT id, status, version, resolved_at, merged_into_id
 			 FROM tickets
 			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL
 			 FOR UPDATE`,
 			in.OrgID, in.Number,
-		).Scan(&curID, &curStatus, &curVersion, &curResolved); err != nil {
+		).Scan(&curID, &curStatus, &curVersion, &curResolved, &curMerged); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrTicketNotFound
 			}
 			return fmt.Errorf("lock ticket: %w", err)
+		}
+		
+		if curMerged != nil {
+			return ErrTicketMerged
 		}
 
 		if curVersion != in.ExpectedVersion {
@@ -389,16 +394,28 @@ type CreateCommentInput struct {
 func (r *Repository) SoftDeleteTicket(ctx context.Context, orgID uuid.UUID, number int64, actor Actor) error {
 	return database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
 		var ticketID uuid.UUID
+		var curMerged *uuid.UUID
 		if err := tx.QueryRow(ctx,
-			`UPDATE tickets
-			 SET deleted_at = now(), version = version + 1, updated_at = now()
+			`SELECT id, merged_into_id FROM tickets
 			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL
-			 RETURNING id`,
+			 FOR UPDATE`,
 			orgID, number,
-		).Scan(&ticketID); err != nil {
+		).Scan(&ticketID, &curMerged); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrTicketNotFound
 			}
+			return fmt.Errorf("lock ticket: %w", err)
+		}
+		if curMerged != nil {
+			return ErrTicketMerged
+		}
+
+		if _, err := tx.Exec(ctx,
+			`UPDATE tickets
+			 SET deleted_at = now(), version = version + 1, updated_at = now()
+			 WHERE id = $1`,
+			ticketID,
+		); err != nil {
 			return fmt.Errorf("soft delete ticket: %w", err)
 		}
 
@@ -408,20 +425,22 @@ func (r *Repository) SoftDeleteTicket(ctx context.Context, orgID uuid.UUID, numb
 
 func (r *Repository) CreateComment(ctx context.Context, in CreateCommentInput) (Comment, error) {
 	var out Comment
-
+	var curMerged *uuid.UUID
 	err := database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
 		var ticketID uuid.UUID
 		if err := tx.QueryRow(ctx,
-			`SELECT id FROM tickets
+			`SELECT id, merged_into_id FROM tickets
 			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL`,
 			in.OrgID, in.Number,
-		).Scan(&ticketID); err != nil {
+		).Scan(&ticketID, &curMerged); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrTicketNotFound
 			}
 			return fmt.Errorf("find ticket: %w", err)
 		}
-
+		if curMerged != nil {
+			return ErrTicketMerged
+		}
 		if err := tx.QueryRow(ctx,
 			`INSERT INTO comments (org_id, ticket_id, author_type, author_user_id, body, is_internal)
 			 VALUES ($1, $2, 'user', $3, $4, $5)
@@ -655,17 +674,22 @@ func (r *Repository) AssignTicket(ctx context.Context, in AssignInput) (Ticket, 
 		var oldAssignee *uuid.UUID
 		var oldTeam *uuid.UUID
 		var curVersion int
+		var curMerged *uuid.UUID
 		if err := tx.QueryRow(ctx,
-			`SELECT id, assignee_id, team_id, version
+			`SELECT id, assignee_id, team_id, version, merged_into_id
 			 FROM tickets
 			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL
 			 FOR UPDATE`,
 			in.OrgID, in.Number,
-		).Scan(&ticketID, &oldAssignee, &oldTeam, &curVersion); err != nil {
+		).Scan(&ticketID, &oldAssignee, &oldTeam, &curVersion, &curMerged); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrTicketNotFound
 			}
 			return fmt.Errorf("lock ticket: %w", err)
+		}
+
+		if curMerged != nil {
+			return ErrTicketMerged
 		}
 
 		if in.AssigneeID != nil {
@@ -767,19 +791,22 @@ func (r *Repository) AssignAuto(ctx context.Context, in AssignInput) (Ticket, er
 		var ticketID uuid.UUID
 		var oldAssignee *uuid.UUID
 		var oldTeam *uuid.UUID
+		var curMerged *uuid.UUID
 		if err := tx.QueryRow(ctx,
-			`SELECT id, assignee_id, team_id
+			`SELECT id, assignee_id, team_id, merged_into_id
 			 FROM tickets
 			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL
 			 FOR UPDATE`,
 			in.OrgID, in.Number,
-		).Scan(&ticketID, &oldAssignee, &oldTeam); err != nil {
+		).Scan(&ticketID, &oldAssignee, &oldTeam, &curMerged); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrTicketNotFound
 			}
 			return fmt.Errorf("lock ticket: %w", err)
 		}
-
+		if curMerged != nil {
+			return ErrTicketMerged
+		}
 		if in.TeamID == nil {
 			return ErrInvalidInput
 		}
@@ -914,17 +941,21 @@ func (r *Repository) ListTags(ctx context.Context, orgID uuid.UUID) ([]Tag, erro
 func (r *Repository) AttachTag(ctx context.Context, orgID uuid.UUID, number int64, tagName string, actor Actor) error {
 	return database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
 		var ticketID uuid.UUID
+		var curMerged *uuid.UUID
 		if err := tx.QueryRow(ctx,
-			`SELECT id FROM tickets
+			`SELECT id, merged_into_id FROM tickets
 			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL`,
 			orgID, number,
-		).Scan(&ticketID); err != nil {
+		).Scan(&ticketID, &curMerged); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrTicketNotFound
 			}
 			return fmt.Errorf("find ticket: %w", err)
 		}
 
+		if curMerged != nil {
+			return ErrTicketMerged
+		}
 		var tagID uuid.UUID
 		if err := tx.QueryRow(ctx,
 			`SELECT id FROM tags WHERE org_id = $1 AND name = $2`,
@@ -959,17 +990,21 @@ func (r *Repository) AttachTag(ctx context.Context, orgID uuid.UUID, number int6
 func (r *Repository) DetachTag(ctx context.Context, orgID uuid.UUID, number int64, tagName string, actor Actor) error {
 	return database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
 		var ticketID uuid.UUID
+		var curMerged *uuid.UUID
 		if err := tx.QueryRow(ctx,
-			`SELECT id FROM tickets
+			`SELECT id, merged_into_id FROM tickets
 			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL`,
 			orgID, number,
-		).Scan(&ticketID); err != nil {
+		).Scan(&ticketID, &curMerged); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrTicketNotFound
 			}
 			return fmt.Errorf("find ticket: %w", err)
 		}
 
+		if curMerged != nil {
+			return ErrTicketMerged
+		}
 		var tagID uuid.UUID
 		if err := tx.QueryRow(ctx,
 			`SELECT id FROM tags WHERE org_id = $1 AND name = $2`,
@@ -1123,4 +1158,133 @@ func (r *Repository) ListTicketEvents(ctx context.Context, orgID uuid.UUID, numb
 	}
 
 	return out, next, nil
+}
+
+func (r *Repository) MergeTickets(ctx context.Context, orgID uuid.UUID, sourceNumber, targetNumber int64, actor Actor) (Ticket, Ticket, error) {
+	var source, target Ticket
+
+	err := database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx,
+			`SELECT id, org_id, number, requester_id, assignee_id, team_id,
+			        sla_policy_id, merged_into_id, subject, status, priority,
+			        channel, first_response_due_at, resolution_due_at,
+			        first_response_at, resolved_at, closed_at, version,
+			        created_at, updated_at, deleted_at
+			 FROM tickets
+			 WHERE org_id = $1 AND number IN ($2, $3) AND deleted_at IS NULL
+			 ORDER BY id
+			 FOR UPDATE`,
+			orgID, sourceNumber, targetNumber,
+		)
+		if err != nil {
+			return fmt.Errorf("lock tickets: %w", err)
+		}
+		var found []Ticket
+		for rows.Next() {
+			var t Ticket
+			if err := rows.Scan(
+				&t.ID, &t.OrgID, &t.Number, &t.RequesterID, &t.AssigneeID, &t.TeamID,
+				&t.SLAPolicyID, &t.MergedIntoID, &t.Subject, &t.Status, &t.Priority,
+				&t.Channel, &t.FirstResponseDueAt, &t.ResolutionDueAt, &t.FirstResponseAt,
+				&t.ResolvedAt, &t.ClosedAt, &t.Version, &t.CreatedAt, &t.UpdatedAt, &t.DeletedAt,
+			); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan ticket: %w", err)
+			}
+			found = append(found, t)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("rows: %w", err)
+		}
+
+		if len(found) != 2 {
+			return ErrTicketNotFound
+		}
+		for _, t := range found {
+			if t.Number == sourceNumber {
+				source = t
+			} else {
+				target = t
+			}
+		}
+
+		if source.Number == target.Number {
+			return ErrMergeSelf
+		}
+		if target.MergedIntoID != nil || target.Status == "closed" {
+			return ErrMergeTargetInvalid
+		}
+		if source.MergedIntoID != nil {
+			return ErrSourceMerged
+		}
+		if source.RequesterID != target.RequesterID {
+			return ErrMergeRequester
+		}
+
+		if err := tx.QueryRow(ctx,
+			`UPDATE tickets
+			 SET merged_into_id = $3,
+			     status         = 'closed',
+			     closed_at      = now(),
+			     version        = version + 1,
+			     updated_at     = now()
+			 WHERE org_id = $1 AND number = $2
+			 RETURNING id, org_id, number, requester_id, assignee_id, team_id,
+			           sla_policy_id, merged_into_id, subject, status, priority,
+			           channel, first_response_due_at, resolution_due_at,
+			           first_response_at, resolved_at, closed_at, version,
+			           created_at, updated_at, deleted_at`,
+			orgID, sourceNumber, target.ID,
+		).Scan(
+			&source.ID, &source.OrgID, &source.Number, &source.RequesterID, &source.AssigneeID,
+			&source.TeamID, &source.SLAPolicyID, &source.MergedIntoID, &source.Subject,
+			&source.Status, &source.Priority, &source.Channel, &source.FirstResponseDueAt,
+			&source.ResolutionDueAt, &source.FirstResponseAt, &source.ResolvedAt,
+			&source.ClosedAt, &source.Version, &source.CreatedAt, &source.UpdatedAt, &source.DeletedAt,
+		); err != nil {
+			return fmt.Errorf("close source: %w", err)
+		}
+
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO comments (org_id, ticket_id, author_type, body, is_internal)
+			 VALUES ($1, $2, 'system', $3, false)`,
+			orgID, source.ID, fmt.Sprintf("Merged into #%d", target.Number),
+		); err != nil {
+			return fmt.Errorf("source comment: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO comments (org_id, ticket_id, author_type, body, is_internal)
+			 VALUES ($1, $2, 'system', $3, false)`,
+			orgID, target.ID, fmt.Sprintf("Merged from #%d", source.Number),
+		); err != nil {
+			return fmt.Errorf("target comment: %w", err)
+		}
+
+		if err := Record(ctx, tx, orgID, source.ID, actor, "ticket.merged", map[string]any{
+			"into_number": target.Number,
+			"into_id":     target.ID.String(),
+		}); err != nil {
+			return err
+		}
+
+		if err := tx.QueryRow(ctx,
+			`SELECT c.email, COALESCE(c.name, '') FROM customers c WHERE c.id = $1`,
+			source.RequesterID,
+		).Scan(&source.RequesterEmail, &source.RequesterName); err != nil {
+			return fmt.Errorf("load requester: %w", err)
+		}
+		if err := tx.QueryRow(ctx,
+			`SELECT c.email, COALESCE(c.name, '') FROM customers c WHERE c.id = $1`,
+			target.RequesterID,
+		).Scan(&target.RequesterEmail, &target.RequesterName); err != nil {
+			return fmt.Errorf("load target requester: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return Ticket{}, Ticket{}, err
+	}
+	return source, target, nil
 }

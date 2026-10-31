@@ -17,6 +17,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | SLA, notifications, webhooks, API keys, invitations | Schema defined, not exposed |
 | Watchers | Complete — add/remove (idempotent); assignee and agent commenters auto-watch |
 | Timeline | Complete — cursor-paginated ticket_events, oldest first |
+| Merge | Complete — source closed and pointed at target; merged tickets read-only |
 
 ### Authentication
 
@@ -328,6 +329,20 @@ The join on `memberships` excludes agents removed from the org. A team with no a
 - **Event types and their `data` shapes.** The client switches on
   `event_type`; each type carries a different JSON object in `data`:
 
+- **Merge closes the source and points it at the target.** `POST
+  /v1/tickets/{number}/merge` with `{into_number}` runs one transaction that
+  locks both rows by id ascending (`FOR UPDATE`, deadlock-safe), checks the
+  rules (same org, different tickets, target not closed or already merged,
+  same requester), sets `source.merged_into_id = target.id`, closes the
+  source, adds a system comment on both tickets, and writes `ticket.merged`
+  on the source. A second concurrent merge of the same pair sees the source
+  already merged and returns 409.
+- **Merged tickets are read-only.** Every mutation — update, assign,
+  comment, delete, tag attach/detach — selects `merged_into_id` under
+  `FOR UPDATE` and returns 409 if it is set. The check is in the repository,
+  next to the lock, so it cannot be bypassed by a caller that skips the
+  service.
+
   | `event_type` | `data` fields |
   |---|---|
   | `ticket.created` | `number`, `subject`, `priority` |
@@ -417,6 +432,10 @@ These tests use a real PostgreSQL database.
 - Timeline: events appear in order (created, assigned, tagged, comment,
   status); cursor pagination returns every event exactly once; another
   org's ticket returns 404.
+- Merge: happy path closes the source and writes one `ticket.merged` event;
+  merge into self returns 422; merging into another org's ticket returns 404;
+  two concurrent merges of the same pair yield exactly one success; a comment
+  on a merged source returns 409.
 
 ### Unit Tests
 
