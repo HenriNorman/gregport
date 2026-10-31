@@ -166,6 +166,20 @@ The service layer depends on repository interfaces rather than concrete implemen
 
 ---
 
+---
+
+## API Reference
+
+<details open>
+<summary><b>Interactive docs</b></summary>
+
+- **Live (local dev):** [`/swagger/`](http://localhost:8080/swagger/) — start the API, then open this.
+- **View spec (Swagger Editor):** [Open `swagger.yaml`](https://editor.swagger.io/?url=https://raw.githubusercontent.com/YOUR_USER/gregport/main/swagger.yaml)
+
+</details>
+
+The OpenAPI spec lives at [`swagger.yaml`](./swagger.yaml).
+
 ## Getting Started
 
 ### Prerequisites
