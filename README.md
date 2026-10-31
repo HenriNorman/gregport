@@ -12,7 +12,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | JWT and refresh tokens | Complete and tested — refresh rotation, hashing, and reuse detection |
 | Tickets | Complete — CRUD, comments, state machine, keyset pagination, optimistic concurrency |
 | Teams | Complete — CRUD and membership management |
-| Ticket assignment | Complete — manual assignment to users or teams; round-robin planned |
+| Ticket assignment | Complete — manual (assignee or team) and round-robin (auto: true) |
 | SLA, notifications, webhooks, API keys, invitations | Schema defined, not exposed |
 
 ### Authentication
@@ -47,7 +47,8 @@ The ticket domain currently has **54 tests**.
 
 Teams support creation, listing, updating, and deletion, along with adding and removing members (admin/owner only).
 
-Ticket assignment currently supports manual assignment to an individual agent or a team. Round-robin assignment is planned.
+Ticket assignment supports manual assignment to an individual agent or a team, and round-robin (`auto: true`) within a team.
+Round-robin picks the team member with the oldest `last_assigned_at` inside the same transaction, with `SKIP LOCKED` so concurrent assigns do not pick the same agent.
 
 ---
 
@@ -284,7 +285,13 @@ Assignment also produces a `ticket.assigned` event containing the old and new as
 
 The new assignee is automatically added to `ticket_watchers`. The insertion uses `ON CONFLICT DO NOTHING`, making repeated assignments idempotent.
 
-Round-robin assignment (`auto: true`) is the next step: the team member with the oldest `last_assigned_at` is picked inside the same transaction, with `SKIP LOCKED` so two concurrent assigns pick different agents.
+
+### Round-robin Assignment
+
+`auto: true` with a `team_id` picks the team member with the oldest `last_assigned_at`.
+The pick runs inside the same transaction as the ticket update, with `FOR UPDATE OF team_members SKIP LOCKED`
+so concurrent auto-assigns to the same team do not both choose the same agent.
+The join on `memberships` excludes agents removed from the org. A team with no assignable members returns 422.
 
 ### Pagination
 
@@ -394,6 +401,10 @@ The ticket transition logic is implemented through `CanTransition(from, to)` and
 - Map-of-maps transition table.
 - `closed` is a terminal state.
 - 27 table-driven sub-tests, written before implementation using Test-Driven Development (TDD).
+
+### Round-robin assignment
+
+20 concurrent auto-assigns to one team spread across all 3 agents without errors; an empty team returns 422.
 
 ### Test Summary
 

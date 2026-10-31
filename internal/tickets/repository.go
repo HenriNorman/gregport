@@ -745,3 +745,114 @@ func (r *Repository) AssignTicket(ctx context.Context, in AssignInput) (Ticket, 
 	}
 	return out, nil
 }
+
+// AssignAuto picks the team member with the oldest last_assigned_at and
+// assigns the ticket to them, all inside one transaction. SKIP LOCKED on
+// team_members means two concurrent auto-assigns pick different agents
+// instead of both choosing the same one.
+func (r *Repository) AssignAuto(ctx context.Context, in AssignInput) (Ticket, error) {
+	var out Ticket
+
+	err := database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
+		var ticketID uuid.UUID
+		var oldAssignee *uuid.UUID
+		var oldTeam *uuid.UUID
+		if err := tx.QueryRow(ctx,
+			`SELECT id, assignee_id, team_id
+			 FROM tickets
+			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL
+			 FOR UPDATE`,
+			in.OrgID, in.Number,
+		).Scan(&ticketID, &oldAssignee, &oldTeam); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrTicketNotFound
+			}
+			return fmt.Errorf("lock ticket: %w", err)
+		}
+
+		if in.TeamID == nil {
+			return ErrInvalidInput
+		}
+
+		var picked uuid.UUID
+		if err := tx.QueryRow(ctx,
+			`SELECT tm.user_id
+			 FROM team_members tm
+			 JOIN memberships m ON m.user_id = tm.user_id AND m.org_id = $2
+			 WHERE tm.team_id = $1
+			   AND m.role IN ('owner','admin','agent')
+			 ORDER BY tm.last_assigned_at NULLS FIRST
+			 LIMIT 1
+			 FOR UPDATE OF tm SKIP LOCKED`,
+			*in.TeamID, in.OrgID,
+		).Scan(&picked); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNoTeamMembers
+			}
+			return fmt.Errorf("pick assignee: %w", err)
+		}
+
+		if err := tx.QueryRow(ctx,
+			`UPDATE tickets
+			 SET assignee_id = $3,
+			     team_id     = $4,
+			     version     = version + 1,
+			     updated_at  = now()
+			 WHERE org_id = $1 AND number = $2 AND deleted_at IS NULL
+			 RETURNING id, org_id, number, requester_id, assignee_id, team_id,
+			           sla_policy_id, merged_into_id, subject, status, priority,
+			           channel, first_response_due_at, resolution_due_at,
+			           first_response_at, resolved_at, closed_at, version,
+			           created_at, updated_at, deleted_at`,
+			in.OrgID, in.Number, picked, *in.TeamID,
+		).Scan(
+			&out.ID, &out.OrgID, &out.Number, &out.RequesterID, &out.AssigneeID,
+			&out.TeamID, &out.SLAPolicyID, &out.MergedIntoID, &out.Subject,
+			&out.Status, &out.Priority, &out.Channel, &out.FirstResponseDueAt,
+			&out.ResolutionDueAt, &out.FirstResponseAt, &out.ResolvedAt,
+			&out.ClosedAt, &out.Version, &out.CreatedAt, &out.UpdatedAt, &out.DeletedAt,
+		); err != nil {
+			return fmt.Errorf("update ticket: %w", err)
+		}
+
+		if _, err := tx.Exec(ctx,
+			`UPDATE team_members SET last_assigned_at = now()
+			 WHERE team_id = $1 AND user_id = $2`,
+			*in.TeamID, picked,
+		); err != nil {
+			return fmt.Errorf("update last_assigned_at: %w", err)
+		}
+
+		if err := Record(ctx, tx, in.OrgID, out.ID, in.Actor, "ticket.assigned", map[string]any{
+			"old_assignee_id": oldAssignee,
+			"new_assignee_id": picked,
+			"old_team_id":     oldTeam,
+			"new_team_id":     *in.TeamID,
+			"auto":            true,
+		}); err != nil {
+			return err
+		}
+
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO ticket_watchers (ticket_id, user_id)
+			 VALUES ($1, $2)
+			 ON CONFLICT (ticket_id, user_id) DO NOTHING`,
+			out.ID, picked,
+		); err != nil {
+			return fmt.Errorf("add watcher: %w", err)
+		}
+
+		if err := tx.QueryRow(ctx,
+			`SELECT c.email, COALESCE(c.name, '') FROM customers c WHERE c.id = $1`,
+			out.RequesterID,
+		).Scan(&out.RequesterEmail, &out.RequesterName); err != nil {
+			return fmt.Errorf("load requester: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return Ticket{}, err
+	}
+	return out, nil
+}

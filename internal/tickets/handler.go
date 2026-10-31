@@ -742,10 +742,10 @@ func (h *Handler) RemoveTeamMember(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Assign assigns a ticket to a user or a team.
+// Assign assigns a ticket to a user, a team, or the team's next agent.
 //
-//	@Summary		Assign a ticket to a user or a team
-//	@Description	Any member of the org may assign a ticket. Body must contain exactly one of assignee_id or team_id. Round-robin (auto: true) is not yet available. The assignee must be an org member with role owner, admin, or agent. A ticket in another org returns 404, never 403.
+//	@Summary		Assign a ticket to a user, a team, or round-robin
+//	@Description	Any member of the org may assign a ticket. Exactly one form: assignee_id (direct), team_id (set the team), or team_id plus auto:true (round-robin within the team). The assignee must be an org member with role owner, admin, or agent. A ticket in another org returns 404, never 403.
 //	@Tags			tickets
 //	@Accept			json
 //	@Produce		json
@@ -756,7 +756,7 @@ func (h *Handler) RemoveTeamMember(w http.ResponseWriter, r *http.Request) {
 //	@Failure		400		{object}	httpx.APIError
 //	@Failure		401		{object}	httpx.APIError
 //	@Failure		404		{object}	httpx.APIError	"Ticket or team not found, or belongs to another org"
-//	@Failure		422		{object}	httpx.APIError	"Invalid input, or assignee is not an agent-or-higher org member"
+//	@Failure		422		{object}	httpx.APIError	"Invalid input, assignee not an agent, or team has no assignable members"
 //	@Router			/v1/tickets/{number}/assignment [post]
 func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
@@ -876,6 +876,8 @@ func mapTicketError(err error) *httpx.APIError {
 		return httpx.Unprocessable("member_not_in_org", "user is not a member of this organization")
 	case errors.Is(err, ErrAssigneeNotAgent):
 		return httpx.Unprocessable("assignee_not_agent", "assignee must be an org member with agent role or higher")
+	case errors.Is(err, ErrNoTeamMembers):
+		return httpx.Unprocessable("no_team_members", "team has no assignable members")
 	default:
 		return httpx.InternalError(err)
 	}
