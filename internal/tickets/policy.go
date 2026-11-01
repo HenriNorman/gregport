@@ -10,3 +10,11 @@ func CanDelete(p requestctx.Principal) bool {
 func CanManageTeams(p requestctx.Principal) bool {
 	return p.Role == "owner" || p.Role == "admin"
 }
+
+func CanManagerMemebers(p requestctx.Principal) bool {
+	if p.Kind != requestctx.KindUser {
+		return false 
+	}
+
+	return p.Role == "owner" || p.Role == "admin"
+}

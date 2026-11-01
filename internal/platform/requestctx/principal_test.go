@@ -8,16 +8,16 @@ import (
 )
 
 func TestFromContext_RoundTrip(t *testing.T) {
-	uid := uuid.New()
+	aid := uuid.New()
 	oid := uuid.New()
 
-	ctx := WithPrincipal(context.Background(), Principal{UserID: uid, OrgID: oid, Role: "owner"})
+	ctx := WithPrincipal(context.Background(), Principal{Kind: "user", ActorID: aid, OrgID: oid, Role: "owner"})
 
 	p, ok := FromContext(ctx)
 	if !ok {
 		t.Fatal("expected principal")
 	}
-	if p.UserID != uid || p.OrgID != oid || p.Role != "owner" {
+	if p.ActorID != aid || p.OrgID != oid || p.Role != "owner" {
 		t.Fatalf("mismatch: %+v", p)
 	}
 }

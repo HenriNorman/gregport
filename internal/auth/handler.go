@@ -152,7 +152,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		AccessToken:  pair.AccessToken,
 		RefreshToken: pair.RefreshToken,
 		ExpiresIn:    int(pair.ExpiresIn.Seconds()),
-		UserID:       pair.Principal.UserID,
+		UserID:       pair.Principal.ActorID,
 		OrgID:        pair.Principal.OrgID,
 		Role:         pair.Principal.Role,
 	})
@@ -187,7 +187,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		AccessToken:  pair.AccessToken,
 		RefreshToken: pair.RefreshToken,
 		ExpiresIn:    int(pair.ExpiresIn.Seconds()),
-		UserID:       pair.Principal.UserID,
+		UserID:       pair.Principal.ActorID,
 		OrgID:        pair.Principal.OrgID,
 		Role:         pair.Principal.Role,
 	})
@@ -234,7 +234,7 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusOK, MeResponse{
-		UserID: p.UserID.String(),
+		UserID: p.ActorID.String(),
 		OrgID:  p.OrgID.String(),
 		Role:   p.Role,
 	})

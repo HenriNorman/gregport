@@ -187,7 +187,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (TokenPair, error) {
 		RefreshToken: raw,
 		ExpiresIn:    ttl,
 		Principal: requestctx.Principal{
-			UserID: cand.UserID,
+			ActorID: cand.UserID,
 			OrgID:  mem.OrgID,
 			Role:   mem.Role,
 		},
@@ -268,7 +268,7 @@ func (s *Service) Refresh(ctx context.Context, rawRefresh string, userAgent, ip 
 		RefreshToken: raw,
 		ExpiresIn:    ttl,
 		Principal: requestctx.Principal{
-			UserID: userID,
+			ActorID: userID,
 			OrgID:  orgID,
 			Role:   role,
 		},

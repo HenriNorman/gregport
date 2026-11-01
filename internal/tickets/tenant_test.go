@@ -55,7 +55,7 @@ func setupTwoOrgs(t *testing.T, repo *Repository) (orgA, orgB uuid.UUID, number 
 
 func principalCtx(orgID, userID uuid.UUID) context.Context {
 	return requestctx.WithPrincipal(context.Background(), requestctx.Principal{
-		UserID: userID,
+		ActorID: userID,
 		OrgID:  orgID,
 		Role:   "owner",
 	})

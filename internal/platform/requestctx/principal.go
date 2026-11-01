@@ -6,10 +6,17 @@ import (
 	"github.com/google/uuid"
 )
 
+type Kind string
+const (
+	KindUser Kind	 = "user"
+	KindAPIKey Kind	 = "api_key" 
+)
+
 type Principal struct {
-	UserID uuid.UUID
-	OrgID  uuid.UUID
-	Role   string
+	Kind 	Kind
+	ActorID uuid.UUID
+	OrgID  	uuid.UUID
+	Role   	string
 }
 
 type ctxKey struct{}

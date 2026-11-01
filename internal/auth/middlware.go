@@ -30,7 +30,7 @@ func Authenticate(tm *TokenManager) func(http.Handler) http.Handler {
 			}
 
 			p := requestctx.Principal{
-				UserID: claims.UserID,
+				ActorID: claims.UserID,
 				OrgID:  claims.OrgID,
 				Role:   claims.Role,
 			}

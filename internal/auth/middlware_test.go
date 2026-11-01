@@ -96,7 +96,7 @@ func TestAuthenticate_ValidToken_SetsPrincipal(t *testing.T) {
 	if !gotOK {
 		t.Fatal("principal missing from context")
 	}
-	if got.UserID != uid || got.OrgID != oid || got.Role != "owner" {
+	if got.ActorID != uid || got.OrgID != oid || got.Role != "owner" {
 		t.Fatalf("principal mismatch: %+v", got)
 	}
 }

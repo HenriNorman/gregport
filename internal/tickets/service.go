@@ -39,7 +39,7 @@ func (s *Service) CreateTicket(ctx context.Context, p requestctx.Principal, req 
 
 	tk, _, err := s.repo.CreateTicket(ctx, CreateInput{
 		OrgID:          p.OrgID,
-		Actor:          Actor{Type: "user", ID: &p.UserID},
+		Actor:          Actor{Type: "user", ID: &p.ActorID},
 		RequesterEmail: strings.ToLower(strings.TrimSpace(req.RequesterEmail)),
 		RequesterName:  strings.TrimSpace(req.RequesterName),
 		Subject:        subject,
@@ -76,7 +76,7 @@ func (s *Service) UpdateTicket(ctx context.Context, p requestctx.Principal, numb
 		OrgID:           p.OrgID,
 		Number:          number,
 		ExpectedVersion: version,
-		Actor:           Actor{Type: "user", ID: &p.UserID},
+		Actor:           Actor{Type: "user", ID: &p.ActorID},
 		Status:          req.Status,
 		Priority:        req.Priority,
 		Subject:         req.Subject,
@@ -87,7 +87,7 @@ func (s *Service) DeleteTicket(ctx context.Context, p requestctx.Principal, numb
 	if !CanDelete(p) {
 		return ErrForbidden
 	}
-	return s.repo.SoftDeleteTicket(ctx, p.OrgID, number, Actor{Type: "user", ID: &p.UserID})
+	return s.repo.SoftDeleteTicket(ctx, p.OrgID, number, Actor{Type: "user", ID: &p.ActorID})
 }
 
 func (s *Service) CreateComment(ctx context.Context, p requestctx.Principal, number int64, req CreateCommentRequest) (Comment, error) {
@@ -101,7 +101,7 @@ func (s *Service) CreateComment(ctx context.Context, p requestctx.Principal, num
 	return s.repo.CreateComment(ctx, CreateCommentInput{
 		OrgID:      p.OrgID,
 		Number:     number,
-		Actor:      Actor{Type: "user", ID: &p.UserID},
+		Actor:      Actor{Type: "user", ID: &p.ActorID},
 		Body:       body,
 		IsInternal: req.IsInternal,
 	})
@@ -201,7 +201,7 @@ func (s *Service) AssignTicket(ctx context.Context, p requestctx.Principal, numb
 		return s.repo.AssignAuto(ctx, AssignInput{
 			OrgID:  p.OrgID,
 			Number: number,
-			Actor:  Actor{Type: "user", ID: &p.UserID},
+			Actor:  Actor{Type: "user", ID: &p.ActorID},
 			TeamID: teamID,
 		})
 	}
@@ -217,7 +217,7 @@ func (s *Service) AssignTicket(ctx context.Context, p requestctx.Principal, numb
 	return s.repo.AssignTicket(ctx, AssignInput{
 		OrgID:      p.OrgID,
 		Number:     number,
-		Actor:      Actor{Type: "user", ID: &p.UserID},
+		Actor:      Actor{Type: "user", ID: &p.ActorID},
 		AssigneeID: assigneeID,
 		TeamID:     teamID,
 	})
@@ -240,7 +240,7 @@ func (s *Service) AttachTag(ctx context.Context, p requestctx.Principal, number 
 	if name == "" {
 		return ErrInvalidInput
 	}
-	return s.repo.AttachTag(ctx, p.OrgID, number, name, Actor{Type: "user", ID: &p.UserID})
+	return s.repo.AttachTag(ctx, p.OrgID, number, name, Actor{Type: "user", ID: &p.ActorID})
 }
 
 func (s *Service) DetachTag(ctx context.Context, p requestctx.Principal, number int64, tagName string) error {
@@ -248,7 +248,7 @@ func (s *Service) DetachTag(ctx context.Context, p requestctx.Principal, number 
 	if name == "" {
 		return ErrInvalidInput
 	}
-	return s.repo.DetachTag(ctx, p.OrgID, number, name, Actor{Type: "user", ID: &p.UserID})
+	return s.repo.DetachTag(ctx, p.OrgID, number, name, Actor{Type: "user", ID: &p.ActorID})
 }
 
 func (s *Service) AddWatcher(ctx context.Context, p requestctx.Principal, number int64, userID uuid.UUID) error {
@@ -271,7 +271,7 @@ func (s *Service) MergeTickets(ctx context.Context, p requestctx.Principal, sour
 		return Ticket{}, Ticket{}, ErrMergeSelf
 	}
 	return s.repo.MergeTickets(ctx, p.OrgID, sourceNumber, targetNumber,
-		Actor{Type: "user", ID: &p.UserID})
+		Actor{Type: "user", ID: &p.ActorID})
 }
 
 func (s *Service) CreateMacro(ctx context.Context, p requestctx.Principal, req CreateMacroRequest) (Macro, error) {
@@ -286,7 +286,7 @@ func (s *Service) CreateMacro(ctx context.Context, p requestctx.Principal, req C
 	if err != nil {
 		return Macro{}, err
 	}
-	return s.repo.CreateMacro(ctx, p.OrgID, p.UserID, name, actions)
+	return s.repo.CreateMacro(ctx, p.OrgID, p.ActorID, name, actions)
 }
 
 func (s *Service) ListMacros(ctx context.Context, p requestctx.Principal) ([]Macro, error) {

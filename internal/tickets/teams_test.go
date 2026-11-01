@@ -98,7 +98,7 @@ func TestAddTeamMember_CrossOrg_422(t *testing.T) {
 }
 func principalCtxRole(orgID, userID uuid.UUID, role string) context.Context {
 	return requestctx.WithPrincipal(context.Background(), requestctx.Principal{
-		UserID: userID, OrgID: orgID, Role: role,
+		ActorID: userID, OrgID: orgID, Role: role,
 	})
 }
 
