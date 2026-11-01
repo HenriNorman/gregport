@@ -20,7 +20,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Macros | Complete — CRUD (admin/owner) and apply to a ticket (any member) |
 | Invitations | Complete — create (admin/owner, grant table), list pending, revoke, accept (new and existing user) |
 | Members | Complete — list (any member), role change and removal (admin/owner), last-owner protection |
-| API keys | Complete — create (raw shown once), list (no secret), revoke; keys are agent-level |
+| API keys | Complete — create, list, revoke; `gp_live_` keys authenticate as agent-level principals |
 | SLA, notifications, webhooks | Schema defined, not exposed |
 
 ### Authentication
@@ -348,6 +348,20 @@ This prevents the API from confirming whether a resource exists in another tenan
   routes. Keys themselves (the principals they authenticate) are never
   allowed to create, list, or revoke keys — see the policy rule.
 
+- **`Authenticate` branches on the token prefix.** A bearer token starting
+  with `gp_live_` takes the API-key path: parse the prefix, look up the row,
+  reject revoked/expired, compare the SHA-256 of the full key with
+  `subtle.ConstantTimeCompare`. Anything else takes the JWT path. Both paths
+  produce a `Principal`; `Kind` distinguishes them.
+- **`last_used_at` is throttled in memory.** Each key's last write is tracked
+  in a `sync.Mutex`-guarded map; a write fires at most once per minute, in a
+  background goroutine. A burst of requests from one key does not hammer the
+  database. (Redis will replace the in-memory map in a later feat.)
+- **API keys are agent-level and limited to tickets and comments.** They
+  pass every ticket operation (create, list, get, update, comment, assign,
+  tag, watch, merge, macro) and fail every management gate — members, teams,
+  API keys, webhooks — because `policy.go` checks `Kind` before role.
+
 ### Optimistic Concurrency
 
 Ticket updates require an `If-Match` header.
@@ -469,12 +483,12 @@ Ticket tests are integration tests and require PostgreSQL.
 
 These tests use a real PostgreSQL database.
 
-**Authentication:**
+**Authentication**
 
 - Signup transaction rollback.
 - Refresh-token rotation and reuse detection.
 
-**Tickets:**
+**Tickets**
 
 - Concurrent ticket creation: 20 concurrent creates produce ticket numbers `1–20` without gaps or duplicates.
 - Failed ticket creation does not leave a gap in per-organization numbering.
@@ -516,12 +530,12 @@ duplicate name returns `409`; applying a macro sets status, attaches tags,
 and adds a comment; an illegal status transition in a macro returns `422` 
 (state machine applies); another org's macro returns `404`.
 
-**Audit:**
+**Audit**
 
 - The audit helper inserts a row inside a caller's transaction with the
   correct actor type, actor id, action, and entity.
 
-**Invitations:**
+**Invitations**
 
 - owner invites agent (201, raw token returned once, token
   hashed in DB, audit row written); admin inviting admin returns 403;
@@ -537,6 +551,13 @@ and adds a comment; an illegal status transition in a macro returns `422`
   403; removing the last owner returns 422; two concurrent removals of the
   last two owners leave exactly one owner; removing a member revokes their
   refresh tokens for this org.
+
+**API Key**
+- A valid key returns a principal with `Kind: api_key`, the
+  key's id as `ActorID`, and role `agent`; revoked, expired, wrong-secret,
+  and unknown-prefix keys all return 401; `last_used_at` is written at most
+  once per minute per key; an API key can create a ticket and cannot create
+  an API key.
 
 ### Unit Tests
 
@@ -603,11 +624,9 @@ The authentication cycle has also been verified end to end using `curl`:
 
 ## Current Development Direction
 
-Feat 5 is in progress: the identity model finishes here. Invitations, member
-management, and API keys are complete. What remains is the API-key
-authentication path — `Authenticate` reading `gp_` tokens, the
-`last_used_at` throttle, and `Kind` enforcement in the policy for every
-existing route.
+Feat 5 is complete. Invitations, member management, API keys, the
+`gp_live_` authentication path, and audit logging across all state-changing
+actions are done.
 
 Future domain work includes exposing the remaining schema-defined
 functionality: SLA policies, notifications, and webhooks.

@@ -3,12 +3,15 @@ package auth
 import (
 	"net/http"
 	"strings"
-	
+	"context"
 	"github.com/HenriNorman/gregport/internal/platform/httpx"
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 )
 
-func Authenticate(tm *TokenManager) func(http.Handler) http.Handler {
+func Authenticate(
+	tm *TokenManager,
+	apiKeyAuth func(ctx context.Context, raw string) (requestctx.Principal, error),
+) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
@@ -22,24 +25,36 @@ func Authenticate(tm *TokenManager) func(http.Handler) http.Handler {
 				httpx.WriteError(w, unauthorized())
 				return
 			}
+			token := parts[1]
 
-			claims, err := tm.VerifyAccess(parts[1])
-			if err != nil {
-				httpx.WriteError(w, unauthorized())
-				return
+			var p requestctx.Principal
+
+			if strings.HasPrefix(token, "gp_live_") {
+				kp, err := apiKeyAuth(r.Context(), token)
+				if err != nil {
+					httpx.WriteError(w, unauthorized())
+					return
+				}
+				p = kp
+			} else {
+				claims, err := tm.VerifyAccess(token)
+				if err != nil {
+					httpx.WriteError(w, unauthorized())
+					return
+				}
+				p = requestctx.Principal{
+					Kind:    requestctx.KindUser,
+					ActorID: claims.UserID,
+					OrgID:   claims.OrgID,
+					Role:    claims.Role,
+				}
 			}
 
-			p := requestctx.Principal{
-				ActorID: claims.UserID,
-				OrgID:  claims.OrgID,
-				Role:   claims.Role,
-			}
 			ctx := requestctx.WithPrincipal(r.Context(), p)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
-
 func RequireRole(roles ...string) func(http.Handler) http.Handler {
 	allowed := make(map[string]struct{}, len(roles))
 	for _, r := range roles {

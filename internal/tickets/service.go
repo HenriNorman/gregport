@@ -22,10 +22,20 @@ import (
 type Service struct {
 	repo        *Repository
 	invitations *InvitationTokenManager
+	lastUsed    *LastUsedThrottle
 }
 
 func NewService(repo *Repository, invitations *InvitationTokenManager) *Service {
-	return &Service{repo: repo, invitations: invitations}
+	s := &Service{
+		repo:        repo,
+		invitations: invitations,
+	}
+	s.lastUsed = NewLastUsedThrottle(func(ctx context.Context, keyID uuid.UUID) error {
+		_, err := repo.pool.Exec(ctx,
+			`UPDATE api_keys SET last_used_at = now() WHERE id = $1`, keyID)
+		return err
+	})
+	return s
 }
 
 func (s *Service) CreateTicket(ctx context.Context, p requestctx.Principal, req CreateTicketRequest) (Ticket, error) {

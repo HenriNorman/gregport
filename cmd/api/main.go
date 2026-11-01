@@ -90,7 +90,7 @@ func main() {
 
 		// protected
 		r.Group(func(r chi.Router) {
-			r.Use(auth.Authenticate(tm))
+			r.Use(auth.Authenticate(tm, ticketsSvc.AuthenticateAPIKey))
 
 			r.Get("/me", authHandler.Me)
 
