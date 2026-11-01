@@ -563,3 +563,85 @@ func (s *Service) RemoveMember(ctx context.Context, p requestctx.Principal, user
 		return audit.Record(ctx, tx, p.OrgID, p, "member.removed", "membership", userID, nil)
 	})
 }
+
+// generateAPIKey returns the raw key, the prefix, and the SHA-256 of the full key.
+// Format: gp_live_<id>_<secret>; prefix stored is gp_live_<id>.
+func generateAPIKey() (raw, prefix, hash string, err error) {
+	idBytes := make([]byte, 8)
+	if _, err := rand.Read(idBytes); err != nil {
+		return "", "", "", fmt.Errorf("rand id: %w", err)
+	}
+	secretBytes := make([]byte, 32)
+	if _, err := rand.Read(secretBytes); err != nil {
+		return "", "", "", fmt.Errorf("rand secret: %w", err)
+	}
+
+	idPart := base64.RawURLEncoding.EncodeToString(idBytes)
+	secretPart := base64.RawURLEncoding.EncodeToString(secretBytes)
+
+	prefix = "gp_live_" + idPart
+	raw = prefix + "_" + secretPart
+	hash = HashAPIKey(raw)
+	return raw, prefix, hash, nil
+}
+
+func HashAPIKey(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func (s *Service) CreateAPIKey(ctx context.Context, p requestctx.Principal, req CreateAPIKeyRequest) (APIKey, string, error) {
+	if !CanManageAPIKeys(p) {
+		return APIKey{}, "", ErrForbidden
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" || len(name) > 100 {
+		return APIKey{}, "", ErrInvalidInput
+	}
+
+	raw, prefix, hash, err := generateAPIKey()
+	if err != nil {
+		return APIKey{}, "", err
+	}
+
+	k, err := s.repo.CreateAPIKey(ctx, APIKey{
+		OrgID:           p.OrgID,
+		Name:            name,
+		Prefix:          prefix,
+		KeyHash:         hash,
+		CreatedBy:       p.ActorID,
+		RateLimitPerMin: 600,
+	})
+	if err != nil {
+		return APIKey{}, "", err
+	}
+
+	if err := database.WithTx(ctx, s.repo.pool, func(tx pgx.Tx) error {
+		return audit.Record(ctx, tx, p.OrgID, p, "api_key.created", "api_key", k.ID, map[string]any{
+			"name": k.Name,
+		})
+	}); err != nil {
+		return APIKey{}, "", err
+	}
+
+	return k, raw, nil
+}
+
+func (s *Service) ListAPIKeys(ctx context.Context, p requestctx.Principal) ([]APIKey, error) {
+	if !CanManageAPIKeys(p) {
+		return nil, ErrForbidden
+	}
+	return s.repo.ListAPIKeys(ctx, p.OrgID)
+}
+
+func (s *Service) RevokeAPIKey(ctx context.Context, p requestctx.Principal, keyID uuid.UUID) error {
+	if !CanManageAPIKeys(p) {
+		return ErrForbidden
+	}
+	if err := s.repo.RevokeAPIKey(ctx, p.OrgID, keyID); err != nil {
+		return err
+	}
+	return database.WithTx(ctx, s.repo.pool, func(tx pgx.Tx) error {
+		return audit.Record(ctx, tx, p.OrgID, p, "api_key.revoked", "api_key", keyID, nil)
+	})
+}

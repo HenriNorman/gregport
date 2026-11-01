@@ -128,3 +128,17 @@ type Member struct {
 	Role      string
 	CreatedAt time.Time
 }
+
+type APIKey struct {
+	ID             uuid.UUID
+	OrgID          uuid.UUID
+	Name           string
+	Prefix         string
+	KeyHash        string
+	CreatedBy      uuid.UUID
+	RateLimitPerMin int
+	LastUsedAt     *time.Time
+	ExpiresAt      *time.Time
+	RevokedAt      *time.Time
+	CreatedAt      time.Time
+}

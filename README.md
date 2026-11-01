@@ -20,7 +20,8 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Macros | Complete — CRUD (admin/owner) and apply to a ticket (any member) |
 | Invitations | Complete — create (admin/owner, grant table), list pending, revoke, accept (new and existing user) |
 | Members | Complete — list (any member), role change and removal (admin/owner), last-owner protection |
-| SLA, notifications, webhooks, API keys, invitations | Schema defined, not exposed |
+| API keys | Complete — create (raw shown once), list (no secret), revoke; keys are agent-level |
+| SLA, notifications, webhooks | Schema defined, not exposed |
 
 ### Authentication
 
@@ -332,6 +333,20 @@ This prevents the API from confirming whether a resource exists in another tenan
   in the same transaction. The removed user's access token stays valid up to
   15 minutes (it's stateless), but their refresh token is dead immediately —
   they cannot get a new one. A `member.removed` audit row is written.
+- **API keys are `gp_live_<id>_<secret>` and never stored raw.**
+  `POST /v1/api-keys` generates 8 random bytes for the id and 32 for the
+  secret, both base64url. The full key is returned once; the DB stores the
+  prefix `gp_live_<id>` and the SHA-256 of the **full** key. Lookup is by
+  prefix, then `subtle.ConstantTimeCompare` on the hash. List responses
+  carry the prefix only.
+- **Revoking a key sets `revoked_at`, it does not delete the row.** A
+  revoked key returns 401 on every request — indistinguishable from an
+  expired or unknown key to the client, but distinguishable in the DB, so
+  "revoked" and "never existed" are not conflated.
+- **API key mutations are owner/admin.** `CanManageAPIKeys` gates
+  `POST/GET/DELETE /v1/api-keys`; the `RequireRole` middleware gates the
+  routes. Keys themselves (the principals they authenticate) are never
+  allowed to create, list, or revoke keys — see the policy rule.
 
 ### Optimistic Concurrency
 
@@ -478,24 +493,46 @@ These tests use a real PostgreSQL database.
 - Agent team-management attempt returns `403`.
 - Adding a cross-organization member returns `422`.
 - Tags: create lowercases and trims the name; duplicate per org returns `409`; attach and detach are idempotent (one event per actual change); attaching a nonexistent tag returns `404`; attaching a tag to another org's ticket returns `404`.
-- Watchers: add is idempotent; adding a non-member returns `422`; remove is idempotent; removing a watcher from another org's ticket returns `404`; an agent who comments is auto-added as a watcher.
-- Timeline: events appear in order (created, assigned, tagged, comment, status); cursor pagination returns every event exactly once; another org's ticket returns `404`.
-- Merge: happy path closes the source and writes one `ticket.merged` event; merge into self returns `422`; merging into another org's ticket returns `404`; two concurrent merges of the same pair yield exactly one success; a comment on a merged source returns `409`.
-- Macros: create validates status/priority enums and rejects unknown fields; duplicate name returns `409`; applying a macro sets status, attaches tags, and adds a comment; an illegal status transition in a macro returns `422` (state machine applies); another org's macro returns `404`.
+
+**Watchers**
+- add is idempotent; adding a non-member returns `422`;
+remove is idempotent; removing a watcher from another org's ticket returns `404`;
+an agent who comments is auto-added as a watcher.
+
+**Timeline**
+
+- events appear in order (created, assigned, tagged, comment, status);
+cursor pagination returns every event exactly once; another org's ticket returns `404`.
+
+**Merge**
+- happy path closes the source and writes one `ticket.merged` event;
+merge into self returns `422`; merging into another org's ticket returns `404`;
+two concurrent merges of the same pair yield exactly one success;
+a comment on a merged source returns `409`.
+
+**Macros**
+- create validates status/priority enums and rejects unknown fields;
+duplicate name returns `409`; applying a macro sets status, attaches tags, 
+and adds a comment; an illegal status transition in a macro returns `422` 
+(state machine applies); another org's macro returns `404`.
 
 **Audit:**
 
 - The audit helper inserts a row inside a caller's transaction with the
   correct actor type, actor id, action, and entity.
 
-- Invitations: owner invites agent (201, raw token returned once, token
+**Invitations:**
+
+- owner invites agent (201, raw token returned once, token
   hashed in DB, audit row written); admin inviting admin returns 403;
   owner inviting owner returns 403; accept creates a new user + membership
   with an audit row; accept by an existing user with a mismatched email
   returns 403; expired and already-used tokens return 422; a duplicate
   membership returns 409.
 
-- Members: any member can list the roster; owner promotes agent to admin;
+**Members**
+
+- any member can list the roster; owner promotes agent to admin;
   admin promoting to admin returns 403 (grant table); granting owner returns
   403; removing the last owner returns 422; two concurrent removals of the
   last two owners leave exactly one owner; removing a member revokes their
@@ -566,10 +603,11 @@ The authentication cycle has also been verified end to end using `curl`:
 
 ## Current Development Direction
 
-Feat 5 is in progress: the identity model finishes here. People join by
-invitation, and machines authenticate with API keys. Invitations and member
-management are complete. API keys, the API-key authentication path, and the
-audit wiring across all state-changing actions are next.
+Feat 5 is in progress: the identity model finishes here. Invitations, member
+management, and API keys are complete. What remains is the API-key
+authentication path — `Authenticate` reading `gp_` tokens, the
+`last_used_at` throttle, and `Kind` enforcement in the policy for every
+existing route.
 
 Future domain work includes exposing the remaining schema-defined
 functionality: SLA policies, notifications, and webhooks.

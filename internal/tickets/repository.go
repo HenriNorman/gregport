@@ -1693,3 +1693,80 @@ func (r *Repository) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) 
 		return nil
 	})
 }
+
+func (r *Repository) CreateAPIKey(ctx context.Context, in APIKey) (APIKey, error) {
+	var out APIKey
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO api_keys (org_id, name, prefix, key_hash, created_by, rate_limit_per_min, expires_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 RETURNING id, org_id, name, prefix, key_hash, created_by, rate_limit_per_min,
+		           last_used_at, expires_at, revoked_at, created_at`,
+		in.OrgID, in.Name, in.Prefix, in.KeyHash, in.CreatedBy, in.RateLimitPerMin, in.ExpiresAt,
+	).Scan(&out.ID, &out.OrgID, &out.Name, &out.Prefix, &out.KeyHash, &out.CreatedBy,
+		&out.RateLimitPerMin, &out.LastUsedAt, &out.ExpiresAt, &out.RevokedAt, &out.CreatedAt)
+	if err != nil {
+		return APIKey{}, fmt.Errorf("create api key: %w", err)
+	}
+	return out, nil
+}
+
+func (r *Repository) ListAPIKeys(ctx context.Context, orgID uuid.UUID) ([]APIKey, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, org_id, name, prefix, key_hash, created_by, rate_limit_per_min,
+		        last_used_at, expires_at, revoked_at, created_at
+		 FROM api_keys WHERE org_id = $1 ORDER BY created_at DESC`,
+		orgID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list api keys: %w", err)
+	}
+	defer rows.Close()
+
+	var out []APIKey
+	for rows.Next() {
+		var k APIKey
+		if err := rows.Scan(&k.ID, &k.OrgID, &k.Name, &k.Prefix, &k.KeyHash, &k.CreatedBy,
+			&k.RateLimitPerMin, &k.LastUsedAt, &k.ExpiresAt, &k.RevokedAt, &k.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan api key: %w", err)
+		}
+		out = append(out, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
+
+func (r *Repository) RevokeAPIKey(ctx context.Context, orgID, keyID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE api_keys SET revoked_at = now()
+		 WHERE org_id = $1 AND id = $2 AND revoked_at IS NULL`,
+		orgID, keyID,
+	)
+	if err != nil {
+		return fmt.Errorf("revoke api key: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrAPIKeyNotFound
+	}
+	return nil
+}
+
+// FindAPIKeyByPrefix returns the key row for a prefix. Used by the auth path.
+func (r *Repository) FindAPIKeyByPrefix(ctx context.Context, prefix string) (APIKey, error) {
+	var k APIKey
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, org_id, name, prefix, key_hash, created_by, rate_limit_per_min,
+		        last_used_at, expires_at, revoked_at, created_at
+		 FROM api_keys WHERE prefix = $1`,
+		prefix,
+	).Scan(&k.ID, &k.OrgID, &k.Name, &k.Prefix, &k.KeyHash, &k.CreatedBy,
+		&k.RateLimitPerMin, &k.LastUsedAt, &k.ExpiresAt, &k.RevokedAt, &k.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return APIKey{}, ErrAPIKeyNotFound
+		}
+		return APIKey{}, fmt.Errorf("find api key: %w", err)
+	}
+	return k, nil
+}

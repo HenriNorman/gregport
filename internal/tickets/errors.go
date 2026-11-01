@@ -31,4 +31,5 @@ var (
 	ErrDuplicateMembership   = errors.New("user is already a member of this organization")
 	ErrMemberNotFound = errors.New("member not found")
 	ErrLastOwner      = errors.New("cannot remove or demote the last owner")
+	ErrAPIKeyNotFound = errors.New("api key not found")
 )

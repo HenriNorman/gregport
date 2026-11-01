@@ -142,6 +142,11 @@ func main() {
 				r.With(auth.RequireRole("owner", "admin")).Patch("/{userId}", ticketsHandler.UpdateMemberRole)
 				r.With(auth.RequireRole("owner", "admin")).Delete("/{userId}", ticketsHandler.RemoveMember)
 			})
+			r.Route("/api-keys", func(r chi.Router) {
+				r.With(auth.RequireRole("owner", "admin")).Post("/", ticketsHandler.CreateAPIKey)
+				r.With(auth.RequireRole("owner", "admin")).Get("/", ticketsHandler.ListAPIKeys)
+				r.With(auth.RequireRole("owner", "admin")).Delete("/{id}", ticketsHandler.RevokeAPIKey)
+			})
 		})
 	})
 

@@ -307,6 +307,31 @@ type UpdateMemberRequest struct {
 	Role string `json:"role" example:"admin" enums:"owner,admin,agent"`
 }
 
+// --- API Keys ---
+
+type CreateAPIKeyRequest struct {
+	Name string `json:"name" example:"CI pipeline"`
+}
+
+type APIKeyDTO struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Prefix    string     `json:"prefix"`
+	CreatedAt time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+}
+
+type CreateAPIKeyResponse struct {
+	APIKey APIKeyDTO `json:"api_key"`
+	Key    string    `json:"key"`   // shown once
+}
+
+type APIKeyListResponse struct {
+	APIKeys []APIKeyDTO `json:"api_keys"`
+}
+
 // --- Handler ---
 
 type Handler struct {
@@ -1618,6 +1643,104 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// CreateAPIKey creates an API key for the org.
+//
+//	@Summary		Create an API key
+//	@Description	Requires role owner or admin. The full key is returned once and never again. Store it immediately. Keys are agent-level and can call ticket and comment endpoints; they cannot manage members, teams, keys, or webhooks.
+//	@Tags			api-keys
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			body	body		CreateAPIKeyRequest	true	"API key payload"
+//	@Success		201		{object}	CreateAPIKeyResponse
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		403		{object}	httpx.APIError
+//	@Failure		422		{object}	httpx.APIError
+//	@Router			/v1/api-keys [post]
+func (h *Handler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	var req CreateAPIKeyRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+	k, raw, err := h.svc.CreateAPIKey(r.Context(), p, req)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	_ = httpx.WriteJSON(w, http.StatusCreated, CreateAPIKeyResponse{
+		APIKey: toAPIKeyDTO(k),
+		Key:    raw,
+	})
+}
+
+// ListAPIKeys lists the org's API keys.
+//
+//	@Summary		List API keys
+//	@Description	Requires role owner or admin. Never returns the raw key or the hash.
+//	@Tags			api-keys
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	APIKeyListResponse
+//	@Failure		401	{object}	httpx.APIError
+//	@Failure		403	{object}	httpx.APIError
+//	@Router			/v1/api-keys [get]
+func (h *Handler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	keys, err := h.svc.ListAPIKeys(r.Context(), p)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	dtos := make([]APIKeyDTO, 0, len(keys))
+	for _, k := range keys {
+		dtos = append(dtos, toAPIKeyDTO(k))
+	}
+	_ = httpx.WriteJSON(w, http.StatusOK, APIKeyListResponse{APIKeys: dtos})
+}
+
+// RevokeAPIKey revokes an API key.
+//
+//	@Summary		Revoke an API key
+//	@Description	Requires role owner or admin. The key row is kept with revoked_at set; a revoked key returns 401 on every request.
+//	@Tags			api-keys
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path	string	true	"API key UUID"
+//	@Success		204	"No Content"
+//	@Failure		400	{object}	httpx.APIError
+//	@Failure		401	{object}	httpx.APIError
+//	@Failure		403	{object}	httpx.APIError
+//	@Failure		404	{object}	httpx.APIError
+//	@Router			/v1/api-keys/{id} [delete]
+func (h *Handler) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	keyID, err := parseUUIDParam(r, "id")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_id", "api key id must be a UUID"))
+		return
+	}
+	if err := h.svc.RevokeAPIKey(r.Context(), p, keyID); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- helpers ---
 
 func parseNumber(r *http.Request) (int64, error) {
@@ -1688,6 +1811,18 @@ func toMemberDTO(m Member) MemberDTO {
 		Name:      m.Name,
 		Role:      m.Role,
 		CreatedAt: m.CreatedAt,
+	}
+}
+
+func toAPIKeyDTO(k APIKey) APIKeyDTO {
+	return APIKeyDTO{
+		ID:         k.ID.String(),
+		Name:       k.Name,
+		Prefix:     k.Prefix,
+		CreatedAt:  k.CreatedAt,
+		LastUsedAt: k.LastUsedAt,
+		ExpiresAt:  k.ExpiresAt,
+		RevokedAt:  k.RevokedAt,
 	}
 }
 
@@ -1769,6 +1904,11 @@ func mapTicketError(err error) *httpx.APIError {
 		return &httpx.APIError{Status: http.StatusNotFound, Code: "member_not_found", Message: "member not found"}
 	case errors.Is(err, ErrLastOwner):
 		return httpx.Unprocessable("last_owner", "cannot remove or demote the last owner")
+	case errors.Is(err, ErrAPIKeyNotFound):
+		return &httpx.APIError{
+			Status: http.StatusNotFound, Code: "api_key_not_found",
+			Message: "api key not found",
+		}
 	default:
 		log.Printf("unmapped ticket error: %v", err)
 		return httpx.InternalError(err)	}

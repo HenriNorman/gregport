@@ -125,6 +125,30 @@ definitions:
       message:
         type: string
     type: object
+  tickets.APIKeyDTO:
+    properties:
+      created_at:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      last_used_at:
+        type: string
+      name:
+        type: string
+      prefix:
+        type: string
+      revoked_at:
+        type: string
+    type: object
+  tickets.APIKeyListResponse:
+    properties:
+      api_keys:
+        items:
+          $ref: '#/definitions/tickets.APIKeyDTO'
+        type: array
+    type: object
   tickets.AcceptInvitationRequest:
     properties:
       name:
@@ -179,6 +203,20 @@ definitions:
       is_internal:
         example: false
         type: boolean
+    type: object
+  tickets.CreateAPIKeyRequest:
+    properties:
+      name:
+        example: CI pipeline
+        type: string
+    type: object
+  tickets.CreateAPIKeyResponse:
+    properties:
+      api_key:
+        $ref: '#/definitions/tickets.APIKeyDTO'
+      key:
+        description: shown once
+        type: string
     type: object
   tickets.CreateCommentRequest:
     properties:
@@ -565,6 +603,107 @@ info:
   title: gregport API
   version: 1.0.0
 paths:
+  /v1/api-keys:
+    get:
+      description: Requires role owner or admin. Never returns the raw key or the
+        hash.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tickets.APIKeyListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: List API keys
+      tags:
+      - api-keys
+    post:
+      consumes:
+      - application/json
+      description: Requires role owner or admin. The full key is returned once and
+        never again. Store it immediately. Keys are agent-level and can call ticket
+        and comment endpoints; they cannot manage members, teams, keys, or webhooks.
+      parameters:
+      - description: API key payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tickets.CreateAPIKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/tickets.CreateAPIKeyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Create an API key
+      tags:
+      - api-keys
+  /v1/api-keys/{id}:
+    delete:
+      description: Requires role owner or admin. The key row is kept with revoked_at
+        set; a revoked key returns 401 on every request.
+      parameters:
+      - description: API key UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Revoke an API key
+      tags:
+      - api-keys
   /v1/auth/login:
     post:
       consumes:
