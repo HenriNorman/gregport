@@ -240,6 +240,54 @@ type MacroListResponse struct {
 	Macros []MacroDTO `json:"macros"`
 }
 
+// --- Invitations ---
+
+type InvitedUserDTO struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
+
+type InvitedOrgDTO struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+type AcceptInvitationResponse struct {
+	User         InvitedUserDTO `json:"user"`
+	Organization InvitedOrgDTO  `json:"organization"`
+	Role         string         `json:"role"`
+}
+
+type CreateInvitationRequest struct {
+	Email string `json:"email" example:"new@acme.com"`
+	Role  string `json:"role"  example:"agent" enums:"owner,admin,agent"`
+}
+
+type InvitationDTO struct {
+	ID        string    `json:"id"`
+	Email     string    `json:"email"`
+	Role      string    `json:"role"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type CreateInvitationResponse struct {
+	Invitation InvitationDTO `json:"invitation"`
+	Token      string        `json:"token"`
+}
+
+type InvitationListResponse struct {
+	Invitations []InvitationDTO `json:"invitations"`
+}
+
+type AcceptInvitationRequest struct {
+	Token    string `json:"token"    example:"..."`
+	Name     string `json:"name"     example:"Henri"`
+	Password string `json:"password" example:"correct-horse-battery"`
+}
+
 // --- Handler ---
 
 type Handler struct {
@@ -1308,6 +1356,148 @@ func (h *Handler) ApplyMacro(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// CreateInvitation creates an invitation to join the org.
+//
+//	@Summary		Create an invitation
+//	@Description	Requires role owner or admin. Owner invites admin or agent; admin invites agent only; nobody invites owner. The raw token is returned once and never again; store it or email it immediately.
+//	@Tags			invitations
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			body	body		CreateInvitationRequest	true	"Invitation payload"
+//	@Success		201		{object}	CreateInvitationResponse
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		403		{object}	httpx.APIError	"Role not allowed to invite with that role"
+//	@Failure		422		{object}	httpx.APIError
+//	@Router			/v1/invitations [post]
+func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	var req CreateInvitationRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+	inv, raw, err := h.svc.CreateInvitation(r.Context(), p, req)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	_ = httpx.WriteJSON(w, http.StatusCreated, CreateInvitationResponse{
+		Invitation: toInvitationDTO(inv),
+		Token:      raw,
+	})
+}
+
+// ListInvitations lists pending invitations.
+//
+//	@Summary		List pending invitations
+//	@Description	Requires role owner or admin. Returns only pending, unexpired invitations. Never returns the raw token.
+//	@Tags			invitations
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	InvitationListResponse
+//	@Failure		401	{object}	httpx.APIError
+//	@Failure		403	{object}	httpx.APIError
+//	@Router			/v1/invitations [get]
+func (h *Handler) ListInvitations(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	invs, err := h.svc.ListInvitations(r.Context(), p)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	dtos := make([]InvitationDTO, 0, len(invs))
+	for _, inv := range invs {
+		dtos = append(dtos, toInvitationDTO(inv))
+	}
+	_ = httpx.WriteJSON(w, http.StatusOK, InvitationListResponse{Invitations: dtos})
+}
+
+// DeleteInvitation revokes a pending invitation.
+//
+//	@Summary		Revoke an invitation
+//	@Description	Requires role owner or admin.
+//	@Tags			invitations
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path	string	true	"Invitation UUID"
+//	@Success		204	"No Content"
+//	@Failure		400	{object}	httpx.APIError
+//	@Failure		401	{object}	httpx.APIError
+//	@Failure		403	{object}	httpx.APIError
+//	@Failure		404	{object}	httpx.APIError
+//	@Router			/v1/invitations/{id} [delete]
+func (h *Handler) DeleteInvitation(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	invID, err := parseUUIDParam(r, "id")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_id", "invitation id must be a UUID"))
+		return
+	}
+	if err := h.svc.DeleteInvitation(r.Context(), p, invID); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AcceptInvitation accepts an invitation.
+//
+//	@Summary		Accept an invitation
+//	@Description	Public for new users (body carries name and password). For existing users, call it while authenticated; name and password are ignored and the principal's email must match the invitation. A duplicate membership returns 409.
+//	@Tags			invitations
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		AcceptInvitationRequest	true	"Accept payload"
+//	@Success		200		{object}	AcceptInvitationResponse
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		403		{object}	httpx.APIError	"Email does not match the invitation"
+//	@Failure		404		{object}	httpx.APIError	"Invitation not found"
+//	@Failure		409		{object}	httpx.APIError	"Already a member of this org"
+//	@Failure		422		{object}	httpx.APIError	"Expired, already used, or invalid input"
+//	@Router			/v1/invitations/accept [post]
+func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
+	var req AcceptInvitationRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+
+	var principal *requestctx.Principal
+	if p, ok := requestctx.FromContext(r.Context()); ok {
+		principal = &p
+	}
+
+	user, org, mem, err := h.svc.AcceptInvitation(r.Context(), principal, AcceptInvitationInput{
+		Token:    req.Token,
+		Name:     req.Name,
+		Password: req.Password,
+	})
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+
+	_ = httpx.WriteJSON(w, http.StatusOK, AcceptInvitationResponse{
+		User: InvitedUserDTO{ID: user.ID.String(), Email: user.Email, Name: user.Name},
+		Organization: InvitedOrgDTO{ID: org.ID.String(), Name: org.Name, Slug: org.Slug},
+		Role: mem.Role,
+	})
+}
+
 // --- helpers ---
 
 func parseNumber(r *http.Request) (int64, error) {
@@ -1358,6 +1548,16 @@ func unauthorized() *httpx.APIError {
 		Status:  http.StatusUnauthorized,
 		Code:    "unauthorized",
 		Message: "authentication required",
+	}
+}
+
+func toInvitationDTO(i Invitation) InvitationDTO {
+	return InvitationDTO{
+		ID:        i.ID.String(),
+		Email:     i.Email,
+		Role:      i.Role,
+		ExpiresAt: i.ExpiresAt,
+		CreatedAt: i.CreatedAt,
 	}
 }
 
@@ -1423,6 +1623,18 @@ func mapTicketError(err error) *httpx.APIError {
 		}
 	case errors.Is(err, ErrMacroNameTaken):
 		return httpx.Conflict("macro_name_taken", "a macro with that name already exists")
+	case errors.Is(err, ErrInvitationNotFound):
+		return &httpx.APIError{Status: http.StatusNotFound, Code: "invitation_not_found", Message: "invitation not found"}
+	case errors.Is(err, ErrInvitationExpired):
+		return httpx.Unprocessable("invitation_expired", "invitation has expired")
+	case errors.Is(err, ErrInvitationUsed):
+		return httpx.Unprocessable("invitation_used", "invitation already accepted")
+	case errors.Is(err, ErrInvitationEmailMismatch):
+		return &httpx.APIError{Status: http.StatusForbidden, Code: "invitation_email_mismatch", Message: "invitation email does not match your account"}
+	case errors.Is(err, ErrInvitationRoleNotAllowed):
+		return &httpx.APIError{Status: http.StatusForbidden, Code: "invitation_role_not_allowed", Message: "not allowed to invite with that role"}
+	case errors.Is(err, ErrDuplicateMembership):
+		return httpx.Conflict("duplicate_membership", "user is already a member of this organization")
 	default:
 		return httpx.InternalError(err)
 	}

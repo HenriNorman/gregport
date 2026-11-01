@@ -108,3 +108,15 @@ type MacroActions struct {
 	AddTags   []string `json:"add_tags,omitempty"`
 	Comment   string   `json:"comment,omitempty"`
 }
+
+type Invitation struct {
+	ID         uuid.UUID
+	OrgID      uuid.UUID
+	Email      string
+	Role       string
+	TokenHash  string
+	InvitedBy  uuid.UUID
+	ExpiresAt  time.Time
+	AcceptedAt *time.Time
+	CreatedAt  time.Time
+}

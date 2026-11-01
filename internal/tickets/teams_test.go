@@ -98,10 +98,14 @@ func TestAddTeamMember_CrossOrg_422(t *testing.T) {
 }
 func principalCtxRole(orgID, userID uuid.UUID, role string) context.Context {
 	return requestctx.WithPrincipal(context.Background(), requestctx.Principal{
-		ActorID: userID, OrgID: orgID, Role: role,
+		Kind:    requestctx.KindUser,
+		ActorID: userID,
+		OrgID:   orgID,
+		Role:    role,
 	})
 }
-
 func requireRoleForTest(roles ...string) func(http.Handler) http.Handler {
 	return auth.RequireRole(roles...)
 }
+
+

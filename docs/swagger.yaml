@@ -125,6 +125,27 @@ definitions:
       message:
         type: string
     type: object
+  tickets.AcceptInvitationRequest:
+    properties:
+      name:
+        example: Henri
+        type: string
+      password:
+        example: correct-horse-battery
+        type: string
+      token:
+        example: '...'
+        type: string
+    type: object
+  tickets.AcceptInvitationResponse:
+    properties:
+      organization:
+        $ref: '#/definitions/tickets.InvitedOrgDTO'
+      role:
+        type: string
+      user:
+        $ref: '#/definitions/tickets.InvitedUserDTO'
+    type: object
   tickets.AssignTicketRequest:
     properties:
       assignee_id:
@@ -168,6 +189,26 @@ definitions:
         example: false
         type: boolean
     type: object
+  tickets.CreateInvitationRequest:
+    properties:
+      email:
+        example: new@acme.com
+        type: string
+      role:
+        enum:
+        - owner
+        - admin
+        - agent
+        example: agent
+        type: string
+    type: object
+  tickets.CreateInvitationResponse:
+    properties:
+      invitation:
+        $ref: '#/definitions/tickets.InvitationDTO'
+      token:
+        type: string
+    type: object
   tickets.CreateMacroRequest:
     properties:
       actions:
@@ -209,6 +250,44 @@ definitions:
         type: string
       subject:
         example: Cannot log in
+        type: string
+    type: object
+  tickets.InvitationDTO:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      role:
+        type: string
+    type: object
+  tickets.InvitationListResponse:
+    properties:
+      invitations:
+        items:
+          $ref: '#/definitions/tickets.InvitationDTO'
+        type: array
+    type: object
+  tickets.InvitedOrgDTO:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      slug:
+        type: string
+    type: object
+  tickets.InvitedUserDTO:
+    properties:
+      email:
+        type: string
+      id:
+        type: string
+      name:
         type: string
     type: object
   tickets.MacroActionsDTO:
@@ -582,6 +661,151 @@ paths:
       summary: Create an organization, user, and owner membership
       tags:
       - auth
+  /v1/invitations:
+    get:
+      description: Requires role owner or admin. Returns only pending, unexpired invitations.
+        Never returns the raw token.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tickets.InvitationListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: List pending invitations
+      tags:
+      - invitations
+    post:
+      consumes:
+      - application/json
+      description: Requires role owner or admin. Owner invites admin or agent; admin
+        invites agent only; nobody invites owner. The raw token is returned once and
+        never again; store it or email it immediately.
+      parameters:
+      - description: Invitation payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tickets.CreateInvitationRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/tickets.CreateInvitationResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Role not allowed to invite with that role
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Create an invitation
+      tags:
+      - invitations
+  /v1/invitations/{id}:
+    delete:
+      description: Requires role owner or admin.
+      parameters:
+      - description: Invitation UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Revoke an invitation
+      tags:
+      - invitations
+  /v1/invitations/accept:
+    post:
+      consumes:
+      - application/json
+      description: Public for new users (body carries name and password). For existing
+        users, call it while authenticated; name and password are ignored and the
+        principal's email must match the invitation. A duplicate membership returns
+        409.
+      parameters:
+      - description: Accept payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tickets.AcceptInvitationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tickets.AcceptInvitationResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Email does not match the invitation
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Invitation not found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "409":
+          description: Already a member of this org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Expired, already used, or invalid input
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      summary: Accept an invitation
+      tags:
+      - invitations
   /v1/macros:
     get:
       description: Any member of the org may list macros.

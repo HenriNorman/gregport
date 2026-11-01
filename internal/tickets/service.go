@@ -5,17 +5,27 @@ import (
 	"strings"
 	"encoding/json"
 	"fmt" 
+	"time"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 
+	"golang.org/x/crypto/bcrypt"
+	"github.com/HenriNorman/gregport/internal/auth"
+	"github.com/HenriNorman/gregport/internal/platform/audit"
 	"github.com/google/uuid"
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
+	"github.com/jackc/pgx/v5"
+	"github.com/HenriNorman/gregport/internal/platform/database"
 )
 
 type Service struct {
-	repo *Repository
+	repo        *Repository
+	invitations *InvitationTokenManager
 }
 
-func NewService(repo *Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo *Repository, invitations *InvitationTokenManager) *Service {
+	return &Service{repo: repo, invitations: invitations}
 }
 
 func (s *Service) CreateTicket(ctx context.Context, p requestctx.Principal, req CreateTicketRequest) (Ticket, error) {
@@ -394,4 +404,129 @@ func validateActions(a MacroActionsDTO) ([]byte, error) {
 		AddTags:     a.AddTags,
 		Comment:     a.Comment,
 	})
+}
+
+type InvitationTokenManager struct {
+	ttl time.Duration
+}
+
+func NewInvitationTokenManager(ttl time.Duration) *InvitationTokenManager {
+	return &InvitationTokenManager{ttl: ttl}
+}
+
+func (m *InvitationTokenManager) New() (raw, hash string, expiresAt time.Time, err error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", "", time.Time{}, fmt.Errorf("rand: %w", err)
+	}
+	raw = base64.RawURLEncoding.EncodeToString(b)
+	hash = HashInvitationToken(raw)
+	expiresAt = time.Now().Add(m.ttl)
+	return raw, hash, expiresAt, nil
+}
+
+func HashInvitationToken(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func (s *Service) CreateInvitation(ctx context.Context, p requestctx.Principal, req CreateInvitationRequest) (Invitation, string, error) {
+	if !CanInvite(p, req.Role) {
+		return Invitation{}, "", ErrInvitationRoleNotAllowed
+	}
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	if email == "" {
+		return Invitation{}, "", ErrInvalidInput
+	}
+
+	raw, hash, expiresAt, err := s.invitations.New()
+	if err != nil {
+		return Invitation{}, "", err
+	}
+
+	inv, err := s.repo.CreateInvitation(ctx, Invitation{
+		OrgID:     p.OrgID,
+		Email:     email,
+		Role:      req.Role,
+		TokenHash: hash,
+		InvitedBy: p.ActorID,
+		ExpiresAt: expiresAt,
+	})
+	if err != nil {
+		return Invitation{}, "", err
+	}
+
+	// audit
+	if err := database.WithTx(ctx, s.repo.pool, func(tx pgx.Tx) error {
+		return audit.Record(ctx, tx, p.OrgID, p, "invitation.created", "invitation", inv.ID, map[string]any{
+			"email": inv.Email,
+			"role":  inv.Role,
+		})
+	}); err != nil {
+		return Invitation{}, "", err
+	}
+
+	return inv, raw, nil
+}
+
+func (s *Service) ListInvitations(ctx context.Context, p requestctx.Principal) ([]Invitation, error) {
+	if !CanManageMembers(p) {
+		return nil, ErrForbidden
+	}
+	return s.repo.ListInvitations(ctx, p.OrgID)
+}
+
+func (s *Service) DeleteInvitation(ctx context.Context, p requestctx.Principal, id uuid.UUID) error {
+	if !CanManageMembers(p) {
+		return ErrForbidden
+	}
+	return s.repo.DeleteInvitation(ctx, p.OrgID, id)
+}
+
+type AcceptInvitationInput struct {
+	Token    string
+	Name     string
+	Password string
+}
+
+func (s *Service) AcceptInvitation(ctx context.Context, existingPrincipal *requestctx.Principal, in AcceptInvitationInput) (auth.User, auth.Organization, auth.Membership, error) {
+	hash := HashInvitationToken(in.Token)
+
+	var userID *uuid.UUID
+	var name, passwordHash string
+
+	if existingPrincipal != nil {
+		userID = &existingPrincipal.ActorID
+	} else {
+		if strings.TrimSpace(in.Name) == "" || len(in.Password) < 8 || len(in.Password) > 72 {
+			return auth.User{}, auth.Organization{}, auth.Membership{}, ErrInvalidInput
+		}
+		hashBytes, err := bcrypt.GenerateFromPassword([]byte(in.Password), bcrypt.DefaultCost)
+		if err != nil {
+			return auth.User{}, auth.Organization{}, auth.Membership{}, fmt.Errorf("hash: %w", err)
+		}
+		passwordHash = string(hashBytes)
+		name = strings.TrimSpace(in.Name)
+	}
+
+	user, org, mem, err := s.repo.AcceptInvitation(ctx, hash, userID, name, passwordHash)
+	if err != nil {
+		return auth.User{}, auth.Organization{}, auth.Membership{}, err
+	}
+
+	// audit with the accepting user as actor
+	actor := requestctx.Principal{
+		Kind:    requestctx.KindUser,
+		ActorID: user.ID,
+		OrgID:   org.ID,
+		Role:    mem.Role,
+	}
+	_ = database.WithTx(ctx, s.repo.pool, func(tx pgx.Tx) error {
+		return audit.Record(ctx, tx, org.ID, actor, "invitation.accepted", "invitation", mem.ID, map[string]any{
+			"email": user.Email,
+			"role":  mem.Role,
+		})
+	})
+
+	return user, org, mem, nil
 }

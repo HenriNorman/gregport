@@ -65,7 +65,7 @@ func main() {
 
 	// tickets wiring
 	ticketsRepo := tickets.NewRepository(pool)
-	ticketsSvc := tickets.NewService(ticketsRepo)
+	ticketsSvc := tickets.NewService(ticketsRepo, tickets.NewInvitationTokenManager(7*24*time.Hour))
 	ticketsHandler := tickets.NewHandler(ticketsSvc)
 
 	r := chi.NewRouter()
@@ -86,6 +86,7 @@ func main() {
 		r.Post("/auth/login", authHandler.Login)
 		r.Post("/auth/refresh", authHandler.Refresh)
 		r.Post("/auth/logout", authHandler.Logout)
+		r.Post("/invitations/accept", ticketsHandler.AcceptInvitation)
 
 		// protected
 		r.Group(func(r chi.Router) {
@@ -130,6 +131,11 @@ func main() {
 				r.Get("/", ticketsHandler.ListMacros)
 				r.With(auth.RequireRole("owner", "admin")).Patch("/{id}", ticketsHandler.UpdateMacro)
 				r.With(auth.RequireRole("owner", "admin")).Delete("/{id}", ticketsHandler.DeleteMacro)
+			})
+			r.Route("/invitations", func(r chi.Router) {
+				r.With(auth.RequireRole("owner", "admin")).Post("/", ticketsHandler.CreateInvitation)
+				r.With(auth.RequireRole("owner", "admin")).Get("/", ticketsHandler.ListInvitations)
+				r.With(auth.RequireRole("owner", "admin")).Delete("/{id}", ticketsHandler.DeleteInvitation)
 			})
 		})
 	})

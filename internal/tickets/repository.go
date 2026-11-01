@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/HenriNorman/gregport/internal/platform/database"
+	"github.com/HenriNorman/gregport/internal/auth"
 )
 
 type ListFilter struct {
@@ -1384,4 +1385,169 @@ func (r *Repository) DeleteMacro(ctx context.Context, orgID, macroID uuid.UUID) 
 		return ErrMacroNotFound
 	}
 	return nil
+}
+
+func (r *Repository) CreateInvitation(ctx context.Context, in Invitation) (Invitation, error) {
+	var out Invitation
+	err := r.pool.QueryRow(ctx,
+		`INSERT INTO invitations (org_id, email, role, token_hash, invited_by, expires_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, org_id, email, role, token_hash, invited_by, expires_at, accepted_at, created_at`,
+		in.OrgID, in.Email, in.Role, in.TokenHash, in.InvitedBy, in.ExpiresAt,
+	).Scan(&out.ID, &out.OrgID, &out.Email, &out.Role, &out.TokenHash,
+		&out.InvitedBy, &out.ExpiresAt, &out.AcceptedAt, &out.CreatedAt)
+	if err != nil {
+		return Invitation{}, fmt.Errorf("create invitation: %w", err)
+	}
+	return out, nil
+}
+
+func (r *Repository) ListInvitations(ctx context.Context, orgID uuid.UUID) ([]Invitation, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, org_id, email, role, token_hash, invited_by, expires_at, accepted_at, created_at
+		 FROM invitations
+		 WHERE org_id = $1 AND accepted_at IS NULL AND expires_at > now()
+		 ORDER BY created_at DESC`,
+		orgID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list invitations: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Invitation
+	for rows.Next() {
+		var i Invitation
+		if err := rows.Scan(&i.ID, &i.OrgID, &i.Email, &i.Role, &i.TokenHash,
+			&i.InvitedBy, &i.ExpiresAt, &i.AcceptedAt, &i.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan invitation: %w", err)
+		}
+		out = append(out, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
+
+func (r *Repository) DeleteInvitation(ctx context.Context, orgID, invitationID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM invitations WHERE org_id = $1 AND id = $2`,
+		orgID, invitationID,
+	)
+	if err != nil {
+		return fmt.Errorf("delete invitation: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrInvitationNotFound
+	}
+	return nil
+}
+
+// AcceptInvitation runs the accept flow: lock the invitation, then either
+// create the user + membership (new user) or just the membership (existing
+// user). Duplicate membership returns ErrDuplicateMembership.
+func (r *Repository) AcceptInvitation(ctx context.Context, tokenHash string, existingUserID *uuid.UUID, name, passwordHash string) (auth.User, auth.Organization, auth.Membership, error) {
+	var (
+		outUser  auth.User
+		outOrg   auth.Organization
+		outMem   auth.Membership
+	)
+
+	err := database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
+		var inv Invitation
+		if err := tx.QueryRow(ctx,
+			`SELECT id, org_id, email, role, token_hash, invited_by, expires_at, accepted_at, created_at
+			 FROM invitations
+			 WHERE token_hash = $1
+			 FOR UPDATE`,
+			tokenHash,
+		).Scan(&inv.ID, &inv.OrgID, &inv.Email, &inv.Role, &inv.TokenHash,
+			&inv.InvitedBy, &inv.ExpiresAt, &inv.AcceptedAt, &inv.CreatedAt); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrInvitationNotFound
+			}
+			return fmt.Errorf("lock invitation: %w", err)
+		}
+
+		if inv.AcceptedAt != nil {
+			return ErrInvitationUsed
+		}
+		if time.Now().After(inv.ExpiresAt) {
+			return ErrInvitationExpired
+		}
+
+		if existingUserID != nil {
+			// existing user path: verify email matches, create membership only
+			var email string
+			if err := tx.QueryRow(ctx,
+				`SELECT email FROM users WHERE id = $1`, *existingUserID,
+			).Scan(&email); err != nil {
+				return fmt.Errorf("find user: %w", err)
+			}
+			if email != inv.Email {
+				return ErrInvitationEmailMismatch
+			}
+
+			if err := tx.QueryRow(ctx,
+				`SELECT id, email, password_hash, name, created_at, updated_at
+				 FROM users WHERE id = $1`, *existingUserID,
+			).Scan(&outUser.ID, &outUser.Email, &outUser.PasswordHash, &outUser.Name,
+				&outUser.CreatedAt, &outUser.UpdatedAt); err != nil {
+				return fmt.Errorf("load user: %w", err)
+			}
+		} else {
+			// new user path: create user
+			if err := tx.QueryRow(ctx,
+				`INSERT INTO users (email, password_hash, name)
+				 VALUES ($1, $2, $3)
+				 RETURNING id, email, password_hash, name, created_at, updated_at`,
+				inv.Email, passwordHash, name,
+			).Scan(&outUser.ID, &outUser.Email, &outUser.PasswordHash, &outUser.Name,
+				&outUser.CreatedAt, &outUser.UpdatedAt); err != nil {
+				var pgErr *pgconn.PgError
+				if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+					return auth.ErrEmailTaken
+				}
+				return fmt.Errorf("insert user: %w", err)
+			}
+		}
+
+		// membership
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO memberships (org_id, user_id, role)
+			 VALUES ($1, $2, $3)
+			 RETURNING id, org_id, user_id, role, created_at`,
+			inv.OrgID, outUser.ID, inv.Role,
+		).Scan(&outMem.ID, &outMem.OrgID, &outMem.UserID, &outMem.Role, &outMem.CreatedAt); err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				return ErrDuplicateMembership
+			}
+			return fmt.Errorf("insert membership: %w", err)
+		}
+
+		// mark invitation accepted
+		if _, err := tx.Exec(ctx,
+			`UPDATE invitations SET accepted_at = now() WHERE id = $1`,
+			inv.ID,
+		); err != nil {
+			return fmt.Errorf("mark accepted: %w", err)
+		}
+
+		// load org for the response
+		if err := tx.QueryRow(ctx,
+			`SELECT id, name, slug, plan, created_at, updated_at
+			 FROM organizations WHERE id = $1`, inv.OrgID,
+		).Scan(&outOrg.ID, &outOrg.Name, &outOrg.Slug, &outOrg.Plan,
+			&outOrg.CreatedAt, &outOrg.UpdatedAt); err != nil {
+			return fmt.Errorf("load org: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return auth.User{}, auth.Organization{}, auth.Membership{}, err
+	}
+	return outUser, outOrg, outMem, nil
 }

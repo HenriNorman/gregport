@@ -18,6 +18,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Timeline | Complete — cursor-paginated `ticket_events`, oldest first |
 | Merge | Complete — source closed and pointed at target; merged tickets read-only |
 | Macros | Complete — CRUD (admin/owner) and apply to a ticket (any member) |
+| Invitations | Complete — create (admin/owner, grant table), list pending, revoke, accept (new and existing user) |
 | SLA, notifications, webhooks, API keys, invitations | Schema defined, not exposed |
 
 ### Authentication
@@ -297,6 +298,22 @@ This prevents the API from confirming whether a resource exists in another tenan
   invite whom — is a unit test: owner → admin/agent, admin → agent, nobody
   → owner.
 
+- **Invitation tokens work like refresh tokens.** 32 random bytes from
+  `crypto/rand`, base64url-encoded, returned **once** in the create
+  response and never again — list responses never carry the token. Only the
+  SHA-256 hash is stored in `invitations.token_hash`. Expiry is 7 days;
+  single use is enforced by `accepted_at` under `FOR UPDATE`, so two
+  simultaneous accepts of the same token can't both succeed.
+- **Who can invite whom is a grant table, tested.** Owner → admin/agent.
+  Admin → agent. Nobody → owner. API keys → nobody. Enforced by
+  `CanInvite(principal, targetRole)`.
+- **Accepting an invitation has two paths.** No principal on the request →
+  new user: the body carries `name` and `password`, the user and membership
+  are created in one transaction. A principal on the request → existing
+  user: `name`/`password` are ignored, the principal's email must match the
+  invitation's email (403 otherwise), and only the membership is created.
+  A duplicate membership returns 409.
+
 ### Optimistic Concurrency
 
 Ticket updates require an `If-Match` header.
@@ -452,6 +469,13 @@ These tests use a real PostgreSQL database.
 - The audit helper inserts a row inside a caller's transaction with the
   correct actor type, actor id, action, and entity.
 
+- Invitations: owner invites agent (201, raw token returned once, token
+  hashed in DB, audit row written); admin inviting admin returns 403;
+  owner inviting owner returns 403; accept creates a new user + membership
+  with an audit row; accept by an existing user with a mismatched email
+  returns 403; expired and already-used tokens return 422; a duplicate
+  membership returns 409.
+
 ### Unit Tests
 
 Authentication unit tests use a fake `Repo` implementation and do not require a database.
@@ -517,6 +541,12 @@ The authentication cycle has also been verified end to end using `curl`:
 
 ## Current Development Direction
 
-Slice 4 (teams, assignment, tags, watchers, timeline, merge, macros) is complete.
+## Current Development Direction
 
-The next slice exposes the schema-defined functionality still not surfaced: SLA policies, notifications, webhooks, API keys, and invitations.
+Slice 5 is in progress: the identity model finishes here. People join by
+invitation, and machines authenticate with API keys. Invitations are
+complete (create, list, revoke, accept for new and existing users). Member
+management and API keys are next.
+
+Future domain work includes exposing the remaining schema-defined
+functionality: SLA policies, notifications, and webhooks.

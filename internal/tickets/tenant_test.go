@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -65,8 +66,7 @@ func newTestHandler(t *testing.T) (*Handler, *Repository) {
 	t.Helper()
 	pool := testPool(t)
 	repo := NewRepository(pool)
-	return NewHandler(NewService(repo)), repo
-}
+	return NewHandler(NewService(repo, NewInvitationTokenManager(7*24*time.Hour))), repo}
 
 func TestTenant_GetTicket_OtherOrg_404(t *testing.T) {
 	h, repo := newTestHandler(t)
