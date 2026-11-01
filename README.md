@@ -290,6 +290,13 @@ The lookup key is `(org_id, number)`. A ticket belonging to another organization
 
 This prevents the API from confirming whether a resource exists in another tenant.
 
+- **Authorization gates on `Kind` before role.** Every management gate in
+  `policy.go` returns `false` for a principal whose `Kind` is not `user`,
+  before checking the role. API keys are always `agent`-level and never
+  manage teams, members, API keys, or webhooks. The grant table — who may
+  invite whom — is a unit test: owner → admin/agent, admin → agent, nobody
+  → owner.
+
 ### Optimistic Concurrency
 
 Ticket updates require an `If-Match` header.
@@ -462,6 +469,11 @@ Authentication unit tests use a fake `Repo` implementation and do not require a 
 The authentication service depends on the `auth.Repo` interface rather than the concrete `*Repository`. Production injects the real repository, while tests inject a fake implementation.
 
 Ticket tests are integration tests and require PostgreSQL.
+
+- **Policy grant table** (`policy_test.go`): every `(caller kind, caller
+  role, target role)` triple — owner invites admin/agent, admin invites
+  agent, nobody invites owner, API keys cannot invite or manage anything.
+  The `Kind` gate is checked before the role in every management function.
 
 ### Token Tests
 
