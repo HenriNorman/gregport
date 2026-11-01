@@ -119,13 +119,14 @@ func TestAcceptInvitation_NewUser(t *testing.T) {
 	orgA, _, _ := setupTwoOrgs(t, repo)
 	ownerID := seedMembership(t, repo, orgA)
 	ctx := context.Background()
+	email := "newuser-" + uuid.NewString()[:8] + "@test.local"
 
 	// seed an invitation directly
 	raw := "raw-invite-token-" + uuid.NewString()
 	hash := HashInvitationToken(raw)
 	if _, err := repo.CreateInvitation(ctx, Invitation{
 		OrgID:     orgA,
-		Email:     "newuser@test.local",
+		Email:     email,
 		Role:      "agent",
 		TokenHash: hash,
 		InvitedBy: ownerID,
@@ -155,20 +156,23 @@ func TestAcceptInvitation_NewUser(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if resp.User.Email != "newuser@test.local" || resp.Role != "agent" {
-		t.Fatalf("response mismatch: %+v", resp)
+	if resp.User.Email != email {
+		t.Fatalf("email mismatch: expected %s, got %s", email, resp.User.Email)
+	}
+	if resp.Role != "agent" {
+		t.Fatalf("role mismatch: expected agent, got %s", resp.Role)
 	}
 
 	// user and membership exist
 	var userCount, memCount int
 	_ = repo.pool.QueryRow(ctx,
-		`SELECT count(*) FROM users WHERE email = 'newuser@test.local'`).Scan(&userCount)
+		`SELECT count(*) FROM users WHERE email = $1`, email).Scan(&userCount)
 	if userCount != 1 {
 		t.Fatalf("expected 1 user, got %d", userCount)
 	}
 	_ = repo.pool.QueryRow(ctx,
 		`SELECT count(*) FROM memberships m JOIN users u ON u.id = m.user_id
-		 WHERE u.email = 'newuser@test.local' AND m.org_id = $1`, orgA).Scan(&memCount)
+		 WHERE u.email = $1 AND m.org_id = $2`,email, orgA).Scan(&memCount)
 	if memCount != 1 {
 		t.Fatalf("expected 1 membership, got %d", memCount)
 	}
@@ -302,7 +306,7 @@ func TestAcceptInvitation_DuplicateMembership_409(t *testing.T) {
 	orgA, _, _ := setupTwoOrgs(t, repo)
 	existingID := seedMembership(t, repo, orgA)
 	ctx := context.Background()
-
+	
 	var existingEmail string
 	if err := repo.pool.QueryRow(ctx,
 		`SELECT email FROM users WHERE id = $1`, existingID,

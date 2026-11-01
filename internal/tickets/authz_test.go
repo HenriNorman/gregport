@@ -54,7 +54,7 @@ func TestAuthz_DeleteTicket_Agent_403(t *testing.T) {
 		Delete("/tickets/{number}", h.Delete)
 
 	req := httptest.NewRequest("DELETE", "/tickets/"+strconv.FormatInt(number, 10), nil)
-	req = withAuth(req, tok, requestctx.Principal{ActorID: userID, OrgID: orgA, Role: "agent"})
+	req = withAuth(req, tok, requestctx.Principal{Kind: requestctx.KindUser, ActorID: userID, OrgID: orgA, Role: "agent"})
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -76,7 +76,7 @@ func TestAuthz_DeleteTicket_Owner_204(t *testing.T) {
 		Delete("/tickets/{number}", h.Delete)
 
 	req := httptest.NewRequest("DELETE", "/tickets/"+strconv.FormatInt(number, 10), nil)
-	req = withAuth(req, tok, requestctx.Principal{ActorID: userID, OrgID: orgA, Role: "owner"})
+	req = withAuth(req, tok, requestctx.Principal{Kind: requestctx.KindUser, ActorID: userID, OrgID: orgA, Role: "owner"})
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -98,7 +98,7 @@ func TestAuthz_DeleteTicket_Admin_204(t *testing.T) {
 		Delete("/tickets/{number}", h.Delete)
 
 	req := httptest.NewRequest("DELETE", "/tickets/"+strconv.FormatInt(number, 10), nil)
-	req = withAuth(req, tok, requestctx.Principal{ActorID: userID, OrgID: orgA, Role: "admin"})
+	req = withAuth(req, tok, requestctx.Principal{Kind: requestctx.KindUser, ActorID: userID, OrgID: orgA, Role: "admin"})
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 

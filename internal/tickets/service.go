@@ -454,28 +454,28 @@ func (s *Service) CreateInvitation(ctx context.Context, p requestctx.Principal, 
 		return Invitation{}, "", err
 	}
 
-	inv, err := s.repo.CreateInvitation(ctx, Invitation{
-		OrgID:     p.OrgID,
-		Email:     email,
-		Role:      req.Role,
-		TokenHash: hash,
-		InvitedBy: p.ActorID,
-		ExpiresAt: expiresAt,
-	})
-	if err != nil {
-		return Invitation{}, "", err
-	}
-
-	// audit
-	if err := database.WithTx(ctx, s.repo.pool, func(tx pgx.Tx) error {
+	var inv Invitation
+	err = database.WithTx(ctx, s.repo.pool, func(tx pgx.Tx) error {
+		var err error
+		inv, err = s.repo.CreateInvitationTx(ctx, tx, Invitation{
+			OrgID:     p.OrgID,
+			Email:     email,
+			Role:      req.Role,
+			TokenHash: hash,
+			InvitedBy: p.ActorID,
+			ExpiresAt: expiresAt,
+		})
+		if err != nil {
+			return err
+		}
 		return audit.Record(ctx, tx, p.OrgID, p, "invitation.created", "invitation", inv.ID, map[string]any{
 			"email": inv.Email,
 			"role":  inv.Role,
 		})
-	}); err != nil {
+	})
+	if err != nil {
 		return Invitation{}, "", err
 	}
-
 	return inv, raw, nil
 }
 
@@ -552,10 +552,10 @@ func (s *Service) UpdateMemberRole(ctx context.Context, p requestctx.Principal, 
 	if !CanInvite(p, newRole) {
 		return ErrInvitationRoleNotAllowed
 	}
-	if err := s.repo.UpdateMemberRole(ctx, p.OrgID, userID, newRole); err != nil {
-		return err
-	}
 	return database.WithTx(ctx, s.repo.pool, func(tx pgx.Tx) error {
+		if err := s.repo.UpdateMemberRoleTx(ctx, tx, p.OrgID, userID, newRole); err != nil {
+			return err
+		}
 		return audit.Record(ctx, tx, p.OrgID, p, "member.role_changed", "membership", userID, map[string]any{
 			"new_role": newRole,
 		})
@@ -566,10 +566,10 @@ func (s *Service) RemoveMember(ctx context.Context, p requestctx.Principal, user
 	if !CanManageMembers(p) {
 		return ErrForbidden
 	}
-	if err := s.repo.RemoveMember(ctx, p.OrgID, userID); err != nil {
-		return err
-	}
 	return database.WithTx(ctx, s.repo.pool, func(tx pgx.Tx) error {
+		if err := s.repo.RemoveMemberTx(ctx, tx, p.OrgID, userID); err != nil {
+			return err
+		}
 		return audit.Record(ctx, tx, p.OrgID, p, "member.removed", "membership", userID, nil)
 	})
 }
@@ -648,10 +648,10 @@ func (s *Service) RevokeAPIKey(ctx context.Context, p requestctx.Principal, keyI
 	if !CanManageAPIKeys(p) {
 		return ErrForbidden
 	}
-	if err := s.repo.RevokeAPIKey(ctx, p.OrgID, keyID); err != nil {
-		return err
-	}
 	return database.WithTx(ctx, s.repo.pool, func(tx pgx.Tx) error {
+		if err := s.repo.RevokeAPIKeyTx(ctx, tx, p.OrgID, keyID); err != nil {
+			return err
+		}
 		return audit.Record(ctx, tx, p.OrgID, p, "api_key.revoked", "api_key", keyID, nil)
 	})
 }

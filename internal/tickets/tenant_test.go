@@ -36,10 +36,15 @@ func setupTwoOrgs(t *testing.T, repo *Repository) (orgA, orgB uuid.UUID, number 
 
 	t.Cleanup(func() {
 		bg := context.Background()
+		_, _ = pool.Exec(bg, `DELETE FROM audit_logs WHERE org_id IN ($1, $2)`, orgA, orgB)
+		_, _ = pool.Exec(bg, `DELETE FROM api_keys WHERE org_id IN ($1, $2)`, orgA, orgB)
+		_, _ = pool.Exec(bg, `DELETE FROM invitations WHERE org_id IN ($1, $2)`, orgA, orgB)
 		_, _ = pool.Exec(bg, `DELETE FROM ticket_events WHERE org_id IN ($1, $2)`, orgA, orgB)
 		_, _ = pool.Exec(bg, `DELETE FROM comments WHERE org_id IN ($1, $2)`, orgA, orgB)
 		_, _ = pool.Exec(bg, `DELETE FROM tickets WHERE org_id IN ($1, $2)`, orgA, orgB)
 		_, _ = pool.Exec(bg, `DELETE FROM customers WHERE org_id IN ($1, $2)`, orgA, orgB)
+		_, _ = pool.Exec(bg, `DELETE FROM memberships WHERE org_id IN ($1, $2)`, orgA, orgB)
+		_, _ = pool.Exec(bg, `DELETE FROM refresh_tokens WHERE org_id IN ($1, $2)`, orgA, orgB)
 		_, _ = pool.Exec(bg, `DELETE FROM organizations WHERE id IN ($1, $2)`, orgA, orgB)
 	})
 
@@ -56,6 +61,7 @@ func setupTwoOrgs(t *testing.T, repo *Repository) (orgA, orgB uuid.UUID, number 
 
 func principalCtx(orgID, userID uuid.UUID) context.Context {
 	return requestctx.WithPrincipal(context.Background(), requestctx.Principal{
+		Kind: requestctx.KindUser,
 		ActorID: userID,
 		OrgID:  orgID,
 		Role:   "owner",

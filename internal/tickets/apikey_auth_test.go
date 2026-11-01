@@ -36,11 +36,12 @@ func seedValidKey(t *testing.T, repo *Repository, orgID, userID uuid.UUID, raw s
 }
 
 func TestAuthenticateAPIKey_Valid(t *testing.T) {
+	
 	_, repo := newTestHandler(t)
 	orgA, _, _ := setupTwoOrgs(t, repo)
 	ownerID := seedMembership(t, repo, orgA)
 
-	raw := "gp_live_abc123_secretvalue"
+	raw := "gp_live_" + uuid.NewString()[:8] + "_" + uuid.NewString()
 	k := seedValidKey(t, repo, orgA, ownerID, raw)
 
 	svc := NewService(repo, NewInvitationTokenManager(7*24*time.Hour))
@@ -61,7 +62,7 @@ func TestAuthenticateAPIKey_Revoked_401(t *testing.T) {
 	orgA, _, _ := setupTwoOrgs(t, repo)
 	ownerID := seedMembership(t, repo, orgA)
 
-	raw := "gp_live_revoked_secret"
+	raw := "gp_live_" + uuid.NewString()[:8] + "_" + uuid.NewString()
 	k := seedValidKey(t, repo, orgA, ownerID, raw)
 	if err := repo.RevokeAPIKey(context.Background(), orgA, k.ID); err != nil {
 		t.Fatalf("revoke: %v", err)
@@ -80,7 +81,7 @@ func TestAuthenticateAPIKey_Expired_401(t *testing.T) {
 	ownerID := seedMembership(t, repo, orgA)
 	ctx := context.Background()
 
-	raw := "gp_live_expired_secret"
+	raw := "gp_live_" + uuid.NewString()[:8] + "_" + uuid.NewString()
 	prefix, _ := parseAPIKeyPrefix(raw)
 	past := time.Now().Add(-time.Hour)
 	k, err := repo.CreateAPIKey(ctx, APIKey{
@@ -108,12 +109,14 @@ func TestAuthenticateAPIKey_WrongSecret_401(t *testing.T) {
 	_, repo := newTestHandler(t)
 	orgA, _, _ := setupTwoOrgs(t, repo)
 	ownerID := seedMembership(t, repo, orgA)
+	idPart := uuid.NewString()[:8]
 
-	raw := "gp_live_real_secret"
+	raw := "gp_live_" + idPart + "_" + uuid.NewString()
 	seedValidKey(t, repo, orgA, ownerID, raw)
 
 	// same prefix, wrong secret
-	bad := "gp_live_real_wrongsecret"
+	bad := "gp_live_" + idPart + "_wrongsecret"
+
 
 	svc := NewService(repo, NewInvitationTokenManager(7*24*time.Hour))
 	_, err := svc.AuthenticateAPIKey(context.Background(), bad)
@@ -137,7 +140,7 @@ func TestAuthenticateAPIKey_LastUsedThrottled(t *testing.T) {
 	orgA, _, _ := setupTwoOrgs(t, repo)
 	ownerID := seedMembership(t, repo, orgA)
 
-	raw := "gp_live_throttle_secret"
+	raw := "gp_live_" + uuid.NewString()[:8] + "_" + uuid.NewString()
 	k := seedValidKey(t, repo, orgA, ownerID, raw)
 
 	svc := NewService(repo, NewInvitationTokenManager(7*24*time.Hour))
@@ -187,7 +190,7 @@ func TestAuthenticateAPIKey_CanCreateTicket_NotAPIKey(t *testing.T) {
 	orgA, _, _ := setupTwoOrgs(t, repo)
 	ownerID := seedMembership(t, repo, orgA)
 
-	raw := "gp_live_fullflow_secret"
+	raw := "gp_live_" + uuid.NewString()[:8] + "_" + uuid.NewString()
 	k := seedValidKey(t, repo, orgA, ownerID, raw)
 
 	// build a router with a handler that simulates API-key-authenticated requests

@@ -5,14 +5,20 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+	"context"
+	"errors"
 
 	"github.com/google/uuid"
-
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 )
 
+func noAPIKey(ctx context.Context, raw string) (requestctx.Principal, error) {
+	return requestctx.Principal{}, errors.New("not an api key")
+}
+
 func TestAuthenticate_NoHeader_401(t *testing.T) {
-	h := Authenticate(testTokenManager())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+	h := Authenticate(testManager(), noAPIKey)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not run")
 	}))
 
@@ -28,7 +34,7 @@ func TestAuthenticate_MalformedHeader_401(t *testing.T) {
 	cases := []string{"Bearer", "Basic abc", "Bearer ", "bearer"}
 	for _, c := range cases {
 		t.Run(c, func(t *testing.T) {
-			h := Authenticate(testTokenManager())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h := Authenticate(testManager(), noAPIKey)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				t.Fatal("handler should not run")
 			}))
 			req := httptest.NewRequest("GET", "/", nil)
@@ -43,7 +49,7 @@ func TestAuthenticate_MalformedHeader_401(t *testing.T) {
 }
 
 func TestAuthenticate_InvalidToken_401(t *testing.T) {
-	h := Authenticate(testTokenManager())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := Authenticate(testManager(), noAPIKey)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not run")
 	}))
 	req := httptest.NewRequest("GET", "/", nil)
@@ -59,7 +65,7 @@ func TestAuthenticate_ExpiredToken_401(t *testing.T) {
 	expired := NewTokenManager("0123456789abcdef0123456789abcdef", -1*time.Minute, 30*24*time.Hour)
 	tok, _, _ := expired.IssueAccess(uuid.New(), uuid.New(), "owner")
 
-	h := Authenticate(testTokenManager())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := Authenticate(testManager(), noAPIKey)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not run")
 	}))
 	req := httptest.NewRequest("GET", "/", nil)
@@ -80,7 +86,7 @@ func TestAuthenticate_ValidToken_SetsPrincipal(t *testing.T) {
 	var got requestctx.Principal
 	var gotOK bool
 
-	h := Authenticate(tm)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := Authenticate(tm, noAPIKey)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got, gotOK = requestctx.FromContext(r.Context())
 		w.WriteHeader(http.StatusOK)
 	}))

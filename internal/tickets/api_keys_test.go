@@ -8,7 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
+	
+	"github.com/google/uuid"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -68,11 +69,12 @@ func TestCreateAPIKey_ListNeverReturnsRaw(t *testing.T) {
 	ownerID := seedMembership(t, repo, orgA)
 	ctx := context.Background()
 
-	raw := "gp_live_testprefix_testsecretvalue"
+	raw := "gp_live_" + uuid.NewString()[:8] + "_" + uuid.NewString()
+	prefix, _ := parseAPIKeyPrefix(raw)
 	if _, err := repo.CreateAPIKey(ctx, APIKey{
 		OrgID:           orgA,
-		Name:            "seeded",
-		Prefix:          "gp_live_testprefix",
+		Name:            "seeded-" + uuid.NewString()[:8],
+		Prefix:          prefix,
 		KeyHash:         HashAPIKey(raw),
 		CreatedBy:       ownerID,
 		RateLimitPerMin: 600,
@@ -108,8 +110,8 @@ func TestCreateAPIKey_ListNeverReturnsRaw(t *testing.T) {
 	if len(resp.APIKeys) != 1 {
 		t.Fatalf("expected 1 key, got %d", len(resp.APIKeys))
 	}
-	if resp.APIKeys[0].Prefix != "gp_live_testprefix" {
-		t.Fatalf("prefix mismatch: %s", resp.APIKeys[0].Prefix)
+	if resp.APIKeys[0].Prefix != prefix {
+		t.Fatalf("prefix mismatch: expected %s, got %s", prefix, resp.APIKeys[0].Prefix)
 	}
 }
 
@@ -119,11 +121,13 @@ func TestRevokeAPIKey_SetsRevokedAt(t *testing.T) {
 	ownerID := seedMembership(t, repo, orgA)
 	ctx := context.Background()
 
+	raw := "gp_live_" + uuid.NewString()[:8] + "_" + uuid.NewString()
+	prefix, _ := parseAPIKeyPrefix(raw)
 	k, err := repo.CreateAPIKey(ctx, APIKey{
 		OrgID:           orgA,
-		Name:            "to-revoke",
-		Prefix:          "gp_live_torevoke",
-		KeyHash:         HashAPIKey("gp_live_torevoke_secret"),
+		Name:            "to-revoke-" + uuid.NewString()[:8],
+		Prefix:          prefix,
+		KeyHash:         HashAPIKey(raw),
 		CreatedBy:       ownerID,
 		RateLimitPerMin: 600,
 	})

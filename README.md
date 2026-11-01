@@ -21,6 +21,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Invitations | Complete — create (admin/owner, grant table), list pending, revoke, accept (new and existing user) |
 | Members | Complete — list (any member), role change and removal (admin/owner), last-owner protection |
 | API keys | Complete — create, list, revoke; `gp_live_` keys authenticate as agent-level principals |
+| Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | SLA, notifications, webhooks | Schema defined, not exposed |
 
 ### Authentication
@@ -362,6 +363,16 @@ This prevents the API from confirming whether a resource exists in another tenan
   tag, watch, merge, macro) and fail every management gate — members, teams,
   API keys, webhooks — because `policy.go` checks `Kind` before role.
 
+- **Audit rows commit atomically with the mutation they describe.**
+  `invitation.created`, `invitation.accepted`, `member.role_changed`,
+  `member.removed`, `api_key.created`, and `api_key.revoked` each write an
+  `audit_logs` row inside the same transaction as the change, via
+  `audit.Record(ctx, tx, ...)`. The mutation methods that participate expose
+  a `*Tx` variant that takes the caller's transaction; the service opens one
+  transaction, calls the mutation and the audit, and commits once. A crash
+  between the two cannot leave a mutation without its audit row.
+
+
 ### Optimistic Concurrency
 
 Ticket updates require an `If-Match` header.
@@ -532,8 +543,10 @@ and adds a comment; an illegal status transition in a macro returns `422`
 
 **Audit**
 
-- The audit helper inserts a row inside a caller's transaction with the
-  correct actor type, actor id, action, and entity.
+- `member.role_changed` and `member.removed` write audit rows; the
+  invitation and API key audit rows are asserted in their own tests. Every
+  state-changing action in feat 5 commits its audit row inside the same
+  transaction as the mutation, so a crash cannot leave a change unaudited.
 
 **Invitations**
 
@@ -624,9 +637,10 @@ The authentication cycle has also been verified end to end using `curl`:
 
 ## Current Development Direction
 
-Feat 5 is complete. Invitations, member management, API keys, the
-`gp_live_` authentication path, and audit logging across all state-changing
-actions are done.
+Feat 5 is complete. The identity model is done: people join by invitation,
+machines authenticate with `gp_live_` API keys, member roles are managed
+with last-owner protection, and every state-changing action writes an audit
+row atomically with the change.
 
-Future domain work includes exposing the remaining schema-defined
-functionality: SLA policies, notifications, and webhooks.
+Future domain work: SLA policies, notifications, and webhooks — the three
+remaining schema-defined domains.

@@ -29,6 +29,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 func seedMembership(t *testing.T, repo *Repository, orgID uuid.UUID) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
+	pool := repo.pool
 
 	var userID uuid.UUID
 	if err := repo.pool.QueryRow(ctx,
@@ -47,8 +48,9 @@ func seedMembership(t *testing.T, repo *Repository, orgID uuid.UUID) uuid.UUID {
 
 	t.Cleanup(func() {
 		bg := context.Background()
-		_, _ = repo.pool.Exec(bg, `DELETE FROM memberships WHERE user_id = $1`, userID)
-		_, _ = repo.pool.Exec(bg, `DELETE FROM users WHERE id = $1`, userID)
+		_, _ = pool.Exec(bg, `DELETE FROM api_keys WHERE created_by = $1`, userID)
+		_, _ = pool.Exec(bg, `DELETE FROM memberships WHERE user_id = $1`, userID)
+		_, _ = pool.Exec(bg, `DELETE FROM users WHERE id = $1`, userID)
 	})
 	return userID
 }
