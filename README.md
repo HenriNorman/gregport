@@ -164,6 +164,17 @@ The service layer depends on repository interfaces rather than concrete implemen
 
 </details>
 
+<details>
+<summary><code>internal/platform/</code> — shared infrastructure</summary>
+
+- `audit/` — `Record(ctx, tx, orgID, principal, action, entityType, entityID, data)` for the append-only audit log.
+- `config/` — configuration loading from environment variables.
+- `database/` — pgx connection pool and transaction management.
+- `httpx/` — `DecodeJSON`, `WriteJSON`, `WriteError`, and `APIError`.
+- `requestctx/` — authenticated principal stored in request context, `Kind` (user | api_key) and `ActorID`.
+
+</details>
+
 ---
 
 ## Database Schema
@@ -328,6 +339,11 @@ The join on `memberships` excludes agents removed from the org. A team with no a
 - **The ticket timeline is append-only and cursor-paginated oldest-first.** `GET /v1/tickets/{number}/events` reads `ticket_events` joined to the ticket by `(org_id, number)`. Order is `created_at ASC, id ASC` — a timeline reads chronologically, unlike the ticket list. Cursor is opaque, limit defaults to 50 and caps at 100. No code path issues `UPDATE` or `DELETE` on `ticket_events`; the table is an append-only log.
 - **Event types and their `data` shapes.** The client switches on `event_type`; each type carries a different JSON object in `data`:
 
+**Audit:**
+
+- The audit helper inserts a row inside a caller's transaction with the
+  correct actor type, actor id, action, and entity.
+
 | `event_type` | `data` fields |
 |---|---|
 | `ticket.created` | `number`, `subject`, `priority` |
@@ -423,6 +439,11 @@ These tests use a real PostgreSQL database.
 - Timeline: events appear in order (created, assigned, tagged, comment, status); cursor pagination returns every event exactly once; another org's ticket returns `404`.
 - Merge: happy path closes the source and writes one `ticket.merged` event; merge into self returns `422`; merging into another org's ticket returns `404`; two concurrent merges of the same pair yield exactly one success; a comment on a merged source returns `409`.
 - Macros: create validates status/priority enums and rejects unknown fields; duplicate name returns `409`; applying a macro sets status, attaches tags, and adds a comment; an illegal status transition in a macro returns `422` (state machine applies); another org's macro returns `404`.
+
+**Audit:**
+
+- The audit helper inserts a row inside a caller's transaction with the
+  correct actor type, actor id, action, and entity.
 
 ### Unit Tests
 
