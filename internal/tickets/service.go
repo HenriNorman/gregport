@@ -530,3 +530,36 @@ func (s *Service) AcceptInvitation(ctx context.Context, existingPrincipal *reque
 
 	return user, org, mem, nil
 }
+
+func (s *Service) ListMembers(ctx context.Context, p requestctx.Principal) ([]Member, error) {
+	return s.repo.ListMembers(ctx, p.OrgID)
+}
+
+func (s *Service) UpdateMemberRole(ctx context.Context, p requestctx.Principal, userID uuid.UUID, newRole string) error {
+	if !CanManageMembers(p) {
+		return ErrForbidden
+	}
+	if !CanInvite(p, newRole) {
+		return ErrInvitationRoleNotAllowed
+	}
+	if err := s.repo.UpdateMemberRole(ctx, p.OrgID, userID, newRole); err != nil {
+		return err
+	}
+	return database.WithTx(ctx, s.repo.pool, func(tx pgx.Tx) error {
+		return audit.Record(ctx, tx, p.OrgID, p, "member.role_changed", "membership", userID, map[string]any{
+			"new_role": newRole,
+		})
+	})
+}
+
+func (s *Service) RemoveMember(ctx context.Context, p requestctx.Principal, userID uuid.UUID) error {
+	if !CanManageMembers(p) {
+		return ErrForbidden
+	}
+	if err := s.repo.RemoveMember(ctx, p.OrgID, userID); err != nil {
+		return err
+	}
+	return database.WithTx(ctx, s.repo.pool, func(tx pgx.Tx) error {
+		return audit.Record(ctx, tx, p.OrgID, p, "member.removed", "membership", userID, nil)
+	})
+}

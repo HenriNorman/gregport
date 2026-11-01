@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+	"log"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -286,6 +287,24 @@ type AcceptInvitationRequest struct {
 	Token    string `json:"token"    example:"..."`
 	Name     string `json:"name"     example:"Henri"`
 	Password string `json:"password" example:"correct-horse-battery"`
+}
+
+// --- Member ---
+
+type MemberDTO struct {
+	UserID    string    `json:"user_id"`
+	Email     string    `json:"email"`
+	Name      string    `json:"name"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type MemberListResponse struct {
+	Members []MemberDTO `json:"members"`
+}
+
+type UpdateMemberRequest struct {
+	Role string `json:"role" example:"admin" enums:"owner,admin,agent"`
 }
 
 // --- Handler ---
@@ -1498,6 +1517,107 @@ func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ListMembers lists the org's members.
+//
+//	@Summary		List members
+//	@Description	Any member of the org may list members.
+//	@Tags			members
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	MemberListResponse
+//	@Failure		401	{object}	httpx.APIError
+//	@Router			/v1/members [get]
+func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	members, err := h.svc.ListMembers(r.Context(), p)
+	if err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	dtos := make([]MemberDTO, 0, len(members))
+	for _, m := range members {
+		dtos = append(dtos, toMemberDTO(m))
+	}
+	_ = httpx.WriteJSON(w, http.StatusOK, MemberListResponse{Members: dtos})
+}
+
+// UpdateMemberRole changes a member's role.
+//
+//	@Summary		Change a member's role
+//	@Description	Requires role owner or admin. The grant table applies: owner may set admin or agent; admin may set agent only; nobody may set owner. Refuses to demote the last owner.
+//	@Tags			members
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			userId	path	string				true	"User UUID"
+//	@Param			body	body	UpdateMemberRequest	true	"New role"
+//	@Success		204		"No Content"
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		403		{object}	httpx.APIError	"Not allowed to grant that role"
+//	@Failure		404		{object}	httpx.APIError	"Member not found"
+//	@Failure		422		{object}	httpx.APIError	"Cannot demote the last owner"
+//	@Router			/v1/members/{userId} [patch]
+func (h *Handler) UpdateMemberRole(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	userID, err := parseUUIDParam(r, "userId")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
+		return
+	}
+	var req UpdateMemberRequest
+	if err := httpx.DecodeJSON(w, r, &req); err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		return
+	}
+	if err := h.svc.UpdateMemberRole(r.Context(), p, userID, req.Role); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// RemoveMember removes a member from the org.
+//
+//	@Summary		Remove a member
+//	@Description	Requires role owner or admin. Revokes the user's refresh tokens for this org immediately. Refuses to remove the last owner.
+//	@Tags			members
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			userId	path	string	true	"User UUID"
+//	@Success		204		"No Content"
+//	@Failure		400		{object}	httpx.APIError
+//	@Failure		401		{object}	httpx.APIError
+//	@Failure		403		{object}	httpx.APIError
+//	@Failure		404		{object}	httpx.APIError	"Member not found"
+//	@Failure		422		{object}	httpx.APIError	"Cannot remove the last owner"
+//	@Router			/v1/members/{userId} [delete]
+func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
+	p, ok := requestctx.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, unauthorized())
+		return
+	}
+	userID, err := parseUUIDParam(r, "userId")
+	if err != nil {
+		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
+		return
+	}
+	if err := h.svc.RemoveMember(r.Context(), p, userID); err != nil {
+		httpx.WriteError(w, mapTicketError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- helpers ---
 
 func parseNumber(r *http.Request) (int64, error) {
@@ -1558,6 +1678,16 @@ func toInvitationDTO(i Invitation) InvitationDTO {
 		Role:      i.Role,
 		ExpiresAt: i.ExpiresAt,
 		CreatedAt: i.CreatedAt,
+	}
+}
+
+func toMemberDTO(m Member) MemberDTO {
+	return MemberDTO{
+		UserID:    m.UserID.String(),
+		Email:     m.Email,
+		Name:      m.Name,
+		Role:      m.Role,
+		CreatedAt: m.CreatedAt,
 	}
 }
 
@@ -1635,7 +1765,11 @@ func mapTicketError(err error) *httpx.APIError {
 		return &httpx.APIError{Status: http.StatusForbidden, Code: "invitation_role_not_allowed", Message: "not allowed to invite with that role"}
 	case errors.Is(err, ErrDuplicateMembership):
 		return httpx.Conflict("duplicate_membership", "user is already a member of this organization")
+	case errors.Is(err, ErrMemberNotFound):
+		return &httpx.APIError{Status: http.StatusNotFound, Code: "member_not_found", Message: "member not found"}
+	case errors.Is(err, ErrLastOwner):
+		return httpx.Unprocessable("last_owner", "cannot remove or demote the last owner")
 	default:
-		return httpx.InternalError(err)
-	}
+		log.Printf("unmapped ticket error: %v", err)
+		return httpx.InternalError(err)	}
 }

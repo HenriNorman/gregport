@@ -29,4 +29,6 @@ var (
 	ErrInvitationEmailMismatch = errors.New("invitation email does not match the authenticated user")
 	ErrInvitationRoleNotAllowed = errors.New("not allowed to invite with that role")
 	ErrDuplicateMembership   = errors.New("user is already a member of this organization")
+	ErrMemberNotFound = errors.New("member not found")
+	ErrLastOwner      = errors.New("cannot remove or demote the last owner")
 )

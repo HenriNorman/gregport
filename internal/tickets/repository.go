@@ -1551,3 +1551,145 @@ func (r *Repository) AcceptInvitation(ctx context.Context, tokenHash string, exi
 	}
 	return outUser, outOrg, outMem, nil
 }
+
+func (r *Repository) ListMembers(ctx context.Context, orgID uuid.UUID) ([]Member, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT u.id, u.email, u.name, m.role, m.created_at
+		 FROM memberships m
+		 JOIN users u ON u.id = m.user_id
+		 WHERE m.org_id = $1 AND u.deleted_at IS NULL
+		 ORDER BY u.name, u.email`,
+		orgID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list members: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Member
+	for rows.Next() {
+		var m Member
+		if err := rows.Scan(&m.UserID, &m.Email, &m.Name, &m.Role, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan member: %w", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
+
+// UpdateMemberRole changes a member's role. Refuses to demote the last owner.
+func (r *Repository) UpdateMemberRole(ctx context.Context, orgID, userID uuid.UUID, newRole string) error {
+	return database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
+		var currentRole string
+		if err := tx.QueryRow(ctx,
+			`SELECT role FROM memberships
+			 WHERE org_id = $1 AND user_id = $2
+			 FOR UPDATE`,
+			orgID, userID,
+		).Scan(&currentRole); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrMemberNotFound
+			}
+			return fmt.Errorf("lock membership: %w", err)
+		}
+
+		if currentRole == newRole {
+			return nil
+		}
+
+		// if demoting an owner, ensure another owner remains
+		if currentRole == "owner" && newRole != "owner" {
+			rows, err := tx.Query(ctx,
+				`SELECT 1 FROM memberships
+				 WHERE org_id = $1 AND role = 'owner'
+				 FOR UPDATE`,
+				orgID,
+			)
+			if err != nil {
+				return fmt.Errorf("lock owners: %w", err)
+			}
+			owners := 0
+			for rows.Next() {
+				owners++
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("rows: %w", err)
+			}
+			if owners <= 1 {
+				return ErrLastOwner
+			}
+		}
+
+		if _, err := tx.Exec(ctx,
+			`UPDATE memberships SET role = $3 WHERE org_id = $1 AND user_id = $2`,
+			orgID, userID, newRole,
+		); err != nil {
+			return fmt.Errorf("update role: %w", err)
+		}
+		return nil
+	})
+}
+// RemoveMember deletes a membership and revokes the user's refresh tokens
+// for this org. Refuses to remove the last owner.
+// RemoveMember deletes a membership and revokes the user's refresh tokens
+// for this org. Refuses to remove the last owner.
+func (r *Repository) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error {
+	return database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
+		var currentRole string
+		if err := tx.QueryRow(ctx,
+			`SELECT role FROM memberships
+			 WHERE org_id = $1 AND user_id = $2
+			 FOR UPDATE`,
+			orgID, userID,
+		).Scan(&currentRole); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrMemberNotFound
+			}
+			return fmt.Errorf("lock membership: %w", err)
+		}
+
+		if currentRole == "owner" {
+			rows, err := tx.Query(ctx,
+				`SELECT 1 FROM memberships
+				 WHERE org_id = $1 AND role = 'owner'
+				 FOR UPDATE`,
+				orgID,
+			)
+			if err != nil {
+				return fmt.Errorf("lock owners: %w", err)
+			}
+			owners := 0
+			for rows.Next() {
+				owners++
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("rows: %w", err)
+			}
+			if owners <= 1 {
+				return ErrLastOwner
+			}
+		}
+
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM memberships WHERE org_id = $1 AND user_id = $2`,
+			orgID, userID,
+		); err != nil {
+			return fmt.Errorf("delete membership: %w", err)
+		}
+
+		if _, err := tx.Exec(ctx,
+			`UPDATE refresh_tokens SET revoked_at = now()
+			 WHERE user_id = $1 AND org_id = $2 AND revoked_at IS NULL`,
+			userID, orgID,
+		); err != nil {
+			return fmt.Errorf("revoke refresh tokens: %w", err)
+		}
+
+		return nil
+	})
+}

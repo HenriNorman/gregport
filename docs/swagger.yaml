@@ -344,6 +344,26 @@ definitions:
           $ref: '#/definitions/tickets.MacroDTO'
         type: array
     type: object
+  tickets.MemberDTO:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      name:
+        type: string
+      role:
+        type: string
+      user_id:
+        type: string
+    type: object
+  tickets.MemberListResponse:
+    properties:
+      members:
+        items:
+          $ref: '#/definitions/tickets.MemberDTO'
+        type: array
+    type: object
   tickets.MergeTicketRequest:
     properties:
       into_number:
@@ -482,6 +502,16 @@ definitions:
         $ref: '#/definitions/tickets.MacroActionsDTO'
       name:
         example: Mark pending
+        type: string
+    type: object
+  tickets.UpdateMemberRequest:
+    properties:
+      role:
+        enum:
+        - owner
+        - admin
+        - agent
+        example: admin
         type: string
     type: object
   tickets.UpdateTeamRequest:
@@ -977,6 +1007,113 @@ paths:
       summary: Return the authenticated principal
       tags:
       - me
+  /v1/members:
+    get:
+      description: Any member of the org may list members.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tickets.MemberListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: List members
+      tags:
+      - members
+  /v1/members/{userId}:
+    delete:
+      description: Requires role owner or admin. Revokes the user's refresh tokens
+        for this org immediately. Refuses to remove the last owner.
+      parameters:
+      - description: User UUID
+        in: path
+        name: userId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Member not found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Cannot remove the last owner
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Remove a member
+      tags:
+      - members
+    patch:
+      consumes:
+      - application/json
+      description: 'Requires role owner or admin. The grant table applies: owner may
+        set admin or agent; admin may set agent only; nobody may set owner. Refuses
+        to demote the last owner.'
+      parameters:
+      - description: User UUID
+        in: path
+        name: userId
+        required: true
+        type: string
+      - description: New role
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/tickets.UpdateMemberRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Not allowed to grant that role
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Member not found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Cannot demote the last owner
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Change a member's role
+      tags:
+      - members
   /v1/tags:
     get:
       description: Any member of the org may list tags.

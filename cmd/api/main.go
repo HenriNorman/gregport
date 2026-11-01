@@ -137,6 +137,11 @@ func main() {
 				r.With(auth.RequireRole("owner", "admin")).Get("/", ticketsHandler.ListInvitations)
 				r.With(auth.RequireRole("owner", "admin")).Delete("/{id}", ticketsHandler.DeleteInvitation)
 			})
+			r.Route("/members", func(r chi.Router) {
+				r.Get("/", ticketsHandler.ListMembers)
+				r.With(auth.RequireRole("owner", "admin")).Patch("/{userId}", ticketsHandler.UpdateMemberRole)
+				r.With(auth.RequireRole("owner", "admin")).Delete("/{userId}", ticketsHandler.RemoveMember)
+			})
 		})
 	})
 

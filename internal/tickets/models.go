@@ -120,3 +120,11 @@ type Invitation struct {
 	AcceptedAt *time.Time
 	CreatedAt  time.Time
 }
+
+type Member struct {
+	UserID    uuid.UUID
+	Email     string
+	Name      string
+	Role      string
+	CreatedAt time.Time
+}

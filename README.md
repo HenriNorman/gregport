@@ -19,6 +19,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Merge | Complete — source closed and pointed at target; merged tickets read-only |
 | Macros | Complete — CRUD (admin/owner) and apply to a ticket (any member) |
 | Invitations | Complete — create (admin/owner, grant table), list pending, revoke, accept (new and existing user) |
+| Members | Complete — list (any member), role change and removal (admin/owner), last-owner protection |
 | SLA, notifications, webhooks, API keys, invitations | Schema defined, not exposed |
 
 ### Authentication
@@ -314,6 +315,24 @@ This prevents the API from confirming whether a resource exists in another tenan
   invitation's email (403 otherwise), and only the membership is created.
   A duplicate membership returns 409.
 
+- **Member role changes reuse the invitation grant table.** `PATCH
+  /v1/members/{userId}` calls `CanInvite(principal, newRole)` — owner may set
+  admin or agent, admin may set agent only, nobody sets owner. A role change
+  writes a `member.role_changed` audit row.
+- **An org always keeps one owner.** `UpdateMemberRole` and `RemoveMember`
+  lock the target membership `FOR UPDATE`, then lock every owner row in the
+  org (`SELECT 1 FROM memberships WHERE role = 'owner' FOR UPDATE`), count
+  them in Go, and refuse to demote or remove the last one (422). Two
+  concurrent removals of two owners serialize on the owner-row locks: the
+  first succeeds, the second sees one owner left and refuses. The invariant
+  holds under concurrency, not just sequentially.
+- **Removing a member revokes their refresh tokens for this org.**
+  `DELETE /v1/members/{userId}` deletes the membership and runs `UPDATE
+  refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND org_id = $2`
+  in the same transaction. The removed user's access token stays valid up to
+  15 minutes (it's stateless), but their refresh token is dead immediately —
+  they cannot get a new one. A `member.removed` audit row is written.
+
 ### Optimistic Concurrency
 
 Ticket updates require an `If-Match` header.
@@ -476,6 +495,12 @@ These tests use a real PostgreSQL database.
   returns 403; expired and already-used tokens return 422; a duplicate
   membership returns 409.
 
+- Members: any member can list the roster; owner promotes agent to admin;
+  admin promoting to admin returns 403 (grant table); granting owner returns
+  403; removing the last owner returns 422; two concurrent removals of the
+  last two owners leave exactly one owner; removing a member revokes their
+  refresh tokens for this org.
+
 ### Unit Tests
 
 Authentication unit tests use a fake `Repo` implementation and do not require a database.
@@ -541,12 +566,10 @@ The authentication cycle has also been verified end to end using `curl`:
 
 ## Current Development Direction
 
-## Current Development Direction
-
-Slice 5 is in progress: the identity model finishes here. People join by
-invitation, and machines authenticate with API keys. Invitations are
-complete (create, list, revoke, accept for new and existing users). Member
-management and API keys are next.
+Feat 5 is in progress: the identity model finishes here. People join by
+invitation, and machines authenticate with API keys. Invitations and member
+management are complete. API keys, the API-key authentication path, and the
+audit wiring across all state-changing actions are next.
 
 Future domain work includes exposing the remaining schema-defined
 functionality: SLA policies, notifications, and webhooks.
