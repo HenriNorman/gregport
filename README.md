@@ -22,6 +22,8 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Members | Complete — list (any member), role change and removal (admin/owner), last-owner protection |
 | API keys | Complete — create, list, revoke; `gp_live_` keys authenticate as agent-level principals |
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
+| Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
+| Production basics | In progress — logging done; error envelope, health checks, timeouts, graceful shutdown, Docker and CI next |
 | SLA, notifications, webhooks | Schema defined, not exposed |
 
 ### Authentication
@@ -157,6 +159,7 @@ The service layer depends on repository interfaces rather than concrete implemen
 - `config/` — configuration loading from environment variables.
 - `database/` — pgx connection pool and transaction management.
 - `httpx/` — `DecodeJSON`, `WriteJSON`, `WriteError`, and `APIError`.
+- `logging/` — JSON `slog` construction, log-level parsing, and the request-scoped logger in the context.
 - `requestctx/` — authenticated principal stored in request context.
 
 </details>
@@ -175,6 +178,7 @@ The service layer depends on repository interfaces rather than concrete implemen
 - `config/` — configuration loading from environment variables.
 - `database/` — pgx connection pool and transaction management.
 - `httpx/` — `DecodeJSON`, `WriteJSON`, `WriteError`, and `APIError`.
+- `logging/` — JSON `slog` construction, log-level parsing, and the request-scoped logger in the context.
 - `requestctx/` — authenticated principal stored in request context, `Kind` (user | api_key) and `ActorID`.
 
 </details>
@@ -268,6 +272,7 @@ The application reads its configuration from environment variables.
 | `DB_PASSWORD` | Yes | — | Database password |
 | `DB_NAME` | No | `gregport` | Database name |
 | `APP_PORT` | No | `8080` | HTTP server port |
+| `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, or `error` |
 | `JWT_SECRET` | Yes | — | Minimum 32 bytes |
 | `ACCESS_TOKEN_TTL` | No | `15m` | Go duration |
 | `REFRESH_TOKEN_TTL` | No | `720h` | Go duration (30 days) |
@@ -470,9 +475,33 @@ The cursor is opaque and should never be parsed by clients.
 
 ---
 
+## Logging
+
+The API writes structured JSON to stdout using `log/slog`, at the level set by
+`LOG_LEVEL`. One line is emitted per request and carries the same request ID
+returned to the client in `X-Request-ID`:
+
+```json
+{"time":"2026-11-03T12:00:00.000Z","level":"INFO","msg":"request","method":"GET","route":"/v1/tickets/{number}","status":200,"duration_ms":3.41,"bytes":418,"request_id":"0f9b…","org_id":"…","user_id":"…"}
+```
+
+- `route` is the chi route pattern, never the raw path, so ticket numbers,
+  user IDs and query strings do not leak into logs.
+- The logger stored in the request context is enriched with `request_id`, so
+  service-level log lines carry the same ID as the access line.
+- `org_id` and `user_id` are added once a request is authenticated. API-key
+  requests log `api_key_id` instead of `user_id`.
+- 5xx responses log at `ERROR`; everything else logs at `INFO`.
+- Request bodies, query strings, `Authorization` headers, passwords, tokens
+  and token hashes are never logged.
+- A panic is recovered, logged at `ERROR` with its stack, returned as the
+  standard error envelope, and does not stop the server.
+
+---
+
 ## Testing
 
-The project includes integration tests, authentication unit tests, and security-focused token tests.
+The project includes integration tests, authentication unit tests, logging and middleware tests, and security-focused token tests.
 
 ### Running Tests
 
@@ -608,6 +637,25 @@ These tests perform real JWT signing and verification without a database.
 
 They verify actual security behavior, including algorithm pinning, required expiration, and tamper detection.
 
+### Logging and Middleware Tests
+
+These tests do not require a database.
+
+- Log level parsing, including rejection of unknown levels, and JSON output
+  shape.
+- Request IDs are generated when absent, echoed in `X-Request-ID`, and appear
+  on every access-log line.
+- Access-log fields: method, route pattern, status, duration, bytes, and the
+  authenticated principal (`user_id` or `api_key_id`, plus `org_id`).
+- Raw paths, query strings, request bodies, `Authorization` headers and known
+  secret values never appear in log output.
+- 5xx responses log at `ERROR`; unmatched routes log the `unmatched`
+  placeholder rather than the requested path.
+- Panic recovery writes the standard envelope, logs the stack with the panic
+  value, and the server keeps serving; `http.ErrAbortHandler` is re-panicked.
+- The request-info holder observes the principal attached by authentication
+  under concurrent access (verified with `-race`).
+
 ### Ticket State Machine Tests
 
 The ticket transition logic is implemented through `CanTransition(from, to)` and tested using a table-driven approach.
@@ -644,3 +692,8 @@ row atomically with the change.
 
 Future domain work: SLA policies, notifications, and webhooks — the three
 remaining schema-defined domains.
+
+Production basics is in progress. Structured JSON logging with
+request IDs is complete. Still to come: the unified error envelope with
+`request_id`, `/healthz` and `/readyz`, server and request timeouts, graceful
+shutdown, the multi-stage image and compose stack, and the CI pipeline.

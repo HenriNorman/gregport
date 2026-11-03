@@ -1,17 +1,18 @@
 package tickets
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"time"
-	"log"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/HenriNorman/gregport/internal/platform/httpx"
+	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 )
 
@@ -210,6 +211,7 @@ func uuidPtrToString(id *uuid.UUID) *string {
 	s := id.String()
 	return &s
 }
+
 // --- Macros ---
 
 type CreateMacroRequest struct {
@@ -314,10 +316,10 @@ type CreateAPIKeyRequest struct {
 }
 
 type APIKeyDTO struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	Prefix    string     `json:"prefix"`
-	CreatedAt time.Time  `json:"created_at"`
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Prefix     string     `json:"prefix"`
+	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
@@ -325,7 +327,7 @@ type APIKeyDTO struct {
 
 type CreateAPIKeyResponse struct {
 	APIKey APIKeyDTO `json:"api_key"`
-	Key    string    `json:"key"`   // shown once
+	Key    string    `json:"key"` // shown once
 }
 
 type APIKeyListResponse struct {
@@ -373,7 +375,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	tk, err := h.svc.CreateTicket(r.Context(), p, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 
@@ -427,7 +429,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	res, err := h.svc.ListTickets(r.Context(), p, f)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 
@@ -470,7 +472,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 	tk, err := h.svc.GetTicket(r.Context(), p, number)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 
@@ -533,7 +535,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 
 	tk, err := h.svc.UpdateTicket(r.Context(), p, number, expectedVersion, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 
@@ -569,7 +571,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.DeleteTicket(r.Context(), p, number); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -613,7 +615,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 
 	c, err := h.svc.CreateComment(r.Context(), p, number, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 
@@ -651,7 +653,7 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 
 	cs, err := h.svc.ListComments(r.Context(), p, number, includeInternal)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 
@@ -693,7 +695,7 @@ func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 	}
 	t, err := h.svc.CreateTeam(r.Context(), p, req.Name)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusCreated, toTeamDTO(t))
@@ -717,7 +719,7 @@ func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
 	}
 	teams, err := h.svc.ListTeams(r.Context(), p)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	dtos := make([]TeamDTO, 0, len(teams))
@@ -763,7 +765,7 @@ func (h *Handler) UpdateTeam(w http.ResponseWriter, r *http.Request) {
 	}
 	t, err := h.svc.UpdateTeam(r.Context(), p, teamID, req.Name)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusOK, toTeamDTO(t))
@@ -795,7 +797,7 @@ func (h *Handler) DeleteTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.DeleteTeam(r.Context(), p, teamID); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -834,7 +836,7 @@ func (h *Handler) AddTeamMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.AddTeamMember(r.Context(), p, teamID, userID); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -872,7 +874,7 @@ func (h *Handler) RemoveTeamMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.RemoveTeamMember(r.Context(), p, teamID, userID); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -915,7 +917,7 @@ func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) {
 
 	tk, err := h.svc.AssignTicket(r.Context(), p, number, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 
@@ -951,7 +953,7 @@ func (h *Handler) CreateTag(w http.ResponseWriter, r *http.Request) {
 	}
 	t, err := h.svc.CreateTag(r.Context(), p, req.Name)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusCreated, toTagDTO(t))
@@ -975,7 +977,7 @@ func (h *Handler) ListTags(w http.ResponseWriter, r *http.Request) {
 	}
 	tags, err := h.svc.ListTags(r.Context(), p)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	dtos := make([]TagDTO, 0, len(tags))
@@ -1012,7 +1014,7 @@ func (h *Handler) AttachTag(w http.ResponseWriter, r *http.Request) {
 	}
 	tagName := chi.URLParam(r, "tag")
 	if err := h.svc.AttachTag(r.Context(), p, number, tagName); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1045,7 +1047,7 @@ func (h *Handler) DetachTag(w http.ResponseWriter, r *http.Request) {
 	}
 	tagName := chi.URLParam(r, "tag")
 	if err := h.svc.DetachTag(r.Context(), p, number, tagName); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1083,7 +1085,7 @@ func (h *Handler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.AddWatcher(r.Context(), p, number, userID); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1120,7 +1122,7 @@ func (h *Handler) RemoveWatcher(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.RemoveWatcher(r.Context(), p, number, userID); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1163,7 +1165,7 @@ func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 
 	events, next, err := h.svc.ListEvents(r.Context(), p, number, cursor, limit)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 
@@ -1216,7 +1218,7 @@ func (h *Handler) Merge(w http.ResponseWriter, r *http.Request) {
 	}
 	source, target, err := h.svc.MergeTickets(r.Context(), p, number, req.IntoNumber)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusOK, map[string]TicketDTO{
@@ -1254,7 +1256,7 @@ func (h *Handler) CreateMacro(w http.ResponseWriter, r *http.Request) {
 	}
 	m, err := h.svc.CreateMacro(r.Context(), p, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusCreated, toMacroDTO(m))
@@ -1278,7 +1280,7 @@ func (h *Handler) ListMacros(w http.ResponseWriter, r *http.Request) {
 	}
 	macros, err := h.svc.ListMacros(r.Context(), p)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	dtos := make([]MacroDTO, 0, len(macros))
@@ -1324,7 +1326,7 @@ func (h *Handler) UpdateMacro(w http.ResponseWriter, r *http.Request) {
 	}
 	m, err := h.svc.UpdateMacro(r.Context(), p, macroID, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusOK, toMacroDTO(m))
@@ -1356,7 +1358,7 @@ func (h *Handler) DeleteMacro(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.DeleteMacro(r.Context(), p, macroID); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1394,7 +1396,7 @@ func (h *Handler) ApplyMacro(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.ApplyMacro(r.Context(), p, number, macroID); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1428,7 +1430,7 @@ func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 	}
 	inv, raw, err := h.svc.CreateInvitation(r.Context(), p, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusCreated, CreateInvitationResponse{
@@ -1456,7 +1458,7 @@ func (h *Handler) ListInvitations(w http.ResponseWriter, r *http.Request) {
 	}
 	invs, err := h.svc.ListInvitations(r.Context(), p)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	dtos := make([]InvitationDTO, 0, len(invs))
@@ -1492,7 +1494,7 @@ func (h *Handler) DeleteInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.DeleteInvitation(r.Context(), p, invID); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1531,14 +1533,14 @@ func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 		Password: req.Password,
 	})
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 
 	_ = httpx.WriteJSON(w, http.StatusOK, AcceptInvitationResponse{
-		User: InvitedUserDTO{ID: user.ID.String(), Email: user.Email, Name: user.Name},
+		User:         InvitedUserDTO{ID: user.ID.String(), Email: user.Email, Name: user.Name},
 		Organization: InvitedOrgDTO{ID: org.ID.String(), Name: org.Name, Slug: org.Slug},
-		Role: mem.Role,
+		Role:         mem.Role,
 	})
 }
 
@@ -1560,7 +1562,7 @@ func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 	}
 	members, err := h.svc.ListMembers(r.Context(), p)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	dtos := make([]MemberDTO, 0, len(members))
@@ -1604,7 +1606,7 @@ func (h *Handler) UpdateMemberRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.UpdateMemberRole(r.Context(), p, userID, req.Role); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1637,7 +1639,7 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.RemoveMember(r.Context(), p, userID); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1671,7 +1673,7 @@ func (h *Handler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	k, raw, err := h.svc.CreateAPIKey(r.Context(), p, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusCreated, CreateAPIKeyResponse{
@@ -1699,7 +1701,7 @@ func (h *Handler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	keys, err := h.svc.ListAPIKeys(r.Context(), p)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	dtos := make([]APIKeyDTO, 0, len(keys))
@@ -1735,7 +1737,7 @@ func (h *Handler) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.RevokeAPIKey(r.Context(), p, keyID); err != nil {
-		httpx.WriteError(w, mapTicketError(err))
+		httpx.WriteError(w, mapTicketError(r.Context(), err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1826,7 +1828,7 @@ func toAPIKeyDTO(k APIKey) APIKeyDTO {
 	}
 }
 
-func mapTicketError(err error) *httpx.APIError {
+func mapTicketError(ctx context.Context, err error) *httpx.APIError {
 	switch {
 	case errors.Is(err, ErrTicketNotFound):
 		return &httpx.APIError{
@@ -1910,6 +1912,7 @@ func mapTicketError(err error) *httpx.APIError {
 			Message: "api key not found",
 		}
 	default:
-		log.Printf("unmapped ticket error: %v", err)
-		return httpx.InternalError(err)	}
+		logging.FromContext(ctx).Error("unmapped ticket error", "error", err)
+		return httpx.InternalError(err)
+	}
 }

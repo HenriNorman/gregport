@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -14,48 +15,56 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/config"
 	"github.com/HenriNorman/gregport/internal/platform/database"
 	"github.com/HenriNorman/gregport/internal/platform/httpx"
+	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/tickets"
 )
 
-//	@title			gregport API
-//	@version		1.0.0
-//	@description	Multi-tenant support ticketing SaaS.
-//	@description
-//	@description	## Authentication
-//	@description	All endpoints except `/v1/auth/*` and `/healthz` require `Authorization: Bearer <access_token>`.
-//	@description	The access token is a JWT containing `sub` (user id), `org` (org id), and `role`.
-//	@description	Missing, expired, or invalid tokens return 401.
-//	@description
-//	@description	## Authorization
-//	@description	Roles are `owner`, `admin`, `agent`. Teams and macro mutations require `owner` or `admin`.
-//	@description	Only `DELETE /v1/tickets/{number}` is role-gated among ticket operations (owner/admin).
-//	@description	Internal notes on comments require an agent role or above.
-//	@description
-//	@description	## Tenant isolation
-//	@description	`org_id` comes only from the token, never from the URL, body, or query string.
-//	@description	A ticket in another org returns 404, never 403 — the API never confirms existence in someone else's tenant.
-//	@host			localhost:8080
-//	@BasePath		/
-//	@schemes		http
-//	@securityDefinitions.apikey	BearerAuth
-//	@in							header
-//	@name						Authorization
-//	@description				Type "Bearer" followed by a space and the access token.
+// @title			gregport API
+// @version		1.0.0
+// @description	Multi-tenant support ticketing SaaS.
+// @description
+// @description	## Authentication
+// @description	All endpoints except `/v1/auth/*` and `/healthz` require `Authorization: Bearer <access_token>`.
+// @description	The access token is a JWT containing `sub` (user id), `org` (org id), and `role`.
+// @description	Missing, expired, or invalid tokens return 401.
+// @description
+// @description	## Authorization
+// @description	Roles are `owner`, `admin`, `agent`. Teams and macro mutations require `owner` or `admin`.
+// @description	Only `DELETE /v1/tickets/{number}` is role-gated among ticket operations (owner/admin).
+// @description	Internal notes on comments require an agent role or above.
+// @description
+// @description	## Tenant isolation
+// @description	`org_id` comes only from the token, never from the URL, body, or query string.
+// @description	A ticket in another org returns 404, never 403 — the API never confirms existence in someone else's tenant.
+// @host			localhost:8080
+// @BasePath		/
+// @schemes		http
+// @securityDefinitions.apikey	BearerAuth
+// @in							header
+// @name						Authorization
+// @description				Type "Bearer" followed by a space and the access token.
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("no .env file, relying on real env vars")
 	}
 	cfg := config.Load()
 
+	logger, err := logging.New(cfg.LogLevel)
+	if err != nil {
+		log.Fatalf("logging: %v", err)
+	}
+	logging.SetDefault(logger)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	pool, err := database.NewPool(ctx, cfg.DSN())
 	if err != nil {
-		log.Fatalf("database: %v", err)
+		logger.Error("database unavailable", "error", err)
+		os.Exit(1)
 	}
 	defer pool.Close()
-	log.Println("connected to postgres")
+	logger.Info("connected to postgres")
 
 	// auth wiring
 	tm := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
@@ -69,8 +78,10 @@ func main() {
 	ticketsHandler := tickets.NewHandler(ticketsSvc)
 
 	r := chi.NewRouter()
-	r.Use(middleware.Recovery)
 	r.Use(middleware.RequestID)
+	r.Use(middleware.WithLogger(logger))
+	r.Use(middleware.RequestLogger())
+	r.Use(middleware.Recovery)
 
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {
@@ -150,6 +161,9 @@ func main() {
 		})
 	})
 
-	log.Printf("listening on :%s", cfg.AppPort)
-	log.Fatal(http.ListenAndServe(":"+cfg.AppPort, r))
+	logger.Info("listening", "port", cfg.AppPort)
+	if err := http.ListenAndServe(":"+cfg.AppPort, r); err != nil {
+		logger.Error("server stopped", "error", err)
+		os.Exit(1)
+	}
 }
