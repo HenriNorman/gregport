@@ -49,7 +49,10 @@ func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("no .env file, relying on real env vars")
 	}
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
 
 	logger, err := logging.New(cfg.LogLevel)
 	if err != nil {

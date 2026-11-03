@@ -24,7 +24,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
 | Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
-| Production basics | In progress — logging, error envelope, timeouts, health checks and graceful shutdown done; Docker and CI next |
+| Production basics | In progress — logging, error envelope, timeouts, health checks, graceful shutdown and config validation done; Docker, compose and CI next |
 | SLA, notifications, webhooks | Schema defined, not exposed |
 
 ### Authentication
@@ -291,6 +291,20 @@ The application reads its configuration from environment variables.
 | `SERVER_IDLE_TIMEOUT` | No | `60s` | Go duration |
 | `REQUEST_TIMEOUT` | No | `10s` | Go duration; keep below `SERVER_WRITE_TIMEOUT` |
 | `SHUTDOWN_TIMEOUT` | No | `15s` | Go duration; keep above `REQUEST_TIMEOUT` |
+
+Configuration is validated at startup, before the database is opened. Missing
+or invalid values make the process exit non-zero, and every problem found is
+reported together. In particular:
+
+- `DB_PASSWORD` is required and has no default.
+- `JWT_SECRET` must be at least 32 bytes.
+- `LOG_LEVEL` must be `debug`, `info`, `warn`, or `error`.
+- Ports must be between `1` and `65535`.
+- Durations must be positive; `REQUEST_TIMEOUT=0` disables the deadline.
+- `REQUEST_TIMEOUT` must be below `SERVER_WRITE_TIMEOUT`.
+- `SHUTDOWN_TIMEOUT` must be at least `REQUEST_TIMEOUT`.
+- The database DSN is built with `url.URL`, so characters such as `@`, `:`,
+  `/`, `?`, `#` and `%` in credentials are escaped automatically.
 
 Generate a secure JWT secret using:
 
@@ -751,12 +765,25 @@ These tests do not require a database.
   decoder text.
 - Panic recovery returns the envelope with `details: []` and the request ID.
 
+### Configuration Tests
+
+These tests do not require a database.
+
+- Every setting has its default asserted, including token lifetimes, server
+  timeouts and the shutdown timeout.
+- Environment overrides replace each default.
+- Missing `DB_PASSWORD`, short `JWT_SECRET`, invalid `LOG_LEVEL`, out-of-range
+  ports, non-positive durations and invalid duration syntax all fail.
+- `REQUEST_TIMEOUT=0` is accepted and disables the per-request deadline.
+- Request/write ordering and shutdown/request ordering are enforced.
+- Multiple problems are joined into one error instead of failing one at a time.
+- The DSN escapes reserved characters in usernames and passwords, keeps the
+  original values after URL parsing, and formats IPv6 hosts with brackets.
+
 ### Timeout Tests
 
 These tests do not require a database.
 
-- Server timeout defaults and environment overrides are asserted, invalid
-  durations fall back to defaults, and `0s` disables the request deadline.
 - Server construction applies the configured address, handler and all four
   server timeout values.
 - A fast handler keeps its status, headers and body, and receives a
@@ -832,5 +859,6 @@ remaining schema-defined domains.
 
 Production basics is in progress. Structured JSON logging with request IDs,
 the unified error envelope, server/request timeouts, liveness/readiness
-checks and graceful shutdown are complete. Still to come: config hardening,
-the multi-stage image and compose stack, and the CI pipeline.
+checks, graceful shutdown and fail-fast configuration validation are
+complete. Still to come: the multi-stage image and compose stack, and the CI
+pipeline.
