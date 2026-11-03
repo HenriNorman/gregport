@@ -23,7 +23,8 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | API keys | Complete — create, list, revoke; `gp_live_` keys authenticate as agent-level principals |
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
-| Production basics | In progress — logging done; error envelope, health checks, timeouts, graceful shutdown, Docker and CI next |
+| Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
+| Production basics | In progress — logging and error envelope done; health checks, timeouts, graceful shutdown, Docker and CI next |
 | SLA, notifications, webhooks | Schema defined, not exposed |
 
 ### Authentication
@@ -290,6 +291,28 @@ Never commit the secret, log it, or reuse it across projects.
 ---
 
 ## API Design and Rules
+
+### Error Responses
+
+Every failure uses one envelope:
+
+```json
+{"error":{"code":"ticket_not_found","message":"ticket not found","details":[],"request_id":"0f9b…"}}
+```
+
+- `code` is stable and machine-readable; `message` is safe to show to a user.
+- `details` is always an array. Field-level validation errors populate it.
+- `request_id` matches the `X-Request-ID` response header and the access-log
+  line for the same request.
+- Domain errors are `*httpx.APIError` sentinels, so each carries its own HTTP
+  status, code and public message. `errors.Is` still works through wrapping.
+- Unknown errors return `500` with `code: "internal"` and a generic message.
+  The real error is logged at `ERROR` with the request ID and never sent to
+  the client.
+- JSON decoding failures return safe codes (`invalid_json`, `unknown_field`,
+  `payload_too_large`) instead of raw decoder text.
+- Panics are recovered, logged with their stack, and returned in the same
+  envelope.
 
 ### Tenant Isolation
 
@@ -656,6 +679,23 @@ These tests do not require a database.
 - The request-info holder observes the principal attached by authentication
   under concurrent access (verified with `-race`).
 
+### Error Envelope Tests
+
+These tests do not require a database.
+
+- One envelope shape with `code`, `message`, `details` (always `[]`) and
+  `request_id`; the request ID matches `X-Request-ID`.
+- Wrapped domain errors keep their status and code, while unknown errors
+  return a generic `500` and log the real cause without sending it to the
+  client.
+- Shared domain sentinels are not mutated between requests.
+- Every ticket and auth sentinel is asserted against its status and code and
+  still matches through `errors.Is` when wrapped.
+- JSON decoding maps malformed input, unknown fields, wrong types, empty
+  bodies, extra objects and oversized bodies to safe codes without leaking
+  decoder text.
+- Panic recovery returns the envelope with `details: []` and the request ID.
+
 ### Ticket State Machine Tests
 
 The ticket transition logic is implemented through `CanTransition(from, to)` and tested using a table-driven approach.
@@ -693,7 +733,7 @@ row atomically with the change.
 Future domain work: SLA policies, notifications, and webhooks — the three
 remaining schema-defined domains.
 
-Production basics is in progress. Structured JSON logging with
-request IDs is complete. Still to come: the unified error envelope with
-`request_id`, `/healthz` and `/readyz`, server and request timeouts, graceful
-shutdown, the multi-stage image and compose stack, and the CI pipeline.
+Production basics is in progress. Structured JSON logging with request IDs
+and the unified error envelope are complete. Still to come: `/healthz` and
+`/readyz`, server and request timeouts, graceful shutdown, the multi-stage
+image and compose stack, and the CI pipeline.

@@ -1,11 +1,11 @@
 package auth
 
 import (
-	"net/http"
-	"strings"
 	"context"
 	"github.com/HenriNorman/gregport/internal/platform/httpx"
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
+	"net/http"
+	"strings"
 )
 
 func Authenticate(
@@ -16,13 +16,13 @@ func Authenticate(
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
 			if header == "" {
-				httpx.WriteError(w, unauthorized())
+				httpx.WriteError(w, r, unauthorized())
 				return
 			}
 
 			parts := strings.SplitN(header, " ", 2)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
-				httpx.WriteError(w, unauthorized())
+				httpx.WriteError(w, r, unauthorized())
 				return
 			}
 			token := parts[1]
@@ -32,14 +32,14 @@ func Authenticate(
 			if strings.HasPrefix(token, "gp_live_") {
 				kp, err := apiKeyAuth(r.Context(), token)
 				if err != nil {
-					httpx.WriteError(w, unauthorized())
+					httpx.WriteError(w, r, unauthorized())
 					return
 				}
 				p = kp
 			} else {
 				claims, err := tm.VerifyAccess(token)
 				if err != nil {
-					httpx.WriteError(w, unauthorized())
+					httpx.WriteError(w, r, unauthorized())
 					return
 				}
 				p = requestctx.Principal{
@@ -65,11 +65,11 @@ func RequireRole(roles ...string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			p, ok := requestctx.FromContext(r.Context())
 			if !ok {
-				httpx.WriteError(w, unauthorized())
+				httpx.WriteError(w, r, unauthorized())
 				return
 			}
 			if _, ok := allowed[p.Role]; !ok {
-				httpx.WriteError(w, &httpx.APIError{
+				httpx.WriteError(w, r, &httpx.APIError{
 					Status:  http.StatusForbidden,
 					Code:    "forbidden",
 					Message: "insufficient permissions",

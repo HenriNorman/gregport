@@ -1,13 +1,11 @@
 package middleware
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
+	"github.com/HenriNorman/gregport/internal/platform/httpx"
 	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 )
@@ -19,7 +17,7 @@ func WithLogger(base *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if base != nil {
-				l := base.With("request_id", GetRequestID(r.Context()))
+				l := base.With("request_id", requestctx.RequestID(r.Context()))
 				r = r.WithContext(logging.WithLogger(r.Context(), l))
 			}
 
@@ -42,11 +40,10 @@ func RequestLogger() func(http.Handler) http.Handler {
 
 			attrs := []any{
 				"method", r.Method,
-				"route", routePattern(r.Context()),
+				"route", httpx.RoutePattern(r.Context()),
 				"status", rec.status,
 				"duration_ms", float64(time.Since(start).Microseconds()) / 1000,
 				"bytes", rec.bytes,
-				"request_id", GetRequestID(r.Context()),
 			}
 
 			if info, ok := requestctx.RequestInfoFromContext(r.Context()); ok {
@@ -70,16 +67,7 @@ func RequestLogger() func(http.Handler) http.Handler {
 	}
 }
 
-// routePattern returns the matched chi pattern, or a stable placeholder for
-// unmatched requests. The raw path is deliberately never returned.
-func routePattern(ctx context.Context) string {
-	if rctx := chi.RouteContext(ctx); rctx != nil {
-		if p := rctx.RoutePattern(); p != "" {
-			return p
-		}
-	}
-	return "unmatched"
-}
+// routePattern helper removed in favour of httpx.RoutePattern.
 
 // responseRecorder captures status and bytes while staying transparent to
 // http.ResponseController via Unwrap.
@@ -88,6 +76,11 @@ type responseRecorder struct {
 	status int
 	bytes  int
 	wrote  bool
+}
+
+// WroteHeader reports whether the handler has already committed a status.
+func (rr *responseRecorder) WroteHeader() bool {
+	return rr.wrote
 }
 
 func (rr *responseRecorder) WriteHeader(code int) {

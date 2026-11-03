@@ -1,35 +1,44 @@
 package middleware
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/google/uuid"
+
+	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 )
 
-type ctxKey string
-
-const RequestIDKey ctxKey = "request_id"
-
+// RequestID reads an inbound X-Request-ID when it is sane, generates one
+// otherwise, echoes it to the client and stores it in the context.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-ID")
-		if id == "" {
+		if !validRequestID(id) {
 			id = uuid.NewString()
 		}
 
-		// Echo back to client
 		w.Header().Set("X-Request-ID", id)
 
-		// Store in context
-		ctx := context.WithValue(r.Context(), RequestIDKey, id)
+		ctx := requestctx.WithRequestID(r.Context(), id)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-func GetRequestID(ctx context.Context) string {
-	if id, ok := ctx.Value(RequestIDKey).(string); ok {
-		return id
+// validRequestID bounds and filters caller-supplied ids so a client cannot
+// inject arbitrary text into logs.
+func validRequestID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
 	}
-	return ""
+	for _, c := range id {
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9':
+		case c == '-' || c == '_' || c == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }

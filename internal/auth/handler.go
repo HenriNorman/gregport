@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"errors"
 	"net"
 	"net/http"
 
@@ -93,7 +92,7 @@ type MeResponse struct {
 func (h *Handler) Signup(w http.ResponseWriter, r *http.Request) {
 	var req SignupRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -104,7 +103,7 @@ func (h *Handler) Signup(w http.ResponseWriter, r *http.Request) {
 		Password: req.Password,
 	})
 	if err != nil {
-		httpx.WriteError(w, mapSignupError(err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -132,7 +131,7 @@ func (h *Handler) Signup(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -144,7 +143,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		IP:        clientIP(r),
 	})
 	if err != nil {
-		httpx.WriteError(w, mapLoginError(err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -173,13 +172,13 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var req RefreshRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
 	pair, err := h.svc.Refresh(r.Context(), req.RefreshToken, r.UserAgent(), clientIP(r))
 	if err != nil {
-		httpx.WriteError(w, mapLoginError(err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -207,7 +206,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	var req LogoutRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -228,7 +227,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, &httpx.APIError{
+		httpx.WriteError(w, r, &httpx.APIError{
 			Status: http.StatusUnauthorized, Code: "unauthorized", Message: "authentication required",
 		})
 		return
@@ -238,46 +237,6 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		OrgID:  p.OrgID.String(),
 		Role:   p.Role,
 	})
-}
-
-// --- Error mapping ---
-
-func mapSignupError(err error) *httpx.APIError {
-	switch {
-	case errors.Is(err, ErrInvalidEmail):
-		return httpx.Unprocessable("invalid_email", "email format is invalid")
-	case errors.Is(err, ErrWeakPassword):
-		return httpx.Unprocessable("weak_password", "password must be between 8 and 72 characters")
-	case errors.Is(err, ErrEmptyName):
-		return httpx.Unprocessable("empty_name", "name cannot be empty")
-	case errors.Is(err, ErrInvalidInput):
-		return httpx.Unprocessable("invalid_input", "org_name is required")
-	case errors.Is(err, ErrEmailTaken):
-		return httpx.Conflict("email_taken", "email is already registered")
-	case errors.Is(err, ErrSlugTaken):
-		return httpx.Conflict("slug_taken", "organization slug is already taken")
-	default:
-		return httpx.InternalError(err)
-	}
-}
-
-func mapLoginError(err error) *httpx.APIError {
-	switch {
-	case errors.Is(err, ErrInvalidCredentials):
-		return &httpx.APIError{
-			Status: http.StatusUnauthorized, Code: "invalid_credentials",
-			Message: "invalid email or password",
-		}
-	case errors.Is(err, ErrOrgRequired):
-		return httpx.Unprocessable("org_required", "org_slug is required when the user belongs to multiple organizations")
-	case errors.Is(err, ErrInvalidToken):
-		return &httpx.APIError{
-			Status: http.StatusUnauthorized, Code: "invalid_token",
-			Message: "invalid or expired token",
-		}
-	default:
-		return httpx.InternalError(err)
-	}
 }
 
 func clientIP(r *http.Request) string {

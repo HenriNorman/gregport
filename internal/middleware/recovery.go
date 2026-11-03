@@ -28,10 +28,16 @@ func Recovery(next http.Handler) http.Handler {
 				"panic", fmt.Sprint(rvr),
 				"stack", string(debug.Stack()),
 				"method", r.Method,
-				"route", routePattern(r.Context()),
+				"route", httpx.RoutePattern(r.Context()),
 			)
 
-			httpx.WriteError(w, httpx.InternalError(nil))
+			// If the handler already committed a response, writing an
+			// envelope would corrupt the body. The panic is still logged.
+			if rw, ok := w.(interface{ WroteHeader() bool }); ok && rw.WroteHeader() {
+				return
+			}
+
+			httpx.WriteError(w, r, httpx.InternalError(nil).MarkLogged())
 		}()
 
 		next.ServeHTTP(w, r)

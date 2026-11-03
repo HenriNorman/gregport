@@ -11,19 +11,23 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func decodeErrorEnvelope(t *testing.T, body []byte) string {
+type testEnvelope struct {
+	Error struct {
+		Code      string           `json:"code"`
+		Message   string           `json:"message"`
+		Details   []map[string]any `json:"details"`
+		RequestID string           `json:"request_id"`
+	} `json:"error"`
+}
+
+func decodeErrorEnvelope(t *testing.T, body []byte) testEnvelope {
 	t.Helper()
 
-	var env struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
+	var env testEnvelope
 	if err := json.Unmarshal(body, &env); err != nil {
 		t.Fatalf("invalid error envelope: %v (%q)", err, body)
 	}
-	return env.Error.Code
+	return env
 }
 
 func TestRecovery_PanicReturnsEnvelopeAndKeepsServing(t *testing.T) {
@@ -43,8 +47,18 @@ func TestRecovery_PanicReturnsEnvelopeAndKeepsServing(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status: got %d, want 500", rec.Code)
 	}
-	if code := decodeErrorEnvelope(t, rec.Body.Bytes()); code != "internal" {
-		t.Fatalf("error code: got %q", code)
+	env := decodeErrorEnvelope(t, rec.Body.Bytes())
+	if env.Error.Code != "internal" {
+		t.Fatalf("error code: got %q", env.Error.Code)
+	}
+	if env.Error.Message != "internal error" {
+		t.Fatalf("message: got %q", env.Error.Message)
+	}
+	if env.Error.Details == nil || len(env.Error.Details) != 0 {
+		t.Fatalf("details must be an empty array: %#v", env.Error.Details)
+	}
+	if env.Error.RequestID == "" || env.Error.RequestID != rec.Header().Get("X-Request-ID") {
+		t.Fatalf("request_id %q != header %q", env.Error.RequestID, rec.Header().Get("X-Request-ID"))
 	}
 
 	logs := decodeLogLines(t, &buf)

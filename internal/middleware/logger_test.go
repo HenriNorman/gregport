@@ -188,8 +188,8 @@ func TestRequestLogger_APIKeyPrincipal(t *testing.T) {
 func TestRequestLogger_ServerErrorLevel(t *testing.T) {
 	var buf bytes.Buffer
 	router := testRouter(&buf, func(r chi.Router) {
-		r.Get("/boom", func(w http.ResponseWriter, _ *http.Request) {
-			httpx.WriteError(w, httpx.InternalError(errors.New("database exploded")))
+		r.Get("/boom", func(w http.ResponseWriter, r *http.Request) {
+			httpx.WriteError(w, r, httpx.InternalError(errors.New("database exploded")))
 		})
 	})
 
@@ -199,12 +199,29 @@ func TestRequestLogger_ServerErrorLevel(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status: got %d", rec.Code)
 	}
-	entry := decodeLogLines(t, &buf)[0]
-	if entry["level"] != "ERROR" || entry["status"] != float64(http.StatusInternalServerError) {
-		t.Fatalf("unexpected entry: %+v", entry)
+
+	logs := decodeLogLines(t, &buf)
+	var access map[string]any
+	var loggedCause bool
+	for _, entry := range logs {
+		if entry["msg"] == "request" {
+			access = entry
+		}
+		if entry["msg"] == "request failed" && strings.Contains(entry["error"].(string), "database exploded") {
+			loggedCause = true
+		}
 	}
-	if strings.Contains(buf.String(), "database exploded") {
-		t.Fatalf("log leaked internal error text: %s", buf.String())
+	if access == nil {
+		t.Fatalf("missing access log: %s", buf.String())
+	}
+	if access["level"] != "ERROR" || access["status"] != float64(http.StatusInternalServerError) {
+		t.Fatalf("unexpected access entry: %+v", access)
+	}
+	if !loggedCause {
+		t.Fatalf("real error was not logged: %s", buf.String())
+	}
+	if strings.Contains(rec.Body.String(), "database exploded") {
+		t.Fatalf("response leaked internal error text: %s", rec.Body.String())
 	}
 }
 

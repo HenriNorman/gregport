@@ -10,10 +10,12 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+
+	"github.com/HenriNorman/gregport/internal/platform/httpx"
 )
 
 var (
-	ErrInvalidToken = errors.New("invalid token")
+	ErrInvalidToken = httpx.Unauthorized("invalid_token", "invalid or expired token")
 	ErrExpiredToken = errors.New("expired token")
 )
 

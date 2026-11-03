@@ -1,7 +1,6 @@
 package tickets
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,7 +11,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/HenriNorman/gregport/internal/platform/httpx"
-	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 )
 
@@ -363,19 +361,19 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 
 	var req CreateTicketRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
 	tk, err := h.svc.CreateTicket(r.Context(), p, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -402,7 +400,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 
@@ -429,7 +427,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	res, err := h.svc.ListTickets(r.Context(), p, f)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -460,19 +458,19 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 
 	number, err := parseNumber(r)
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
 		return
 	}
 
 	tk, err := h.svc.GetTicket(r.Context(), p, number)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -503,39 +501,39 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 
 	number, err := parseNumber(r)
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
 		return
 	}
 
 	expectedVersion, err := parseIfMatch(r)
 	if err != nil {
 		if errors.Is(err, ErrPreconditionRequired) {
-			httpx.WriteError(w, &httpx.APIError{
+			httpx.WriteError(w, r, &httpx.APIError{
 				Status:  http.StatusPreconditionRequired,
 				Code:    "precondition_required",
 				Message: "If-Match header is required",
 			})
 			return
 		}
-		httpx.WriteError(w, httpx.BadRequest("invalid_if_match", "If-Match must be a quoted integer version"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_if_match", "If-Match must be a quoted integer version"))
 		return
 	}
 
 	var req UpdateTicketRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
 	tk, err := h.svc.UpdateTicket(r.Context(), p, number, expectedVersion, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -560,18 +558,18 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 
 	number, err := parseNumber(r)
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
 		return
 	}
 
 	if err := h.svc.DeleteTicket(r.Context(), p, number); err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -597,25 +595,25 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 
 	number, err := parseNumber(r)
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
 		return
 	}
 
 	var req CreateCommentRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
 	c, err := h.svc.CreateComment(r.Context(), p, number, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -639,13 +637,13 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 
 	number, err := parseNumber(r)
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
 		return
 	}
 
@@ -653,7 +651,7 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 
 	cs, err := h.svc.ListComments(r.Context(), p, number, includeInternal)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -685,17 +683,17 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	var req CreateTeamRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	t, err := h.svc.CreateTeam(r.Context(), p, req.Name)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusCreated, toTeamDTO(t))
@@ -714,12 +712,12 @@ func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	teams, err := h.svc.ListTeams(r.Context(), p)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	dtos := make([]TeamDTO, 0, len(teams))
@@ -750,22 +748,22 @@ func (h *Handler) ListTeams(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateTeam(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	teamID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_id", "team id must be a UUID"))
 		return
 	}
 	var req UpdateTeamRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	t, err := h.svc.UpdateTeam(r.Context(), p, teamID, req.Name)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusOK, toTeamDTO(t))
@@ -788,16 +786,16 @@ func (h *Handler) UpdateTeam(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DeleteTeam(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	teamID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_id", "team id must be a UUID"))
 		return
 	}
 	if err := h.svc.DeleteTeam(r.Context(), p, teamID); err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -822,21 +820,21 @@ func (h *Handler) DeleteTeam(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) AddTeamMember(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	teamID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_id", "team id must be a UUID"))
 		return
 	}
 	userID, err := parseUUIDParam(r, "userId")
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
 		return
 	}
 	if err := h.svc.AddTeamMember(r.Context(), p, teamID, userID); err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -860,21 +858,21 @@ func (h *Handler) AddTeamMember(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) RemoveTeamMember(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	teamID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_id", "team id must be a UUID"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_id", "team id must be a UUID"))
 		return
 	}
 	userID, err := parseUUIDParam(r, "userId")
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
 		return
 	}
 	if err := h.svc.RemoveTeamMember(r.Context(), p, teamID, userID); err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -899,25 +897,25 @@ func (h *Handler) RemoveTeamMember(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 
 	number, err := parseNumber(r)
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
 		return
 	}
 
 	var req AssignTicketRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
 	tk, err := h.svc.AssignTicket(r.Context(), p, number, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -943,17 +941,17 @@ func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateTag(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	var req CreateTagRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	t, err := h.svc.CreateTag(r.Context(), p, req.Name)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusCreated, toTagDTO(t))
@@ -972,12 +970,12 @@ func (h *Handler) CreateTag(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListTags(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	tags, err := h.svc.ListTags(r.Context(), p)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	dtos := make([]TagDTO, 0, len(tags))
@@ -1004,17 +1002,17 @@ func (h *Handler) ListTags(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) AttachTag(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	number, err := parseNumber(r)
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
 		return
 	}
 	tagName := chi.URLParam(r, "tag")
 	if err := h.svc.AttachTag(r.Context(), p, number, tagName); err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1037,17 +1035,17 @@ func (h *Handler) AttachTag(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DetachTag(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	number, err := parseNumber(r)
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
 		return
 	}
 	tagName := chi.URLParam(r, "tag")
 	if err := h.svc.DetachTag(r.Context(), p, number, tagName); err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1071,21 +1069,21 @@ func (h *Handler) DetachTag(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	number, err := parseNumber(r)
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
 		return
 	}
 	userID, err := parseUUIDParam(r, "userId")
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
 		return
 	}
 	if err := h.svc.AddWatcher(r.Context(), p, number, userID); err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1108,21 +1106,21 @@ func (h *Handler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) RemoveWatcher(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	number, err := parseNumber(r)
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
 		return
 	}
 	userID, err := parseUUIDParam(r, "userId")
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
 		return
 	}
 	if err := h.svc.RemoveWatcher(r.Context(), p, number, userID); err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1146,12 +1144,12 @@ func (h *Handler) RemoveWatcher(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	number, err := parseNumber(r)
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
 		return
 	}
 
@@ -1165,7 +1163,7 @@ func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 
 	events, next, err := h.svc.ListEvents(r.Context(), p, number, cursor, limit)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -1199,26 +1197,26 @@ func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Merge(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	number, err := parseNumber(r)
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
 		return
 	}
 	var req MergeTicketRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if req.IntoNumber <= 0 {
-		httpx.WriteError(w, httpx.BadRequest("invalid_into_number", "into_number must be a positive integer"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_into_number", "into_number must be a positive integer"))
 		return
 	}
 	source, target, err := h.svc.MergeTickets(r.Context(), p, number, req.IntoNumber)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusOK, map[string]TicketDTO{
@@ -1246,17 +1244,17 @@ func (h *Handler) Merge(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateMacro(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	var req CreateMacroRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	m, err := h.svc.CreateMacro(r.Context(), p, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusCreated, toMacroDTO(m))
@@ -1275,12 +1273,12 @@ func (h *Handler) CreateMacro(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListMacros(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	macros, err := h.svc.ListMacros(r.Context(), p)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	dtos := make([]MacroDTO, 0, len(macros))
@@ -1311,22 +1309,22 @@ func (h *Handler) ListMacros(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateMacro(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	macroID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_id", "macro id must be a UUID"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_id", "macro id must be a UUID"))
 		return
 	}
 	var req UpdateMacroRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	m, err := h.svc.UpdateMacro(r.Context(), p, macroID, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusOK, toMacroDTO(m))
@@ -1349,16 +1347,16 @@ func (h *Handler) UpdateMacro(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DeleteMacro(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	macroID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_id", "macro id must be a UUID"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_id", "macro id must be a UUID"))
 		return
 	}
 	if err := h.svc.DeleteMacro(r.Context(), p, macroID); err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1382,21 +1380,21 @@ func (h *Handler) DeleteMacro(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ApplyMacro(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	number, err := parseNumber(r)
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_number", "ticket number must be a positive integer"))
 		return
 	}
 	macroID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_id", "macro id must be a UUID"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_id", "macro id must be a UUID"))
 		return
 	}
 	if err := h.svc.ApplyMacro(r.Context(), p, number, macroID); err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1420,17 +1418,17 @@ func (h *Handler) ApplyMacro(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	var req CreateInvitationRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	inv, raw, err := h.svc.CreateInvitation(r.Context(), p, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusCreated, CreateInvitationResponse{
@@ -1453,12 +1451,12 @@ func (h *Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListInvitations(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	invs, err := h.svc.ListInvitations(r.Context(), p)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	dtos := make([]InvitationDTO, 0, len(invs))
@@ -1485,16 +1483,16 @@ func (h *Handler) ListInvitations(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DeleteInvitation(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	invID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_id", "invitation id must be a UUID"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_id", "invitation id must be a UUID"))
 		return
 	}
 	if err := h.svc.DeleteInvitation(r.Context(), p, invID); err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1518,7 +1516,7 @@ func (h *Handler) DeleteInvitation(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	var req AcceptInvitationRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -1533,7 +1531,7 @@ func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 		Password: req.Password,
 	})
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 
@@ -1557,12 +1555,12 @@ func (h *Handler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	members, err := h.svc.ListMembers(r.Context(), p)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	dtos := make([]MemberDTO, 0, len(members))
@@ -1592,21 +1590,21 @@ func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateMemberRole(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	userID, err := parseUUIDParam(r, "userId")
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
 		return
 	}
 	var req UpdateMemberRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := h.svc.UpdateMemberRole(r.Context(), p, userID, req.Role); err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1630,16 +1628,16 @@ func (h *Handler) UpdateMemberRole(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	userID, err := parseUUIDParam(r, "userId")
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_user_id", "user id must be a UUID"))
 		return
 	}
 	if err := h.svc.RemoveMember(r.Context(), p, userID); err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1663,17 +1661,17 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	var req CreateAPIKeyRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_json", err.Error()))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	k, raw, err := h.svc.CreateAPIKey(r.Context(), p, req)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	_ = httpx.WriteJSON(w, http.StatusCreated, CreateAPIKeyResponse{
@@ -1696,12 +1694,12 @@ func (h *Handler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	keys, err := h.svc.ListAPIKeys(r.Context(), p)
 	if err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	dtos := make([]APIKeyDTO, 0, len(keys))
@@ -1728,16 +1726,16 @@ func (h *Handler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	p, ok := requestctx.FromContext(r.Context())
 	if !ok {
-		httpx.WriteError(w, unauthorized())
+		httpx.WriteError(w, r, unauthorized())
 		return
 	}
 	keyID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		httpx.WriteError(w, httpx.BadRequest("invalid_id", "api key id must be a UUID"))
+		httpx.WriteError(w, r, httpx.BadRequest("invalid_id", "api key id must be a UUID"))
 		return
 	}
 	if err := h.svc.RevokeAPIKey(r.Context(), p, keyID); err != nil {
-		httpx.WriteError(w, mapTicketError(r.Context(), err))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1825,94 +1823,5 @@ func toAPIKeyDTO(k APIKey) APIKeyDTO {
 		LastUsedAt: k.LastUsedAt,
 		ExpiresAt:  k.ExpiresAt,
 		RevokedAt:  k.RevokedAt,
-	}
-}
-
-func mapTicketError(ctx context.Context, err error) *httpx.APIError {
-	switch {
-	case errors.Is(err, ErrTicketNotFound):
-		return &httpx.APIError{
-			Status:  http.StatusNotFound,
-			Code:    "not_found",
-			Message: "ticket not found",
-		}
-	case errors.Is(err, ErrVersionMismatch):
-		return &httpx.APIError{
-			Status:  http.StatusPreconditionFailed,
-			Code:    "precondition_failed",
-			Message: "ticket was modified; re-fetch and retry with the new ETag",
-		}
-	case errors.Is(err, ErrInvalidTransition):
-		return httpx.Unprocessable("invalid_transition", "that status change is not allowed")
-	case errors.Is(err, ErrInvalidInput):
-		return httpx.Unprocessable("invalid_input", "invalid input")
-	case errors.Is(err, ErrForbidden):
-		return &httpx.APIError{
-			Status:  http.StatusForbidden,
-			Code:    "forbidden",
-			Message: "insufficient permissions",
-		}
-	case errors.Is(err, ErrTeamNotFound):
-		return &httpx.APIError{
-			Status:  http.StatusNotFound,
-			Code:    "team_not_found",
-			Message: "team not found",
-		}
-	case errors.Is(err, ErrTeamNameTaken):
-		return httpx.Conflict("team_name_taken", "a team with that name already exists")
-	case errors.Is(err, ErrMemberNotInOrg):
-		return httpx.Unprocessable("member_not_in_org", "user is not a member of this organization")
-	case errors.Is(err, ErrAssigneeNotAgent):
-		return httpx.Unprocessable("assignee_not_agent", "assignee must be an org member with agent role or higher")
-	case errors.Is(err, ErrNoTeamMembers):
-		return httpx.Unprocessable("no_team_members", "team has no assignable members")
-	case errors.Is(err, ErrTagNotFound):
-		return &httpx.APIError{
-			Status: http.StatusNotFound, Code: "tag_not_found",
-			Message: "tag not found",
-		}
-	case errors.Is(err, ErrTagNameTaken):
-		return httpx.Conflict("tag_name_taken", "a tag with that name already exists")
-	case errors.Is(err, ErrTicketMerged):
-		return httpx.Conflict("ticket_merged", "ticket is merged and read-only")
-	case errors.Is(err, ErrMergeSelf):
-		return httpx.Unprocessable("merge_self", "cannot merge a ticket into itself")
-	case errors.Is(err, ErrMergeTargetInvalid):
-		return httpx.Unprocessable("merge_target_invalid", "merge target is closed or already merged")
-	case errors.Is(err, ErrMergeRequester):
-		return httpx.Unprocessable("merge_requester_mismatch", "both tickets must have the same requester")
-	case errors.Is(err, ErrSourceMerged):
-		return httpx.Conflict("source_merged", "source ticket is already merged")
-	case errors.Is(err, ErrMacroNotFound):
-		return &httpx.APIError{
-			Status: http.StatusNotFound, Code: "macro_not_found",
-			Message: "macro not found",
-		}
-	case errors.Is(err, ErrMacroNameTaken):
-		return httpx.Conflict("macro_name_taken", "a macro with that name already exists")
-	case errors.Is(err, ErrInvitationNotFound):
-		return &httpx.APIError{Status: http.StatusNotFound, Code: "invitation_not_found", Message: "invitation not found"}
-	case errors.Is(err, ErrInvitationExpired):
-		return httpx.Unprocessable("invitation_expired", "invitation has expired")
-	case errors.Is(err, ErrInvitationUsed):
-		return httpx.Unprocessable("invitation_used", "invitation already accepted")
-	case errors.Is(err, ErrInvitationEmailMismatch):
-		return &httpx.APIError{Status: http.StatusForbidden, Code: "invitation_email_mismatch", Message: "invitation email does not match your account"}
-	case errors.Is(err, ErrInvitationRoleNotAllowed):
-		return &httpx.APIError{Status: http.StatusForbidden, Code: "invitation_role_not_allowed", Message: "not allowed to invite with that role"}
-	case errors.Is(err, ErrDuplicateMembership):
-		return httpx.Conflict("duplicate_membership", "user is already a member of this organization")
-	case errors.Is(err, ErrMemberNotFound):
-		return &httpx.APIError{Status: http.StatusNotFound, Code: "member_not_found", Message: "member not found"}
-	case errors.Is(err, ErrLastOwner):
-		return httpx.Unprocessable("last_owner", "cannot remove or demote the last owner")
-	case errors.Is(err, ErrAPIKeyNotFound):
-		return &httpx.APIError{
-			Status: http.StatusNotFound, Code: "api_key_not_found",
-			Message: "api key not found",
-		}
-	default:
-		logging.FromContext(ctx).Error("unmapped ticket error", "error", err)
-		return httpx.InternalError(err)
 	}
 }
