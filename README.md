@@ -26,7 +26,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
 | Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
-| Production basics | Complete — logging, error envelope, timeouts, health checks, graceful shutdown, config validation, multi-stage image, compose stack and CI |
+| Production basics | Complete — logging, error envelope, timeouts, health checks, graceful shutdown, config validation, multi-stage image, compose stack, CI and twelve-factor summary |
 | SLA, notifications, webhooks | Schema defined, not exposed |
 
 ### Authentication
@@ -678,6 +678,37 @@ requests get a chance to finish cancelling cleanly.
 
 ---
 
+## Twelve-Factor Alignment
+
+The table records the current posture. `Partial` marks a deliberate gap that
+is listed below it, not a hidden requirement.
+
+| Factor | How Gregport applies it | Status |
+|:--|:--|:--:|
+| **1. Codebase** | One Git repository. `cmd/api` is the current deployable and `cmd/worker` is a placeholder for future background jobs; there are no copy-pasted services. | Yes |
+| **2. Dependencies** | Every Go dependency is pinned in `go.mod`/`go.sum`. The runtime image contains only the compiled binary on Alpine; nothing is installed at runtime. | Yes |
+| **3. Config** | All settings come from environment variables. `config.Load` validates them before startup, secrets have no defaults, `.env` is local-only, and Compose injects values at start. | Yes |
+| **4. Backing services** | PostgreSQL is attached through `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` and `DB_NAME`. The DSN is built at runtime, so the database endpoint can change without code changes. | Yes |
+| **5. Build, release, run** | A multi-stage `Dockerfile` builds a static binary. The image is the immutable release artifact and configuration is supplied when the container starts. CI builds the image; registry publishing is not automated yet. | Yes |
+| **6. Processes** | The API is stateless. Access tokens are JWTs, refresh tokens are stored hashed in PostgreSQL, and no sessions live in process memory. Any replica can serve any request. | Yes |
+| **7. Port binding** | The server binds `:APP_PORT` (`8080` by default) and serves HTTP directly. Compose publishes the same port; no external web server is required. | Yes |
+| **8. Concurrency** | Scale horizontally by running more API containers. Each process has its own pgx pool and shared work is coordinated through PostgreSQL, with no sticky sessions. | Yes |
+| **9. Disposability** | Configuration fails fast, startup is quick, `SIGTERM`/`SIGINT` drain in-flight requests, requests have deadlines, and Compose allows `20s` for shutdown. | Yes |
+| **10. Dev/prod parity** | Local Compose and CI use the same image, Go version, `postgres:16-alpine` and migration SQL. A production environment and automated release are not set up yet. | Partial |
+| **11. Logs** | JSON goes to stdout with request IDs and route patterns; the process writes no log files. Docker captures the stream, and secrets and raw paths are never logged. | Yes |
+| **12. Admin processes** | Migrations are one-off SQL executed by the PostgreSQL init step, and admin queries use `psql`; they do not run inside the API process. A dedicated migration command and durable worker are not implemented. | Partial |
+
+**Remaining gaps**
+
+- No production environment or automated registry/release pipeline yet.
+- Migrations run only when the Compose database volume is first initialized;
+  there is no standalone migration command for existing databases.
+- `cmd/worker` is a placeholder, so there are no background jobs to run as a
+  separate process.
+- Logs are stdout-only; there is no bundled aggregation or retention layer.
+
+---
+
 ## Testing
 
 The project includes integration tests, authentication unit tests, logging and middleware tests, and security-focused token tests.
@@ -983,8 +1014,11 @@ row atomically with the change.
 Future domain work: SLA policies, notifications, and webhooks — the three
 remaining schema-defined domains.
 
-Production basics is in progress. Structured JSON logging with request IDs,
-the unified error envelope, server/request timeouts, liveness/readiness
-checks, graceful shutdown, fail-fast configuration validation, the
-multi-stage container image, the Compose stack and the CI pipeline are
-complete. Still to come: the twelve-factor configuration summary.
+Production basics is complete. Structured JSON logging with request IDs, the
+unified error envelope, server/request timeouts, liveness/readiness checks,
+graceful shutdown, fail-fast configuration validation, the multi-stage
+container image, the Compose stack, CI and the twelve-factor alignment table
+are all in place. The remaining gaps are documented with that table.
+
+Next: SLA policies, notifications and webhooks, plus production deployment,
+standalone migration tooling and a real background worker.
