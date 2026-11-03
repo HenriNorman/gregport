@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: Henri123
+          POSTGRES_DB: gregport
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d gregport"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+
+      - name: Apply migrations
+        env:
+          PGPASSWORD: Henri123
+        run: |
+          for f in migrations/*.up.sql; do
+            echo "Applying $f"
+            psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d gregport -f "$f"
+          done
+
+      - name: Check module files
+        run: go mod tidy -diff
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./... -race -count=1
+
+      - name: Validate compose file
+        env:
+          DB_PASSWORD: ci-password
+          JWT_SECRET: ci-secret-ci-secret-ci-secret-32
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+
+      - name: Build image
+        run: docker build -t gregport-api:ci .
+
+      - name: Check image user
+        run: test "$(docker image inspect --format '{{.Config.User}}' gregport-api:ci)" = "10001:10001"
+
+      - name: Check invalid configuration fails
+        run: |
+          if docker run --rm -e DB_PASSWORD= -e JWT_SECRET=short gregport-api:ci; then
+            echo "expected the container to reject invalid configuration" >&2
+            exit 1
+          fi
+
+      - name: Smoke test container
+        env:
+          JWT_SECRET: ci-secret-ci-secret-ci-secret-32
+        run: |
+          docker run -d --name gregport-api-ci --network host \
+            -e DB_HOST=127.0.0.1 \
+            -e DB_PORT=5432 \
+            -e DB_USER=postgres \
+            -e DB_PASSWORD=Henri123 \
+            -e DB_NAME=gregport \
+            -e APP_PORT=18080 \
+            -e JWT_SECRET="$JWT_SECRET" \
+            gregport-api:ci
+
+          trap 'docker rm -f gregport-api-ci >/dev/null 2>&1 || true' EXIT
+
+          ready=false
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/readyz >/dev/null; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$ready" != "true" ]; then
+            docker logs gregport-api-ci
+            exit 1
+          fi
+
+          curl -fsS http://127.0.0.1:18080/healthz
+          curl -fsS http://127.0.0.1:18080/readyz
+
+          docker stop --timeout 20 gregport-api-ci
+          status=$(docker inspect --format '{{.State.ExitCode}}' gregport-api-ci)
+          if [ "$status" != "0" ]; then
+            docker logs gregport-api-ci
+            exit 1
+          fi

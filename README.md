@@ -1,5 +1,7 @@
 # Gregport
 
+[![CI](https://github.com/HenriNorman/gregport/actions/workflows/ci.yml/badge.svg)](https://github.com/HenriNorman/gregport/actions/workflows/ci.yml)
+
 A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports organizations, users, memberships, tickets, comments, SLA policies, notifications, and webhooks.
 
 ---
@@ -24,7 +26,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
 | Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
-| Production basics | In progress — logging, error envelope, timeouts, health checks, graceful shutdown, config validation, multi-stage image and compose stack done; CI next |
+| Production basics | Complete — logging, error envelope, timeouts, health checks, graceful shutdown, config validation, multi-stage image, compose stack and CI |
 | SLA, notifications, webhooks | Schema defined, not exposed |
 
 ### Authentication
@@ -101,6 +103,13 @@ Each layer has a defined responsibility:
 The service layer depends on repository interfaces rather than concrete implementations. This allows tests to inject fake repositories without requiring a database.
 
 ### Project Structure
+
+<details>
+<summary><code>.github/workflows/</code> — continuous integration</summary>
+
+- `ci.yml` — PostgreSQL-backed tests, compose validation, image build, and container smoke test.
+
+</details>
 
 <details>
 <summary><code>Dockerfile</code> and <code>docker-compose.yml</code> — container build and local stack</summary>
@@ -684,10 +693,11 @@ go test ./internal/auth/ -v
 Run the entire test suite:
 
 ```bash
-go test ./... -v
+go test ./... -race -count=1
 ```
 
-Ticket tests are integration tests and require PostgreSQL.
+Ticket tests are integration tests and require PostgreSQL. CI runs the same
+command against a fresh, migrated PostgreSQL 16 service.
 
 ### Integration Tests
 
@@ -929,7 +939,7 @@ The ticket transition logic is implemented through `CanTransition(from, to)` and
 
 ### Test Summary
 
-Run `go test ./... -v` and read the output to see the current test results.
+Run `go test ./... -race -count=1` and read the output to see the current test results.
 
 The authentication cycle has also been verified end to end using `curl`:
 
@@ -939,6 +949,27 @@ The authentication cycle has also been verified end to end using `curl`:
 4. Replaying the previous refresh token returns `401`.
 5. Logout returns `204`.
 6. Incorrect passwords and unknown emails produce identical `401` responses.
+
+---
+
+## Continuous Integration
+
+`.github/workflows/ci.yml` runs on pushes to `main`, pull requests, and manual
+dispatch. Every run:
+
+1. Starts PostgreSQL 16 as a service container and applies all
+   `migrations/*.up.sql` files in order.
+2. Checks that `go.mod` and `go.sum` are tidy, then runs `go vet ./...` and
+   `go test ./... -race -count=1` against that real database.
+3. Validates the rendered Compose stack with `docker compose config --quiet`.
+4. Builds the production image.
+5. Checks that the image runs as UID/GID `10001`.
+6. Checks that invalid startup configuration exits non-zero.
+7. Starts the container against PostgreSQL, waits for `/readyz`, checks
+   `/healthz`, and verifies that `SIGTERM` exits `0`.
+
+The same checks can be run locally with the commands in
+[Testing](#testing) and [Docker Compose Stack](#docker-compose-stack).
 
 ---
 
@@ -955,5 +986,5 @@ remaining schema-defined domains.
 Production basics is in progress. Structured JSON logging with request IDs,
 the unified error envelope, server/request timeouts, liveness/readiness
 checks, graceful shutdown, fail-fast configuration validation, the
-multi-stage container image and the Compose stack are complete. Still to
-come: the CI pipeline.
+multi-stage container image, the Compose stack and the CI pipeline are
+complete. Still to come: the twelve-factor configuration summary.
