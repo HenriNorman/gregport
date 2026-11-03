@@ -24,7 +24,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
 | Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
-| Production basics | In progress — logging, error envelope, timeouts, health checks, graceful shutdown, config validation and multi-stage image done; compose stack and CI next |
+| Production basics | In progress — logging, error envelope, timeouts, health checks, graceful shutdown, config validation, multi-stage image and compose stack done; CI next |
 | SLA, notifications, webhooks | Schema defined, not exposed |
 
 ### Authentication
@@ -101,6 +101,15 @@ Each layer has a defined responsibility:
 The service layer depends on repository interfaces rather than concrete implementations. This allows tests to inject fake repositories without requiring a database.
 
 ### Project Structure
+
+<details>
+<summary><code>Dockerfile</code> and <code>docker-compose.yml</code> — container build and local stack</summary>
+
+- `Dockerfile` — multi-stage build producing a non-root Alpine runtime image.
+- `docker-compose.yml` — PostgreSQL and API, with health checks and migrations.
+- `.dockerignore` — keeps VCS metadata, secrets and docs out of the build context.
+
+</details>
 
 <details>
 <summary><code>cmd/api/</code> — application entry point</summary>
@@ -191,6 +200,9 @@ The service layer depends on repository interfaces rather than concrete implemen
 
 ![Entity Relationship Diagram](docs/ERD.svg)
 
+Migrations live in `migrations/`. The Compose stack applies the `*.up.sql`
+files in order when the database volume is first created.
+
 ---
 
 ## API Reference
@@ -226,16 +238,40 @@ cp .env.example .env
 
 Configure the required environment variables, especially `DB_PASSWORD` and `JWT_SECRET`.
 
-Start PostgreSQL:
+#### Full Stack with Compose
 
 ```bash
-docker compose up -d --wait
+docker compose up --build -d --wait
 ```
 
-Run the application:
+This builds the API image, starts PostgreSQL, applies the migrations on the
+first database initialization, and waits for both health checks. The API is
+available at `http://localhost:8080`.
 
 ```bash
-go run cmd/api/main.go
+docker compose logs -f api
+curl localhost:8080/healthz
+```
+
+Stop the stack with `docker compose down`. To delete the database volume and
+re-apply migrations from scratch:
+
+```bash
+docker compose down -v
+```
+
+#### Local Go Process
+
+Start only PostgreSQL:
+
+```bash
+docker compose up -d db --wait
+```
+
+Then run the API on the host:
+
+```bash
+go run ./cmd/api
 ```
 
 The API listens on port `8080` by default. You can override this using `APP_PORT`.
@@ -287,6 +323,27 @@ The container listens on `8080`, logs JSON to stdout, and handles `SIGTERM` so
 graceful shutdown works. Set `APP_PORT` to change the port. When running the
 container, point `DB_HOST` at a PostgreSQL instance reachable from inside the
 container; `localhost` refers to the container itself.
+
+### Docker Compose Stack
+
+`docker compose up --build -d --wait` starts two services on the `gregport`
+network:
+
+| Service | Purpose |
+|:--|:--|
+| `db` | `postgres:16-alpine` with a named `pgdata` volume and a `pg_isready` health check. |
+| `api` | Built from the local `Dockerfile`; waits for `db` to be healthy and reads its environment from `.env`. |
+
+- PostgreSQL publishes `${DB_PORT:-5432}` on the host; the API connects
+  internally on `db:5432`, regardless of the host port.
+- The `*.up.sql` migrations are mounted read-only into
+  `/docker-entrypoint-initdb.d` and run once when the volume is first created.
+  Use `docker compose down -v` to reset the database.
+- The API publishes `${APP_PORT:-8080}` and is health-checked through
+  `/healthz`.
+- `stop_grace_period` is `20s`, above the default `SHUTDOWN_TIMEOUT` of `15s`,
+  so Docker waits for graceful shutdown instead of killing the process early.
+- Compose refuses to start if `DB_PASSWORD` or `JWT_SECRET` is missing.
 
 ---
 
@@ -841,6 +898,23 @@ These tests do not require a database.
   remaining connections are closed.
 - Serve errors are propagated instead of being mistaken for a clean shutdown.
 
+### Container and Compose Checks
+
+- `docker compose config --quiet` validates the rendered stack.
+- Missing `DB_PASSWORD` or `JWT_SECRET` fails interpolation before any
+  container starts.
+- `APP_PORT` overrides appear in both the API environment and the published
+  port; the port map uses the same value on both sides.
+- `api` waits for the `db` health check, and its own health check uses the
+  Alpine `wget` command against `/healthz`.
+- A fresh database initialized from the three `*.up.sql` files in order has
+  all 27 tables, the ticket `version` column and `audit_logs`.
+- The Docker-built binary starts against that fresh database, passes
+  `/healthz` and `/readyz`, serves signup, login and ticket creation, and
+  exits `0` on `SIGTERM`.
+- The Alpine health-check command returns `0` for a healthy response and
+  non-zero for an error response.
+
 ### Ticket State Machine Tests
 
 The ticket transition logic is implemented through `CanTransition(from, to)` and tested using a table-driven approach.
@@ -880,6 +954,6 @@ remaining schema-defined domains.
 
 Production basics is in progress. Structured JSON logging with request IDs,
 the unified error envelope, server/request timeouts, liveness/readiness
-checks, graceful shutdown, fail-fast configuration validation and the
-multi-stage container image are complete. Still to come: the compose stack
-and the CI pipeline.
+checks, graceful shutdown, fail-fast configuration validation, the
+multi-stage container image and the Compose stack are complete. Still to
+come: the CI pipeline.

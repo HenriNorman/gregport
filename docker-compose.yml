@@ -1,20 +1,55 @@
+name: gregport
+
 services:
   db:
-    image: postgres:16
-    container_name: gregport_db
+    image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_DB: ${DB_NAME:-gregport}
     ports:
-      - "${DB_PORT}:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./migrations/0001_init_schema.up.sql:/docker-entrypoint-initdb.d/0001_init_schema.sql:ro
+      - ./migrations/0002_init_schema.up.sql:/docker-entrypoint-initdb.d/0002_init_schema.sql:ro
+      - ./migrations/0003_audit_logs.up.sql:/docker-entrypoint-initdb.d/0003_audit_logs.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gregport-api:local
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      DB_NAME: ${DB_NAME:-gregport}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      APP_PORT: ${APP_PORT:-8080}
+    ports:
+      - "${APP_PORT:-8080}:${APP_PORT:-8080}"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:$${APP_PORT:-8080}/healthz"]
+      interval: 10s
+      timeout: 3s
       retries: 5
+      start_period: 5s
+    stop_grace_period: 20s
+    restart: unless-stopped
 
 volumes:
   pgdata:
