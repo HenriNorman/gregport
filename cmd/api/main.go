@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
 	"os"
 	"time"
 
@@ -157,14 +156,7 @@ func main() {
 		})
 	})
 
-	srv := &http.Server{
-		Addr:              ":" + cfg.AppPort,
-		Handler:           r,
-		ReadHeaderTimeout: cfg.ServerReadHeaderTimeout,
-		ReadTimeout:       cfg.ServerReadTimeout,
-		WriteTimeout:      cfg.ServerWriteTimeout,
-		IdleTimeout:       cfg.ServerIdleTimeout,
-	}
+	srv := newServer(cfg, r)
 
 	logger.Info("listening", "port", cfg.AppPort)
 	if err := srv.ListenAndServe(); err != nil {

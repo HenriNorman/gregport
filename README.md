@@ -739,12 +739,18 @@ These tests do not require a database.
 
 These tests do not require a database.
 
-- Server timeout defaults and environment overrides are asserted.
+- Server timeout defaults and environment overrides are asserted, invalid
+  durations fall back to defaults, and `0s` disables the request deadline.
+- Server construction applies the configured address, handler and all four
+  server timeout values.
 - A fast handler keeps its status, headers and body, and receives a
   deadline-bearing context.
 - A handler that overruns receives a cancelled context and the client gets
   `503` with code `request_timeout` in the standard envelope, including the
   request ID.
+- A real `httptest.Server` with the full middleware chain returns the same
+  envelope, the matched route pattern in the access log, and a matching
+  `X-Request-ID`.
 - Wrapped deadline errors map to the same `503` envelope, while deliberate
   `503` domain errors keep their own code.
 - Panics still reach recovery and return the `500` envelope when the timeout
@@ -758,6 +764,8 @@ These tests do not require a database.
 - Readiness pings with a deadline and returns `200` when healthy.
 - A failed ping returns `503` with `{"status":"unready"}`, hides the database
   error, and logs it at `WARN` with the request ID.
+- A real `pgxpool.Pool` returns `200` while healthy and `503` after it is
+  closed; the test skips when PostgreSQL is not reachable.
 
 ### Ticket State Machine Tests
 

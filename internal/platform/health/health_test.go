@@ -5,11 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/HenriNorman/gregport/internal/platform/logging"
 )
@@ -78,6 +83,45 @@ func TestReady_UnhealthyIsUnreadyButHidesCause(t *testing.T) {
 	if !strings.Contains(buf.String(), `"request_id":"req-ready"`) {
 		t.Fatalf("log missing request_id: %s", buf.String())
 	}
+}
+
+func TestReady_RealPostgres(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://postgres:Henri123@localhost:5432/gregport?sslmode=disable"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Skipf("postgres unavailable: %v", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		t.Skipf("postgres unavailable: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	logger := logging.NewWithWriter(io.Discard, slog.LevelError)
+	r := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	r = r.WithContext(logging.WithLogger(r.Context(), logger))
+
+	rec := httptest.NewRecorder()
+	Ready(pool)(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("healthy status: got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	pool.Close()
+
+	rec = httptest.NewRecorder()
+	Ready(pool)(rec, r)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("closed pool status: got %d", rec.Code)
+	}
+	assertStatus(t, rec.Body.Bytes(), "unready")
 }
 
 func assertStatus(t *testing.T, body []byte, want string) {

@@ -37,6 +37,32 @@ func TestLoadTimeoutDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadTimeoutInvalidFallsBack(t *testing.T) {
+	t.Setenv("JWT_SECRET", strings.Repeat("x", 32))
+	t.Setenv("REQUEST_TIMEOUT", "not-a-duration")
+	t.Setenv("SERVER_WRITE_TIMEOUT", "12")
+
+	cfg := Load()
+
+	if cfg.RequestTimeout != 10*time.Second {
+		t.Errorf("request timeout: %s", cfg.RequestTimeout)
+	}
+	if cfg.ServerWriteTimeout != 30*time.Second {
+		t.Errorf("write timeout: %s", cfg.ServerWriteTimeout)
+	}
+}
+
+func TestLoadTimeoutZeroDisables(t *testing.T) {
+	t.Setenv("JWT_SECRET", strings.Repeat("x", 32))
+	t.Setenv("REQUEST_TIMEOUT", "0s")
+
+	cfg := Load()
+
+	if cfg.RequestTimeout != 0 {
+		t.Errorf("request timeout: %s", cfg.RequestTimeout)
+	}
+}
+
 func TestLoadTimeoutOverrides(t *testing.T) {
 	t.Setenv("JWT_SECRET", strings.Repeat("x", 32))
 	t.Setenv("SERVER_READ_HEADER_TIMEOUT", "1s")
