@@ -1,0 +1,8 @@
+.git
+.env
+bin/
+*.exe
+docs/
+README.md
+docker-compose.yml
+deployments/

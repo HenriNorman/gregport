@@ -24,7 +24,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
 | Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
-| Production basics | In progress — logging, error envelope, timeouts, health checks, graceful shutdown and config validation done; Docker, compose and CI next |
+| Production basics | In progress — logging, error envelope, timeouts, health checks, graceful shutdown, config validation and multi-stage image done; compose stack and CI next |
 | SLA, notifications, webhooks | Schema defined, not exposed |
 
 ### Authentication
@@ -73,6 +73,7 @@ Round-robin picks the team member with the oldest `last_assigned_at` inside the 
 | Router | [chi](https://github.com/go-chi/chi) |
 | Database | PostgreSQL 16 |
 | Database environment | Docker Compose |
+| Container image | Multi-stage Docker build on Alpine |
 | PostgreSQL driver | [pgx/v5](https://github.com/jackc/pgx) |
 | Authentication | bcrypt, [golang-jwt/jwt/v5](https://github.com/golang-jwt/jwt) |
 | IDs | [google/uuid](https://github.com/google/uuid) |
@@ -266,6 +267,26 @@ A `200` means the API can serve requests. If the ping fails, it returns `503`:
 
 The database error is logged at `WARN` with the request ID but never returned
 to the caller.
+
+### Container Image
+
+Build the production image:
+
+```bash
+docker build -t gregport-api .
+```
+
+The build has two stages:
+
+- `golang:1.27.2-alpine` compiles a static Linux binary with `CGO_ENABLED=0`,
+  `-trimpath`, and stripped symbols.
+- `alpine:3.24` contains only that binary and runs it as the non-root `app`
+  user (UID 10001).
+
+The container listens on `8080`, logs JSON to stdout, and handles `SIGTERM` so
+graceful shutdown works. Set `APP_PORT` to change the port. When running the
+container, point `DB_HOST` at a PostgreSQL instance reachable from inside the
+container; `localhost` refers to the container itself.
 
 ---
 
@@ -859,6 +880,6 @@ remaining schema-defined domains.
 
 Production basics is in progress. Structured JSON logging with request IDs,
 the unified error envelope, server/request timeouts, liveness/readiness
-checks, graceful shutdown and fail-fast configuration validation are
-complete. Still to come: the multi-stage image and compose stack, and the CI
-pipeline.
+checks, graceful shutdown, fail-fast configuration validation and the
+multi-stage container image are complete. Still to come: the compose stack
+and the CI pipeline.
