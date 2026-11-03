@@ -17,6 +17,12 @@ type Config struct {
 	JWTSecret       string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
+
+	ServerReadHeaderTimeout time.Duration
+	ServerReadTimeout       time.Duration
+	ServerWriteTimeout      time.Duration
+	ServerIdleTimeout       time.Duration
+	RequestTimeout          time.Duration
 }
 
 func Load() Config {
@@ -31,6 +37,12 @@ func Load() Config {
 		JWTSecret:       os.Getenv("JWT_SECRET"),
 		AccessTokenTTL:  getEnvDuration("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL: getEnvDuration("REFRESH_TOKEN_TTL", 30*24*time.Hour),
+
+		ServerReadHeaderTimeout: getEnvDuration("SERVER_READ_HEADER_TIMEOUT", 5*time.Second),
+		ServerReadTimeout:       getEnvDuration("SERVER_READ_TIMEOUT", 15*time.Second),
+		ServerWriteTimeout:      getEnvDuration("SERVER_WRITE_TIMEOUT", 30*time.Second),
+		ServerIdleTimeout:       getEnvDuration("SERVER_IDLE_TIMEOUT", 60*time.Second),
+		RequestTimeout:          getEnvDuration("REQUEST_TIMEOUT", 10*time.Second),
 	}
 
 	if len(cfg.JWTSecret) < 32 {

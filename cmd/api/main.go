@@ -82,6 +82,7 @@ func main() {
 	r.Use(middleware.WithLogger(logger))
 	r.Use(middleware.RequestLogger())
 	r.Use(middleware.Recovery)
+	r.Use(middleware.Timeout(cfg.RequestTimeout))
 
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {
@@ -161,8 +162,17 @@ func main() {
 		})
 	})
 
+	srv := &http.Server{
+		Addr:              ":" + cfg.AppPort,
+		Handler:           r,
+		ReadHeaderTimeout: cfg.ServerReadHeaderTimeout,
+		ReadTimeout:       cfg.ServerReadTimeout,
+		WriteTimeout:      cfg.ServerWriteTimeout,
+		IdleTimeout:       cfg.ServerIdleTimeout,
+	}
+
 	logger.Info("listening", "port", cfg.AppPort)
-	if err := http.ListenAndServe(":"+cfg.AppPort, r); err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
 	}

@@ -24,7 +24,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
 | Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
-| Production basics | In progress — logging and error envelope done; health checks, timeouts, graceful shutdown, Docker and CI next |
+| Production basics | In progress — logging, error envelope and timeouts done; health checks, graceful shutdown, Docker and CI next |
 | SLA, notifications, webhooks | Schema defined, not exposed |
 
 ### Authentication
@@ -277,6 +277,11 @@ The application reads its configuration from environment variables.
 | `JWT_SECRET` | Yes | — | Minimum 32 bytes |
 | `ACCESS_TOKEN_TTL` | No | `15m` | Go duration |
 | `REFRESH_TOKEN_TTL` | No | `720h` | Go duration (30 days) |
+| `SERVER_READ_HEADER_TIMEOUT` | No | `5s` | Go duration |
+| `SERVER_READ_TIMEOUT` | No | `15s` | Go duration |
+| `SERVER_WRITE_TIMEOUT` | No | `30s` | Go duration |
+| `SERVER_IDLE_TIMEOUT` | No | `60s` | Go duration |
+| `REQUEST_TIMEOUT` | No | `10s` | Go duration; keep below `SERVER_WRITE_TIMEOUT` |
 
 Generate a secure JWT secret using:
 
@@ -522,6 +527,32 @@ returned to the client in `X-Request-ID`:
 
 ---
 
+## Timeouts
+
+The HTTP server is configured with four hard limits:
+
+| Limit | Default | Protects against |
+|:--|:--|:--|
+| `ReadHeaderTimeout` | `5s` | Slow header writes (Slowloris) |
+| `ReadTimeout` | `15s` | Slow request bodies |
+| `WriteTimeout` | `30s` | Handlers that ignore cancellation |
+| `IdleTimeout` | `60s` | Idle keep-alive connections |
+
+Each request also gets a `REQUEST_TIMEOUT` deadline (default `10s`). When it
+expires:
+
+- the request context is cancelled, so PostgreSQL queries and other
+  context-aware work stop;
+- deadline errors are mapped to `503` with code `request_timeout` in the
+  standard error envelope;
+- a handler that returns after the deadline without writing a response also
+  gets the `503` envelope.
+
+`REQUEST_TIMEOUT` should stay below `SERVER_WRITE_TIMEOUT`. The server write
+timeout remains the hard stop for a handler that ignores context cancellation.
+
+---
+
 ## Testing
 
 The project includes integration tests, authentication unit tests, logging and middleware tests, and security-focused token tests.
@@ -696,6 +727,21 @@ These tests do not require a database.
   decoder text.
 - Panic recovery returns the envelope with `details: []` and the request ID.
 
+### Timeout Tests
+
+These tests do not require a database.
+
+- Server timeout defaults and environment overrides are asserted.
+- A fast handler keeps its status, headers and body, and receives a
+  deadline-bearing context.
+- A handler that overruns receives a cancelled context and the client gets
+  `503` with code `request_timeout` in the standard envelope, including the
+  request ID.
+- Wrapped deadline errors map to the same `503` envelope, while deliberate
+  `503` domain errors keep their own code.
+- Panics still reach recovery and return the `500` envelope when the timeout
+  middleware is installed.
+
 ### Ticket State Machine Tests
 
 The ticket transition logic is implemented through `CanTransition(from, to)` and tested using a table-driven approach.
@@ -733,7 +779,7 @@ row atomically with the change.
 Future domain work: SLA policies, notifications, and webhooks — the three
 remaining schema-defined domains.
 
-Production basics is in progress. Structured JSON logging with request IDs
-and the unified error envelope are complete. Still to come: `/healthz` and
-`/readyz`, server and request timeouts, graceful shutdown, the multi-stage
-image and compose stack, and the CI pipeline.
+Production basics is in progress. Structured JSON logging with request IDs,
+the unified error envelope and server/request timeouts are complete. Still to
+come: `/healthz` and `/readyz`, graceful shutdown, the multi-stage image and
+compose stack, and the CI pipeline.

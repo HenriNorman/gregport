@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -137,6 +138,36 @@ func TestWriteError_DoesNotMutateSharedError(t *testing.T) {
 	}
 	if shared.Code != "internal" || shared.Message != "internal error" {
 		t.Fatalf("shared error was mutated: %+v", shared)
+	}
+}
+
+func TestWriteError_DeadlineExceeded(t *testing.T) {
+	rec, env := writeAndDecode(t, requestWithID("req-timeout"),
+		fmt.Errorf("list tickets: %w", context.DeadlineExceeded))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status: got %d", rec.Code)
+	}
+	if env.Error.Code != "request_timeout" || env.Error.Message != "request timed out" {
+		t.Fatalf("unexpected body: %+v", env.Error)
+	}
+	if env.Error.RequestID != "req-timeout" {
+		t.Fatalf("request_id: got %q", env.Error.RequestID)
+	}
+	if env.Error.Details == nil || len(env.Error.Details) != 0 {
+		t.Fatalf("details must be an empty array: %#v", env.Error.Details)
+	}
+}
+
+func TestWriteError_PreservesServiceUnavailable(t *testing.T) {
+	rec, env := writeAndDecode(t, requestWithID("req-503"),
+		ServiceUnavailable("maintenance", "try again later"))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status: got %d", rec.Code)
+	}
+	if env.Error.Code != "maintenance" {
+		t.Fatalf("code: got %q", env.Error.Code)
 	}
 }
 

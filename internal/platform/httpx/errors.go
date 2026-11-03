@@ -67,9 +67,7 @@ type errorBody struct {
 	RequestID string       `json:"request_id"`
 }
 
-// WriteError is the single write path for every failure. It uses the
-// *APIError carried by the error chain (domain sentinels are *APIError), and
-// turns anything else into a generic 500 while logging the real cause.
+// WriteError is the single write path for every failure.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	status := http.StatusInternalServerError
 	code := "internal"
@@ -77,7 +75,12 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	details := []FieldError{}
 
 	var ae *APIError
-	if errors.As(err, &ae) && ae != nil {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		status = http.StatusServiceUnavailable
+		code = "request_timeout"
+		message = "request timed out"
+	case errors.As(err, &ae) && ae != nil:
 		status = ae.Status
 		code = ae.Code
 		message = ae.Message
@@ -86,15 +89,12 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		}
 	}
 
-	if status >= http.StatusInternalServerError {
-		if ae == nil || !ae.logged {
-			logging.FromContext(r.Context()).Error("request failed",
-				"error", err,
-				"method", r.Method,
-				"route", RoutePattern(r.Context()),
-			)
-		}
-		status, code, message, details = http.StatusInternalServerError, "internal", "internal error", []FieldError{}
+	if status >= http.StatusInternalServerError && (ae == nil || !ae.logged) {
+		logging.FromContext(r.Context()).Error("request failed",
+			"error", err,
+			"method", r.Method,
+			"route", RoutePattern(r.Context()),
+		)
 	}
 
 	_ = WriteJSON(w, status, errorEnvelope{Error: errorBody{
@@ -138,6 +138,10 @@ func Conflict(code, msg string) *APIError {
 
 func Unprocessable(code, msg string) *APIError {
 	return &APIError{Status: http.StatusUnprocessableEntity, Code: code, Message: msg}
+}
+
+func ServiceUnavailable(code, msg string) *APIError {
+	return &APIError{Status: http.StatusServiceUnavailable, Code: code, Message: msg}
 }
 
 func PreconditionFailed(code, msg string) *APIError {
