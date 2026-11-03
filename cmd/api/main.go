@@ -14,7 +14,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/middleware"
 	"github.com/HenriNorman/gregport/internal/platform/config"
 	"github.com/HenriNorman/gregport/internal/platform/database"
-	"github.com/HenriNorman/gregport/internal/platform/httpx"
+	"github.com/HenriNorman/gregport/internal/platform/health"
 	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/tickets"
 )
@@ -24,7 +24,7 @@ import (
 // @description	Multi-tenant support ticketing SaaS.
 // @description
 // @description	## Authentication
-// @description	All endpoints except `/v1/auth/*` and `/healthz` require `Authorization: Bearer <access_token>`.
+// @description	All endpoints except `/v1/auth/*`, `/healthz` and `/readyz` require `Authorization: Bearer <access_token>`.
 // @description	The access token is a JWT containing `sub` (user id), `org` (org id), and `role`.
 // @description	Missing, expired, or invalid tokens return 401.
 // @description
@@ -84,13 +84,8 @@ func main() {
 	r.Use(middleware.Recovery)
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
 
-	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		if err := pool.Ping(r.Context()); err != nil {
-			httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unhealthy"})
-			return
-		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
+	r.Get("/healthz", health.Live)
+	r.Get("/readyz", health.Ready(pool))
 
 	r.Route("/v1", func(r chi.Router) {
 		// public

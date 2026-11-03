@@ -24,7 +24,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
 | Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
-| Production basics | In progress — logging, error envelope and timeouts done; health checks, graceful shutdown, Docker and CI next |
+| Production basics | In progress — logging, error envelope, timeouts and health checks done; graceful shutdown, Docker and CI next |
 | SLA, notifications, webhooks | Schema defined, not exposed |
 
 ### Authentication
@@ -239,25 +239,33 @@ go run cmd/api/main.go
 
 The API listens on port `8080` by default. You can override this using `APP_PORT`.
 
-### Health Check
+### Health Checks
+
+Liveness and readiness are separate so a database outage does not restart the
+process.
 
 ```bash
 curl localhost:8080/healthz
+curl localhost:8080/readyz
 ```
 
-Expected responses:
+`/healthz` is a liveness probe. It returns `200` with `{"status":"ok"}` when
+the process can serve HTTP. It does not touch PostgreSQL.
+
+`/readyz` is a readiness probe. It pings PostgreSQL with a two-second deadline:
 
 ```json
 {"status":"ok"}
 ```
 
-Returned when the database is available.
+A `200` means the API can serve requests. If the ping fails, it returns `503`:
 
 ```json
-{"status":"unhealthy"}
+{"status":"unready"}
 ```
 
-Returned when the database is unavailable.
+The database error is logged at `WARN` with the request ID but never returned
+to the caller.
 
 ---
 
@@ -742,6 +750,15 @@ These tests do not require a database.
 - Panics still reach recovery and return the `500` envelope when the timeout
   middleware is installed.
 
+### Health Check Tests
+
+These tests do not require a database.
+
+- Liveness returns `200` and JSON without touching a database.
+- Readiness pings with a deadline and returns `200` when healthy.
+- A failed ping returns `503` with `{"status":"unready"}`, hides the database
+  error, and logs it at `WARN` with the request ID.
+
 ### Ticket State Machine Tests
 
 The ticket transition logic is implemented through `CanTransition(from, to)` and tested using a table-driven approach.
@@ -780,6 +797,6 @@ Future domain work: SLA policies, notifications, and webhooks — the three
 remaining schema-defined domains.
 
 Production basics is in progress. Structured JSON logging with request IDs,
-the unified error envelope and server/request timeouts are complete. Still to
-come: `/healthz` and `/readyz`, graceful shutdown, the multi-stage image and
-compose stack, and the CI pipeline.
+the unified error envelope, server/request timeouts and liveness/readiness
+checks are complete. Still to come: graceful shutdown, the multi-stage image
+and compose stack, and the CI pipeline.
