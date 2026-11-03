@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -157,10 +160,20 @@ func main() {
 	})
 
 	srv := newServer(cfg, r)
+	ln, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		logger.Error("listen failed", "addr", srv.Addr, "error", err)
+		os.Exit(1)
+	}
+	defer ln.Close()
+
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	logger.Info("listening", "port", cfg.AppPort)
-	if err := srv.ListenAndServe(); err != nil {
+	if err := runServer(signalCtx, srv, ln, cfg.ShutdownTimeout, logger); err != nil {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
+	logger.Info("server stopped")
 }

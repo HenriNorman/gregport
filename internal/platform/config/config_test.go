@@ -14,6 +14,7 @@ func TestLoadTimeoutDefaults(t *testing.T) {
 		"SERVER_WRITE_TIMEOUT",
 		"SERVER_IDLE_TIMEOUT",
 		"REQUEST_TIMEOUT",
+		"SHUTDOWN_TIMEOUT",
 	} {
 		t.Setenv(key, "")
 	}
@@ -34,6 +35,9 @@ func TestLoadTimeoutDefaults(t *testing.T) {
 	}
 	if cfg.RequestTimeout != 10*time.Second {
 		t.Errorf("request timeout: %s", cfg.RequestTimeout)
+	}
+	if cfg.ShutdownTimeout != 15*time.Second {
+		t.Errorf("shutdown timeout: %s", cfg.ShutdownTimeout)
 	}
 }
 
@@ -70,6 +74,7 @@ func TestLoadTimeoutOverrides(t *testing.T) {
 	t.Setenv("SERVER_WRITE_TIMEOUT", "3s")
 	t.Setenv("SERVER_IDLE_TIMEOUT", "4s")
 	t.Setenv("REQUEST_TIMEOUT", "500ms")
+	t.Setenv("SHUTDOWN_TIMEOUT", "5s")
 
 	cfg := Load()
 
@@ -87,5 +92,8 @@ func TestLoadTimeoutOverrides(t *testing.T) {
 	}
 	if cfg.RequestTimeout != 500*time.Millisecond {
 		t.Errorf("request timeout: %s", cfg.RequestTimeout)
+	}
+	if cfg.ShutdownTimeout != 5*time.Second {
+		t.Errorf("shutdown timeout: %s", cfg.ShutdownTimeout)
 	}
 }

@@ -23,6 +23,7 @@ type Config struct {
 	ServerWriteTimeout      time.Duration
 	ServerIdleTimeout       time.Duration
 	RequestTimeout          time.Duration
+	ShutdownTimeout         time.Duration
 }
 
 func Load() Config {
@@ -43,6 +44,7 @@ func Load() Config {
 		ServerWriteTimeout:      getEnvDuration("SERVER_WRITE_TIMEOUT", 30*time.Second),
 		ServerIdleTimeout:       getEnvDuration("SERVER_IDLE_TIMEOUT", 60*time.Second),
 		RequestTimeout:          getEnvDuration("REQUEST_TIMEOUT", 10*time.Second),
+		ShutdownTimeout:         getEnvDuration("SHUTDOWN_TIMEOUT", 15*time.Second),
 	}
 
 	if len(cfg.JWTSecret) < 32 {

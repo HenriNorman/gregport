@@ -24,7 +24,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
 | Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
-| Production basics | In progress — logging, error envelope, timeouts and health checks done; graceful shutdown, Docker and CI next |
+| Production basics | In progress — logging, error envelope, timeouts, health checks and graceful shutdown done; Docker and CI next |
 | SLA, notifications, webhooks | Schema defined, not exposed |
 
 ### Authentication
@@ -290,6 +290,7 @@ The application reads its configuration from environment variables.
 | `SERVER_WRITE_TIMEOUT` | No | `30s` | Go duration |
 | `SERVER_IDLE_TIMEOUT` | No | `60s` | Go duration |
 | `REQUEST_TIMEOUT` | No | `10s` | Go duration; keep below `SERVER_WRITE_TIMEOUT` |
+| `SHUTDOWN_TIMEOUT` | No | `15s` | Go duration; keep above `REQUEST_TIMEOUT` |
 
 Generate a secure JWT secret using:
 
@@ -561,6 +562,21 @@ timeout remains the hard stop for a handler that ignores context cancellation.
 
 ---
 
+## Graceful Shutdown
+
+On `SIGTERM` or `SIGINT` the server:
+
+1. stops accepting new connections;
+2. waits up to `SHUTDOWN_TIMEOUT` (default `15s`) for in-flight requests;
+3. closes the database pool;
+4. exits with status `0`.
+
+If the deadline expires, remaining connections are closed and the process
+exits non-zero. Keep `SHUTDOWN_TIMEOUT` above `REQUEST_TIMEOUT` so active
+requests get a chance to finish cancelling cleanly.
+
+---
+
 ## Testing
 
 The project includes integration tests, authentication unit tests, logging and middleware tests, and security-focused token tests.
@@ -767,6 +783,16 @@ These tests do not require a database.
 - A real `pgxpool.Pool` returns `200` while healthy and `503` after it is
   closed; the test skips when PostgreSQL is not reachable.
 
+### Graceful Shutdown Tests
+
+- Cancelling the server context stops the listener from accepting new
+  connections while an in-flight request is still running.
+- The in-flight request finishes with its original response before
+  `runServer` returns.
+- A handler that overruns `SHUTDOWN_TIMEOUT` causes a shutdown error and the
+  remaining connections are closed.
+- Serve errors are propagated instead of being mistaken for a clean shutdown.
+
 ### Ticket State Machine Tests
 
 The ticket transition logic is implemented through `CanTransition(from, to)` and tested using a table-driven approach.
@@ -805,6 +831,6 @@ Future domain work: SLA policies, notifications, and webhooks — the three
 remaining schema-defined domains.
 
 Production basics is in progress. Structured JSON logging with request IDs,
-the unified error envelope, server/request timeouts and liveness/readiness
-checks are complete. Still to come: graceful shutdown, the multi-stage image
-and compose stack, and the CI pipeline.
+the unified error envelope, server/request timeouts, liveness/readiness
+checks and graceful shutdown are complete. Still to come: config hardening,
+the multi-stage image and compose stack, and the CI pipeline.
