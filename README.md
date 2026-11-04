@@ -182,6 +182,7 @@ The service layer depends on repository interfaces rather than concrete implemen
 - `httpx/` — `DecodeJSON`, `WriteJSON`, `WriteError`, and `APIError`.
 - `logging/` — JSON `slog` construction, log-level parsing, and the request-scoped logger in the context.
 - `metrics/` — process-local counters for cache, rate-limit, and idempotency outcomes.
+- `ratelimit/` — atomic Redis sliding-window limiter and the in-memory login fallback.
 - `requestctx/` — authenticated principal stored in request context.
 
 </details>
@@ -473,6 +474,27 @@ Behaviour is chosen per path, not globally:
 A readiness failure is intentional even though fail-open requests may still
 succeed. Deployment tooling should treat it as a signal, not as proof that the
 process cannot serve traffic.
+
+---
+
+## Rate Limiting
+
+The limiter is a Redis sorted-set sliding window evaluated by one Lua script.
+Removing expired entries, counting the window, and recording the current
+request happen atomically on the Redis server, so concurrent requests cannot
+both slip past the boundary. Redis `TIME` is used instead of the application
+clock.
+
+| Scope | Default | Window | Key |
+|:--|:--|:--|:--|
+| Authenticated user | 100 | 1 minute | `org:{orgID}:ratelimit:user:{userID}` |
+| API key | 100 | 1 minute | `org:{orgID}:ratelimit:apikey:{keyID}` |
+| Public IP | 30 | 1 minute | `ratelimit:ip:{ip}` |
+| Login | 5 | 15 minutes | `ratelimit:login:{ip}:{emailHash}` |
+
+The login bucket uses a SHA-256 hash of the normalised email, never the raw
+address. When Redis is unavailable, login falls back to the in-memory
+fixed-window limiter; the general API fails open.
 
 ---
 

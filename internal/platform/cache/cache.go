@@ -134,6 +134,12 @@ func (r *Redis) Ping(ctx context.Context) error {
 	return nil
 }
 
+// Client exposes the underlying client so other infrastructure packages can
+// reuse the same pool. Callers must not close it independently.
+func (r *Redis) Client() *redis.Client {
+	return r.client
+}
+
 // Close releases the Redis client.
 func (r *Redis) Close() error {
 	return r.client.Close()
