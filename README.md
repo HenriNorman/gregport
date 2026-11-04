@@ -176,6 +176,7 @@ The service layer depends on repository interfaces rather than concrete implemen
 <details>
 <summary><code>internal/platform/</code> — shared infrastructure</summary>
 
+- `cache/` — Redis-backed `Cache` interface, tenant-scoped key builders, and an in-memory test double.
 - `config/` — configuration loading from environment variables.
 - `database/` — pgx connection pool and transaction management.
 - `httpx/` — `DecodeJSON`, `WriteJSON`, `WriteError`, and `APIError`.
@@ -195,6 +196,7 @@ The service layer depends on repository interfaces rather than concrete implemen
 <summary><code>internal/platform/</code> — shared infrastructure</summary>
 
 - `audit/` — `Record(ctx, tx, orgID, principal, action, entityType, entityID, data)` for the append-only audit log.
+- `cache/` — Redis-backed `Cache` interface, tenant-scoped key builders, and an in-memory test double.
 - `config/` — configuration loading from environment variables.
 - `database/` — pgx connection pool and transaction management.
 - `httpx/` — `DecodeJSON`, `WriteJSON`, `WriteError`, and `APIError`.
@@ -428,6 +430,31 @@ openssl rand -base64 32
 `JWT_SECRET` has no default. The application terminates at startup if it is missing or invalid.
 
 Never commit the secret, log it, or reuse it across projects.
+
+---
+
+## Caching
+
+`internal/platform/cache` exposes a small `Get`/`Set`/`Delete` interface and a
+single Redis implementation. Services depend on the interface, so tests use
+the in-memory `Memory` implementation without a Redis process.
+
+Every cache key for tenant data uses one scheme and always contains the org id:
+
+```text
+org:{orgID}:settings
+org:{orgID}:sla_policies
+org:{orgID}:sla_policy:{policyID}
+org:{orgID}:dashboard:counts
+org:{orgID}:apikey:{apiKeyID}:last_used
+```
+
+Authenticated rate-limit buckets also include the org id. The only keys without
+a tenant are the pre-authentication public-IP and login buckets, because no
+tenant is known yet.
+
+The key builders return an error when the org id is missing. A test enumerates
+every builder and fails if the org id is absent or two keys collide.
 
 ---
 
