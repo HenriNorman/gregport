@@ -181,6 +181,7 @@ The service layer depends on repository interfaces rather than concrete implemen
 - `database/` — pgx connection pool and transaction management.
 - `httpx/` — `DecodeJSON`, `WriteJSON`, `WriteError`, and `APIError`.
 - `logging/` — JSON `slog` construction, log-level parsing, and the request-scoped logger in the context.
+- `metrics/` — process-local counters for cache, rate-limit, and idempotency outcomes.
 - `requestctx/` — authenticated principal stored in request context.
 
 </details>
@@ -455,6 +456,23 @@ tenant is known yet.
 
 The key builders return an error when the org id is missing. A test enumerates
 every builder and fails if the org id is absent or two keys collide.
+
+### Redis Failure Policy
+
+Redis is an optimization and a protection layer, not the source of truth.
+Behaviour is chosen per path, not globally:
+
+| Path | Redis unavailable | Reason |
+|:--|:--|:--|
+| General API rate limits | Fail open, log, and count | A cache outage must not become an API outage. |
+| Login rate limit | Fall back to a stricter in-memory limiter | Credential stuffing should not be made easier by an outage. |
+| Read-through cache | Bypass Redis and read PostgreSQL | Correctness wins; the request still completes. |
+| Idempotency | Unaffected | Records live in PostgreSQL. |
+| `/readyz` | Report `503` | Readiness exposes the degraded dependency. |
+
+A readiness failure is intentional even though fail-open requests may still
+succeed. Deployment tooling should treat it as a signal, not as proof that the
+process cannot serve traffic.
 
 ---
 
