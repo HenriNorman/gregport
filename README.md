@@ -26,6 +26,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | SLA policies | Complete — CRUD per org, one policy per priority, reference-safe deletion |
 | Dashboard | Complete — org-scoped ticket counts by status and priority |
 | Caching | Complete — Redis cache for org settings, SLA policies, and dashboard counts with write invalidation |
+| Idempotency store | Complete — tenant-scoped PostgreSQL key store with pending, replay, conflict, and expiry states |
 | API keys | Complete — create, list, revoke; `gp_live_` keys authenticate as agent-level principals |
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
@@ -216,6 +217,14 @@ The service layer depends on repository interfaces rather than concrete implemen
 - `cached_store.go` — read-through counts cache and ticket-write invalidator.
 - `service.go` — service boundary for the cached implementation.
 - `handler.go` — `GET /v1/dashboard/counts`.
+
+</details>
+
+<details>
+<summary><code>internal/idempotency/</code> — idempotency records</summary>
+
+- `models.go` — acquire outcomes, stored record, TTL and key limits, and errors.
+- `repository.go` — atomic acquire/complete/release/purge against `idempotency_keys`.
 
 </details>
 
@@ -644,6 +653,36 @@ restores it. The public IP limiter covers signup, refresh, logout, and
 invitation acceptance. `X-Forwarded-For` is ignored unless
 `TRUST_PROXY_HEADERS=true` and the immediate peer matches
 `TRUSTED_PROXY_CIDRS`.
+
+---
+
+## Idempotency
+
+Idempotency records live in PostgreSQL, not Redis, so a cache outage cannot
+replay or duplicate a write. `internal/idempotency` exposes the persistence
+layer; request wiring is added on top.
+
+Records are keyed by `(org_id, key)` and store a SHA-256 hash of the request
+that first claimed the key:
+
+| Stored state | `Acquire` outcome | Meaning |
+|:--|:--|:--|
+| No row, or row expired | `acquired` | This caller owns the key; the response is not stored yet |
+| Same hash, response pending | `pending` | Another request with the same key is still in flight |
+| Same hash, response stored | `replay` | Return the captured status and body unchanged |
+| Different hash | `conflict` | The key was already used for a different request |
+
+- `Acquire` replaces an expired row in one atomic upsert, so a client can reuse
+  a key after `IDEMPOTENCY_TTL` without a cleanup race.
+- `Complete` stores the status and JSON body, but only while the record is
+  pending, unexpired, and owned by the same request hash.
+- `Release` deletes a pending record after a failed request so a retry can use
+  the same key. Releasing an absent or completed record is a no-op.
+- `PurgeExpired` removes rows at or before a supplied time; the TTL default is
+  `24h`.
+- A key is capped at 255 bytes and a request hash at 128 bytes. Keys are
+  trimmed and scoped to the caller's org, so two tenants can use the same
+  client key independently.
 
 ---
 
@@ -1261,6 +1300,10 @@ unified error envelope, server/request timeouts, liveness/readiness checks,
 graceful shutdown, fail-fast configuration validation, the multi-stage
 container image, the Compose stack, CI and the twelve-factor alignment table
 are all in place. The remaining gaps are documented with that table.
+
+Idempotency key persistence is now in place in PostgreSQL; request middleware,
+Redis-backed API-key `last_used_at` throttling, notifications, and webhooks
+remain.
 
 Next: SLA policies, notifications and webhooks, plus production deployment,
 standalone migration tooling and a real background worker.
