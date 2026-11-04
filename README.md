@@ -177,6 +177,7 @@ The service layer depends on repository interfaces rather than concrete implemen
 <summary><code>internal/platform/</code> — shared infrastructure</summary>
 
 - `cache/` — Redis-backed `Cache` interface, tenant-scoped key builders, and an in-memory test double.
+- `clientip/` — client-IP resolution with opt-in trusted-proxy handling.
 - `config/` — configuration loading from environment variables.
 - `database/` — pgx connection pool and transaction management.
 - `httpx/` — `DecodeJSON`, `WriteJSON`, `WriteError`, and `APIError`.
@@ -199,6 +200,7 @@ The service layer depends on repository interfaces rather than concrete implemen
 
 - `audit/` — `Record(ctx, tx, orgID, principal, action, entityType, entityID, data)` for the append-only audit log.
 - `cache/` — Redis-backed `Cache` interface, tenant-scoped key builders, and an in-memory test double.
+- `clientip/` — client-IP resolution with opt-in trusted-proxy handling.
 - `config/` — configuration loading from environment variables.
 - `database/` — pgx connection pool and transaction management.
 - `httpx/` — `DecodeJSON`, `WriteJSON`, `WriteError`, and `APIError`.
@@ -494,7 +496,26 @@ clock.
 
 The login bucket uses a SHA-256 hash of the normalised email, never the raw
 address. When Redis is unavailable, login falls back to the in-memory
-fixed-window limiter; the general API fails open.
+fixed-window limiter with half the configured limit; the general API fails
+open. Fallback responses carry `X-RateLimit-Degraded: 1`.
+
+Every limited response carries:
+
+| Header | Meaning |
+|:--|:--|
+| `X-RateLimit-Limit` | Requests allowed in the current window |
+| `X-RateLimit-Remaining` | Requests left after this one |
+| `X-RateLimit-Reset` | Window reset time as a Unix timestamp |
+| `Retry-After` | Seconds to wait; present on `429` only |
+
+A rejected request returns the standard error envelope with code
+`rate_limited` and status `429`.
+
+The login limiter runs before the handler, buffers the request body, and
+restores it. The public IP limiter covers signup, refresh, logout, and
+invitation acceptance. `X-Forwarded-For` is ignored unless
+`TRUST_PROXY_HEADERS=true` and the immediate peer matches
+`TRUSTED_PROXY_CIDRS`.
 
 ---
 

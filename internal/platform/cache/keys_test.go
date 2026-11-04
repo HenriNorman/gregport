@@ -86,4 +86,7 @@ func TestPreAuthenticationKeys(t *testing.T) {
 	if got := LoginRateLimitKey("203.0.113.7", "hash"); got != "ratelimit:login:203.0.113.7:hash" {
 		t.Fatalf("login key: %q", got)
 	}
+	if got := LoginIPRateLimitKey("203.0.113.7"); got != "ratelimit:login:203.0.113.7" {
+		t.Fatalf("login ip key: %q", got)
+	}
 }

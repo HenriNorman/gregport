@@ -14,10 +14,14 @@ import (
 
 	"github.com/HenriNorman/gregport/internal/auth"
 	"github.com/HenriNorman/gregport/internal/middleware"
+	"github.com/HenriNorman/gregport/internal/platform/cache"
+	"github.com/HenriNorman/gregport/internal/platform/clientip"
 	"github.com/HenriNorman/gregport/internal/platform/config"
 	"github.com/HenriNorman/gregport/internal/platform/database"
 	"github.com/HenriNorman/gregport/internal/platform/health"
 	"github.com/HenriNorman/gregport/internal/platform/logging"
+	"github.com/HenriNorman/gregport/internal/platform/metrics"
+	"github.com/HenriNorman/gregport/internal/platform/ratelimit"
 	"github.com/HenriNorman/gregport/internal/tickets"
 )
 
@@ -71,6 +75,49 @@ func main() {
 	defer pool.Close()
 	logger.Info("connected to postgres")
 
+	counters := metrics.New()
+	defer counters.Log(logger)
+
+	redisCache := cache.NewRedis(cache.RedisOptions{
+		Addr:         cfg.RedisAddr,
+		Password:     cfg.RedisPassword,
+		DB:           cfg.RedisDB,
+		DialTimeout:  cfg.RedisDialTimeout,
+		ReadTimeout:  cfg.RedisReadTimeout,
+		WriteTimeout: cfg.RedisWriteTimeout,
+		Timeout:      cfg.CacheTimeout,
+	})
+	observedCache := cache.NewObserved(redisCache, counters, logger)
+	defer observedCache.Close()
+
+	limiter := ratelimit.NewRedis(redisCache.Client())
+	proxyConfig := clientip.Config{
+		TrustProxyHeaders: cfg.TrustProxyHeaders,
+		TrustedProxies:    cfg.TrustedProxyCIDRs,
+	}
+	publicLimit := middleware.RateLimitConfig{
+		Limiter:  limiter,
+		Limit:    cfg.PublicRateLimitRequests,
+		Window:   cfg.PublicRateLimitWindow,
+		Counters: counters,
+		Proxy:    proxyConfig,
+	}
+	authLimit := middleware.RateLimitConfig{
+		Limiter:  limiter,
+		Limit:    cfg.RateLimitRequests,
+		Window:   cfg.RateLimitWindow,
+		Counters: counters,
+		Proxy:    proxyConfig,
+	}
+	loginLimit := middleware.LoginRateLimitConfig{
+		Limiter:  limiter,
+		Fallback: ratelimit.NewMemory(),
+		Limit:    cfg.LoginRateLimitRequests,
+		Window:   cfg.LoginRateLimitWindow,
+		Counters: counters,
+		Proxy:    proxyConfig,
+	}
+
 	// auth wiring
 	tm := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	authRepo := auth.NewRepository(pool)
@@ -93,16 +140,21 @@ func main() {
 	r.Get("/readyz", health.Ready(pool))
 
 	r.Route("/v1", func(r chi.Router) {
-		// public
-		r.Post("/auth/signup", authHandler.Signup)
-		r.Post("/auth/login", authHandler.Login)
-		r.Post("/auth/refresh", authHandler.Refresh)
-		r.Post("/auth/logout", authHandler.Logout)
-		r.Post("/invitations/accept", ticketsHandler.AcceptInvitation)
+		// public, with a stricter login limiter
+		r.With(middleware.LoginRateLimit(loginLimit)).Post("/auth/login", authHandler.Login)
+
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.PublicRateLimit(publicLimit))
+			r.Post("/auth/signup", authHandler.Signup)
+			r.Post("/auth/refresh", authHandler.Refresh)
+			r.Post("/auth/logout", authHandler.Logout)
+			r.Post("/invitations/accept", ticketsHandler.AcceptInvitation)
+		})
 
 		// protected
 		r.Group(func(r chi.Router) {
 			r.Use(auth.Authenticate(tm, ticketsSvc.AuthenticateAPIKey))
+			r.Use(middleware.RateLimit(authLimit))
 
 			r.Get("/me", authHandler.Me)
 

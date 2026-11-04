@@ -82,6 +82,12 @@ func LoginRateLimitKey(ip, emailHash string) string {
 	return "ratelimit:login:" + ip + ":" + emailHash
 }
 
+// LoginIPRateLimitKey is the fallback login bucket when the body has no
+// usable email, so malformed requests cannot bypass the limiter.
+func LoginIPRateLimitKey(ip string) string {
+	return "ratelimit:login:" + ip
+}
+
 // APIKeyLastUsedKey throttles api_keys.last_used_at writes.
 func APIKeyLastUsedKey(orgID, apiKeyID uuid.UUID) (string, error) {
 	if apiKeyID == uuid.Nil {
