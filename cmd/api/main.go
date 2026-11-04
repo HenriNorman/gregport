@@ -23,6 +23,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/platform/metrics"
 	"github.com/HenriNorman/gregport/internal/platform/ratelimit"
+	"github.com/HenriNorman/gregport/internal/sla"
 	"github.com/HenriNorman/gregport/internal/tickets"
 )
 
@@ -135,6 +136,11 @@ func main() {
 	organizationsSvc := organizations.NewService(organizationsRepo)
 	organizationsHandler := organizations.NewHandler(organizationsSvc)
 
+	// SLA policy wiring
+	slaRepo := sla.NewRepository(pool)
+	slaSvc := sla.NewService(slaRepo)
+	slaHandler := sla.NewHandler(slaSvc)
+
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.WithLogger(logger))
@@ -168,6 +174,14 @@ func main() {
 				r.Get("/settings", organizationsHandler.GetSettings)
 				r.With(auth.RequireRole("owner", "admin")).
 					Patch("/settings", organizationsHandler.UpdateSettings)
+			})
+
+			r.Route("/sla-policies", func(r chi.Router) {
+				r.Get("/", slaHandler.ListPolicies)
+				r.With(auth.RequireRole("owner", "admin")).Post("/", slaHandler.CreatePolicy)
+				r.Get("/{id}", slaHandler.GetPolicy)
+				r.With(auth.RequireRole("owner", "admin")).Patch("/{id}", slaHandler.UpdatePolicy)
+				r.With(auth.RequireRole("owner", "admin")).Delete("/{id}", slaHandler.DeletePolicy)
 			})
 
 			r.Route("/tickets", func(r chi.Router) {

@@ -184,6 +184,79 @@ definitions:
         example: Europe/Nairobi
         type: string
     type: object
+  sla.CreatePolicyRequest:
+    properties:
+      first_response_minutes:
+        example: 15
+        type: integer
+      name:
+        example: Urgent default
+        type: string
+      priority:
+        enum:
+        - low
+        - normal
+        - high
+        - urgent
+        example: urgent
+        type: string
+      resolution_minutes:
+        example: 120
+        type: integer
+    type: object
+  sla.PolicyDTO:
+    properties:
+      created_at:
+        example: "2026-01-15T10:00:00Z"
+        type: string
+      first_response_minutes:
+        example: 15
+        type: integer
+      id:
+        example: 3f2504e0-4f89-11d3-9a0c-0305e82c3301
+        type: string
+      name:
+        example: Urgent default
+        type: string
+      priority:
+        enum:
+        - low
+        - normal
+        - high
+        - urgent
+        example: urgent
+        type: string
+      resolution_minutes:
+        example: 120
+        type: integer
+    type: object
+  sla.PolicyListResponse:
+    properties:
+      policies:
+        items:
+          $ref: '#/definitions/sla.PolicyDTO'
+        type: array
+    type: object
+  sla.UpdatePolicyRequest:
+    properties:
+      first_response_minutes:
+        example: 15
+        type: integer
+      name:
+        example: Urgent default
+        type: string
+      priority:
+        enum:
+        - low
+        - normal
+        - high
+        - urgent
+        example: urgent
+        type: string
+      resolution_minutes:
+        example: 120
+        type: integer
+    type: object
   tickets.APIKeyDTO:
     properties:
       created_at:
@@ -1415,6 +1488,198 @@ paths:
       summary: Update organization settings
       tags:
       - organizations
+  /v1/sla-policies:
+    get:
+      description: Any authenticated member may list policies. Results are scoped
+        to the caller's organization and returned in creation order.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sla.PolicyListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: List SLA policies
+      tags:
+      - sla
+    post:
+      consumes:
+      - application/json
+      description: Requires role `owner` or `admin`. An org may have at most one policy
+        per priority. Resolution time must be greater than or equal to the first-response
+        time.
+      parameters:
+      - description: Policy payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/sla.CreatePolicyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/sla.PolicyDTO'
+        "400":
+          description: Malformed JSON or unknown field
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "409":
+          description: A policy for this priority already exists
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Create an SLA policy
+      tags:
+      - sla
+  /v1/sla-policies/{id}:
+    delete:
+      description: Requires role `owner` or `admin`. A policy still attached to a
+        ticket returns 409 instead of being deleted.
+      parameters:
+      - description: Policy UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "409":
+          description: Policy is referenced by a ticket
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Delete an SLA policy
+      tags:
+      - sla
+    get:
+      description: Any authenticated member may read a policy. A policy belonging
+        to another org returns 404.
+      parameters:
+      - description: Policy UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sla.PolicyDTO'
+        "400":
+          description: id is not a UUID
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Get an SLA policy
+      tags:
+      - sla
+    patch:
+      consumes:
+      - application/json
+      description: Requires role `owner` or `admin`. Omitted fields keep their current
+        value. Changing the priority to one already used by another policy returns
+        409.
+      parameters:
+      - description: Policy UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/sla.UpdatePolicyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/sla.PolicyDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "409":
+          description: Priority already used by another policy
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Update an SLA policy
+      tags:
+      - sla
   /v1/tags:
     get:
       description: Any member of the org may list tags.

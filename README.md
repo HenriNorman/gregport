@@ -23,12 +23,13 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Invitations | Complete — create (admin/owner, grant table), list pending, revoke, accept (new and existing user) |
 | Members | Complete — list (any member), role change and removal (admin/owner), last-owner protection |
 | Organization settings | Complete — read (any member) and partial update (admin/owner), timezone/priority/support-email validation |
+| SLA policies | Complete — CRUD per org, one policy per priority, reference-safe deletion |
 | API keys | Complete — create, list, revoke; `gp_live_` keys authenticate as agent-level principals |
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
 | Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
 | Production basics | Complete — logging, error envelope, timeouts, health checks, graceful shutdown, config validation, multi-stage image, compose stack, CI and twelve-factor summary |
-| SLA, notifications, webhooks | Schema defined, not exposed |
+| SLA, notifications, webhooks | SLA policies exposed; notifications and webhooks schema defined, not exposed |
 
 ### Authentication
 
@@ -86,6 +87,28 @@ typed document:
   string to clear it.
 - Settings reads and writes are always scoped to the caller's org; another
   tenant's settings are never reachable.
+
+### SLA Policies
+
+The SLA policy endpoints expose the `sla_policies` table:
+
+| Method | Path | Access |
+|:--|:--|:--|
+| `GET` | `/v1/sla-policies` | any member |
+| `GET` | `/v1/sla-policies/{id}` | any member |
+| `POST` | `/v1/sla-policies` | owner or admin |
+| `PATCH` | `/v1/sla-policies/{id}` | owner or admin |
+| `DELETE` | `/v1/sla-policies/{id}` | owner or admin |
+
+- An org may have at most one policy per priority; a duplicate returns `409`
+  with code `sla_policy_exists`.
+- Names are trimmed and limited to 100 characters.
+- First-response and resolution minutes must be positive, at most one year,
+  and resolution cannot be shorter than first response.
+- Deletion is blocked with `409 sla_policy_in_use` while a ticket still
+  references the policy, so due-date history is never orphaned.
+- Every read and write is scoped to the caller's org; another tenant's policy
+  returns `404`.
 
 ---
 
@@ -169,6 +192,16 @@ The service layer depends on repository interfaces rather than concrete implemen
 - `repository.go` — JSONB read/write against `organizations.settings`.
 - `service.go` — defaults, merging, normalisation, and validation.
 - `handler.go` — `GET` and `PATCH /v1/organization/settings`.
+
+</details>
+
+<details>
+<summary><code>internal/sla/</code> — SLA policies</summary>
+
+- `models.go` — policy entity, request/response DTOs, and errors.
+- `repository.go` — org-scoped CRUD and unique/FK error mapping.
+- `service.go` — normalisation and validation rules.
+- `handler.go` — `/v1/sla-policies` endpoints.
 
 </details>
 
