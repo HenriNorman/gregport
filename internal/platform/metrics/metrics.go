@@ -18,6 +18,7 @@ type Counters struct {
 	idemReplays   atomic.Int64
 	idemConflicts atomic.Int64
 	idemPending   atomic.Int64
+	idemErrors    atomic.Int64
 }
 
 // Snapshot is a point-in-time copy of all counters.
@@ -30,6 +31,7 @@ type Snapshot struct {
 	IdempotencyReplays   int64 `json:"idempotency_replays"`
 	IdempotencyConflicts int64 `json:"idempotency_conflicts"`
 	IdempotencyPending   int64 `json:"idempotency_pending"`
+	IdempotencyErrors    int64 `json:"idempotency_errors"`
 }
 
 // New returns a zeroed counter set.
@@ -42,11 +44,12 @@ func (c *Counters) CacheMiss()         { c.cacheMisses.Add(1) }
 func (c *Counters) CacheError()        { c.cacheErrors.Add(1) }
 func (c *Counters) RateLimitRejected() { c.rateLimited.Add(1) }
 func (c *Counters) RateLimitError()    { c.rateLimitErrs.Add(1) }
-func (c *Counters) IdempotencyReplay() { c.idemReplays.Add(1) }
+func (c *Counters) IdempotencyReplay()   { c.idemReplays.Add(1) }
 func (c *Counters) IdempotencyConflict() {
 	c.idemConflicts.Add(1)
 }
 func (c *Counters) IdempotencyPending() { c.idemPending.Add(1) }
+func (c *Counters) IdempotencyError()   { c.idemErrors.Add(1) }
 
 // Snapshot returns the current values.
 func (c *Counters) Snapshot() Snapshot {
@@ -59,6 +62,7 @@ func (c *Counters) Snapshot() Snapshot {
 		IdempotencyReplays:   c.idemReplays.Load(),
 		IdempotencyConflicts: c.idemConflicts.Load(),
 		IdempotencyPending:   c.idemPending.Load(),
+		IdempotencyErrors:    c.idemErrors.Load(),
 	}
 }
 
@@ -77,5 +81,6 @@ func (c *Counters) Log(logger *slog.Logger) {
 		"idempotency_replays", s.IdempotencyReplays,
 		"idempotency_conflicts", s.IdempotencyConflicts,
 		"idempotency_pending", s.IdempotencyPending,
+		"idempotency_errors", s.IdempotencyErrors,
 	)
 }

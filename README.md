@@ -26,7 +26,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | SLA policies | Complete — CRUD per org, one policy per priority, reference-safe deletion |
 | Dashboard | Complete — org-scoped ticket counts by status and priority |
 | Caching | Complete — Redis cache for org settings, SLA policies, and dashboard counts with write invalidation |
-| Idempotency store | Complete — tenant-scoped PostgreSQL key store with pending, replay, conflict, and expiry states |
+| Idempotency | Complete — tenant-scoped PostgreSQL key store and HTTP middleware (pending, replay, conflict, expiry) |
 | API keys | Complete — create, list, revoke; `gp_live_` keys authenticate as agent-level principals |
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
@@ -278,8 +278,11 @@ The service layer depends on repository interfaces rather than concrete implemen
 <details>
 <summary><code>internal/middleware/</code> — HTTP middleware</summary>
 
+- `idempotency.go` — `Idempotency-Key` middleware backed by the PostgreSQL idempotency store.
+- `ratelimit.go` — per-user and per-IP rate limiting with 429 headers.
 - `requestid.go`
 - `recovery.go`
+- `timeout.go`
 
 </details>
 
@@ -683,6 +686,27 @@ that first claimed the key:
 - A key is capped at 255 bytes and a request hash at 128 bytes. Keys are
   trimmed and scoped to the caller's org, so two tenants can use the same
   client key independently.
+
+### HTTP Middleware
+
+`internal/middleware.Idempotency` enforces idempotency at the HTTP layer on
+routes that opt in (wired to POST endpoints in the next step):
+
+- The client sends `Idempotency-Key: <key>`. Requests without the header pass
+  through unchanged.
+- The key is scoped to the caller's organization, resolved from the
+  authenticated principal. Unauthenticated requests receive `401`.
+- The request hash is SHA-256 of the method, path, and body, so reusing a key
+  with a different body returns `409 idempotency_conflict`.
+- `acquired` → the handler runs and its status/body are stored via `Complete`.
+- `replay` → the captured status and body are returned without calling the
+  handler again.
+- `pending` → `409 idempotency_pending`; another request with the same key is
+  still in flight.
+- `conflict` → `409 idempotency_conflict`.
+- A panic releases the key so the client can retry, then re-panics for the
+  recovery middleware.
+- Store failures return `500` and never run the handler.
 
 ---
 
@@ -1301,9 +1325,9 @@ graceful shutdown, fail-fast configuration validation, the multi-stage
 container image, the Compose stack, CI and the twelve-factor alignment table
 are all in place. The remaining gaps are documented with that table.
 
-Idempotency key persistence is now in place in PostgreSQL; request middleware,
-Redis-backed API-key `last_used_at` throttling, notifications, and webhooks
-remain.
+Idempotency key persistence and HTTP middleware are now in place; wiring them
+onto POST endpoints remains.
 
-Next: SLA policies, notifications and webhooks, plus production deployment,
-standalone migration tooling and a real background worker.
+Next: wire idempotency to POST endpoints, Redis-backed API-key `last_used_at`
+throttling, notifications, webhooks, plus production deployment, standalone
+migration tooling and a real background worker.
