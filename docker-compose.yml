@@ -22,6 +22,18 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -37,10 +49,15 @@ services:
       DB_NAME: ${DB_NAME:-gregport}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
       APP_PORT: ${APP_PORT:-8080}
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
     ports:
       - "${APP_PORT:-8080}:${APP_PORT:-8080}"
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:$${APP_PORT:-8080}/healthz"]

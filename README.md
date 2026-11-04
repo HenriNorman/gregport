@@ -115,7 +115,7 @@ The service layer depends on repository interfaces rather than concrete implemen
 <summary><code>Dockerfile</code> and <code>docker-compose.yml</code> — container build and local stack</summary>
 
 - `Dockerfile` — multi-stage build producing a non-root Alpine runtime image.
-- `docker-compose.yml` — PostgreSQL and API, with health checks and migrations.
+- `docker-compose.yml` — PostgreSQL, Redis, and API, with health checks and migrations.
 - `.dockerignore` — keeps VCS metadata, secrets and docs out of the build context.
 
 </details>
@@ -335,16 +335,19 @@ container; `localhost` refers to the container itself.
 
 ### Docker Compose Stack
 
-`docker compose up --build -d --wait` starts two services on the `gregport`
+`docker compose up --build -d --wait` starts three services on the `gregport`
 network:
 
 | Service | Purpose |
 |:--|:--|
 | `db` | `postgres:16-alpine` with a named `pgdata` volume and a `pg_isready` health check. |
-| `api` | Built from the local `Dockerfile`; waits for `db` to be healthy and reads its environment from `.env`. |
+| `redis` | `redis:7-alpine` with a `redis-cli ping` health check. Cache and limiter state are intentionally not persisted. |
+| `api` | Built from the local `Dockerfile`; waits for `db` and `redis` to be healthy and reads its environment from `.env`. |
 
 - PostgreSQL publishes `${DB_PORT:-5432}` on the host; the API connects
   internally on `db:5432`, regardless of the host port.
+- Redis publishes `${REDIS_PORT:-6379}` on the host; the API connects
+  internally on `redis:6379`.
 - The `*.up.sql` migrations are mounted read-only into
   `/docker-entrypoint-initdb.d` and run once when the volume is first created.
   Use `docker compose down -v` to reset the database.
@@ -378,6 +381,25 @@ The application reads its configuration from environment variables.
 | `SERVER_IDLE_TIMEOUT` | No | `60s` | Go duration |
 | `REQUEST_TIMEOUT` | No | `10s` | Go duration; keep below `SERVER_WRITE_TIMEOUT` |
 | `SHUTDOWN_TIMEOUT` | No | `15s` | Go duration; keep above `REQUEST_TIMEOUT` |
+| `REDIS_ADDR` | No | `localhost:6379` | Redis host and port |
+| `REDIS_PASSWORD` | No | — | Redis password |
+| `REDIS_DB` | No | `0` | Redis logical database |
+| `REDIS_DIAL_TIMEOUT` | No | `1s` | Go duration |
+| `REDIS_READ_TIMEOUT` | No | `500ms` | Go duration |
+| `REDIS_WRITE_TIMEOUT` | No | `500ms` | Go duration |
+| `CACHE_TIMEOUT` | No | `200ms` | Per-operation cache deadline |
+| `CACHE_TTL_SETTINGS` | No | `5m` | Org settings cache TTL |
+| `CACHE_TTL_SLA_POLICIES` | No | `5m` | SLA policy cache TTL |
+| `CACHE_TTL_DASHBOARD_COUNTS` | No | `45s` | Dashboard counts cache TTL |
+| `RATE_LIMIT_REQUESTS` | No | `100` | Authenticated requests per window |
+| `RATE_LIMIT_WINDOW` | No | `1m` | Authenticated rate-limit window |
+| `PUBLIC_RATE_LIMIT_REQUESTS` | No | `30` | Unauthenticated requests per window |
+| `PUBLIC_RATE_LIMIT_WINDOW` | No | `1m` | Unauthenticated rate-limit window |
+| `LOGIN_RATE_LIMIT_REQUESTS` | No | `5` | Login attempts per window |
+| `LOGIN_RATE_LIMIT_WINDOW` | No | `15m` | Login rate-limit window |
+| `TRUST_PROXY_HEADERS` | No | `false` | Honour `X-Forwarded-For` only when explicitly enabled |
+| `TRUSTED_PROXY_CIDRS` | No | — | Comma-separated trusted proxy CIDRs |
+| `IDEMPOTENCY_TTL` | No | `24h` | How long an idempotency key is retained |
 
 Configuration is validated at startup, before the database is opened. Missing
 or invalid values make the process exit non-zero, and every problem found is
@@ -390,6 +412,10 @@ reported together. In particular:
 - Durations must be positive; `REQUEST_TIMEOUT=0` disables the deadline.
 - `REQUEST_TIMEOUT` must be below `SERVER_WRITE_TIMEOUT`.
 - `SHUTDOWN_TIMEOUT` must be at least `REQUEST_TIMEOUT`.
+- Redis timeouts and cache TTLs must be positive; `REDIS_DB` must be zero or greater.
+- Rate-limit request counts must be at least one; windows must be positive.
+- `TRUST_PROXY_HEADERS=true` requires at least one valid `TRUSTED_PROXY_CIDRS` entry.
+- `IDEMPOTENCY_TTL` must be positive.
 - The database DSN is built with `url.URL`, so characters such as `@`, `:`,
   `/`, `?`, `#` and `%` in credentials are escaped automatically.
 

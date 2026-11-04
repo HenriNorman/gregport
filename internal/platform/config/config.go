@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/HenriNorman/gregport/internal/platform/logging"
@@ -30,6 +32,28 @@ type Config struct {
 	ServerIdleTimeout       time.Duration
 	RequestTimeout          time.Duration
 	ShutdownTimeout         time.Duration
+
+	RedisAddr         string
+	RedisPassword     string
+	RedisDB           int
+	RedisDialTimeout  time.Duration
+	RedisReadTimeout  time.Duration
+	RedisWriteTimeout time.Duration
+	CacheTimeout      time.Duration
+
+	CacheTTLSettings        time.Duration
+	CacheTTLSLAPolicies     time.Duration
+	CacheTTLDashboardCounts time.Duration
+
+	RateLimitRequests       int
+	RateLimitWindow         time.Duration
+	PublicRateLimitRequests int
+	PublicRateLimitWindow   time.Duration
+	LoginRateLimitRequests  int
+	LoginRateLimitWindow    time.Duration
+	TrustProxyHeaders       bool
+	TrustedProxyCIDRs       []netip.Prefix
+	IdempotencyTTL          time.Duration
 }
 
 func Load() (Config, error) {
@@ -51,6 +75,27 @@ func Load() (Config, error) {
 		ServerIdleTimeout:       60 * time.Second,
 		RequestTimeout:          10 * time.Second,
 		ShutdownTimeout:         15 * time.Second,
+
+		RedisAddr:         getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:     os.Getenv("REDIS_PASSWORD"),
+		RedisDB:           0,
+		RedisDialTimeout:  time.Second,
+		RedisReadTimeout:  500 * time.Millisecond,
+		RedisWriteTimeout: 500 * time.Millisecond,
+		CacheTimeout:      200 * time.Millisecond,
+
+		CacheTTLSettings:        5 * time.Minute,
+		CacheTTLSLAPolicies:     5 * time.Minute,
+		CacheTTLDashboardCounts: 45 * time.Second,
+
+		RateLimitRequests:       100,
+		RateLimitWindow:         time.Minute,
+		PublicRateLimitRequests: 30,
+		PublicRateLimitWindow:   time.Minute,
+		LoginRateLimitRequests:  5,
+		LoginRateLimitWindow:    15 * time.Minute,
+		TrustProxyHeaders:       false,
+		IdempotencyTTL:          24 * time.Hour,
 	}
 
 	var errs []error
@@ -97,6 +142,65 @@ func Load() (Config, error) {
 			continue
 		}
 		*d.dst = value
+	}
+
+	redisDurations := []struct {
+		name string
+		dst  *time.Duration
+	}{
+		{"REDIS_DIAL_TIMEOUT", &cfg.RedisDialTimeout},
+		{"REDIS_READ_TIMEOUT", &cfg.RedisReadTimeout},
+		{"REDIS_WRITE_TIMEOUT", &cfg.RedisWriteTimeout},
+		{"CACHE_TIMEOUT", &cfg.CacheTimeout},
+		{"CACHE_TTL_SETTINGS", &cfg.CacheTTLSettings},
+		{"CACHE_TTL_SLA_POLICIES", &cfg.CacheTTLSLAPolicies},
+		{"CACHE_TTL_DASHBOARD_COUNTS", &cfg.CacheTTLDashboardCounts},
+		{"RATE_LIMIT_WINDOW", &cfg.RateLimitWindow},
+		{"PUBLIC_RATE_LIMIT_WINDOW", &cfg.PublicRateLimitWindow},
+		{"LOGIN_RATE_LIMIT_WINDOW", &cfg.LoginRateLimitWindow},
+		{"IDEMPOTENCY_TTL", &cfg.IdempotencyTTL},
+	}
+	for _, d := range redisDurations {
+		value, err := envDuration(d.name, *d.dst, false)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		*d.dst = value
+	}
+
+	ints := []struct {
+		name string
+		dst  *int
+		min  int
+	}{
+		{"REDIS_DB", &cfg.RedisDB, 0},
+		{"RATE_LIMIT_REQUESTS", &cfg.RateLimitRequests, 1},
+		{"PUBLIC_RATE_LIMIT_REQUESTS", &cfg.PublicRateLimitRequests, 1},
+		{"LOGIN_RATE_LIMIT_REQUESTS", &cfg.LoginRateLimitRequests, 1},
+	}
+	for _, n := range ints {
+		value, err := envInt(n.name, *n.dst, n.min)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		*n.dst = value
+	}
+
+	if value, err := envBool("TRUST_PROXY_HEADERS", cfg.TrustProxyHeaders); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.TrustProxyHeaders = value
+	}
+
+	if cidrs, err := envCIDRs("TRUSTED_PROXY_CIDRS"); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.TrustedProxyCIDRs = cidrs
+	}
+	if cfg.TrustProxyHeaders && len(cfg.TrustedProxyCIDRs) == 0 {
+		errs = append(errs, errors.New("TRUSTED_PROXY_CIDRS is required when TRUST_PROXY_HEADERS is true"))
 	}
 
 	if cfg.ServerWriteTimeout > 0 && cfg.RequestTimeout >= cfg.ServerWriteTimeout {
@@ -160,4 +264,55 @@ func envPort(name, fallback string) (string, error) {
 		return "", fmt.Errorf("%s must be a port between 1 and 65535, got %q", name, raw)
 	}
 	return strconv.Itoa(port), nil
+}
+
+func envInt(name string, fallback, min int) (int, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback, nil
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer, got %q", name, raw)
+	}
+	if value < min {
+		return 0, fmt.Errorf("%s must be at least %d, got %d", name, min, value)
+	}
+	return value, nil
+}
+
+func envBool(name string, fallback bool) (bool, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback, nil
+	}
+
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s must be true or false, got %q", name, raw)
+	}
+	return value, nil
+}
+
+func envCIDRs(name string) ([]netip.Prefix, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil, nil
+	}
+
+	parts := strings.Split(raw, ",")
+	prefixes := make([]netip.Prefix, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(part)
+		if err != nil {
+			return nil, fmt.Errorf("%s contains invalid CIDR %q", name, part)
+		}
+		prefixes = append(prefixes, prefix)
+	}
+	return prefixes, nil
 }

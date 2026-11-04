@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/netip"
 	"net/url"
 	"strings"
 	"testing"
@@ -22,6 +23,25 @@ var optionalKeys = []string{
 	"SERVER_IDLE_TIMEOUT",
 	"REQUEST_TIMEOUT",
 	"SHUTDOWN_TIMEOUT",
+	"REDIS_ADDR",
+	"REDIS_PASSWORD",
+	"REDIS_DB",
+	"REDIS_DIAL_TIMEOUT",
+	"REDIS_READ_TIMEOUT",
+	"REDIS_WRITE_TIMEOUT",
+	"CACHE_TIMEOUT",
+	"CACHE_TTL_SETTINGS",
+	"CACHE_TTL_SLA_POLICIES",
+	"CACHE_TTL_DASHBOARD_COUNTS",
+	"RATE_LIMIT_REQUESTS",
+	"RATE_LIMIT_WINDOW",
+	"PUBLIC_RATE_LIMIT_REQUESTS",
+	"PUBLIC_RATE_LIMIT_WINDOW",
+	"LOGIN_RATE_LIMIT_REQUESTS",
+	"LOGIN_RATE_LIMIT_WINDOW",
+	"TRUST_PROXY_HEADERS",
+	"TRUSTED_PROXY_CIDRS",
+	"IDEMPOTENCY_TTL",
 }
 
 func setRequired(t *testing.T) {
@@ -65,6 +85,25 @@ func TestLoadDefaults(t *testing.T) {
 		{"ServerIdleTimeout", cfg.ServerIdleTimeout, 60 * time.Second},
 		{"RequestTimeout", cfg.RequestTimeout, 10 * time.Second},
 		{"ShutdownTimeout", cfg.ShutdownTimeout, 15 * time.Second},
+		{"RedisAddr", cfg.RedisAddr, "localhost:6379"},
+		{"RedisPassword", cfg.RedisPassword, ""},
+		{"RedisDB", cfg.RedisDB, 0},
+		{"RedisDialTimeout", cfg.RedisDialTimeout, time.Second},
+		{"RedisReadTimeout", cfg.RedisReadTimeout, 500 * time.Millisecond},
+		{"RedisWriteTimeout", cfg.RedisWriteTimeout, 500 * time.Millisecond},
+		{"CacheTimeout", cfg.CacheTimeout, 200 * time.Millisecond},
+		{"CacheTTLSettings", cfg.CacheTTLSettings, 5 * time.Minute},
+		{"CacheTTLSLAPolicies", cfg.CacheTTLSLAPolicies, 5 * time.Minute},
+		{"CacheTTLDashboardCounts", cfg.CacheTTLDashboardCounts, 45 * time.Second},
+		{"RateLimitRequests", cfg.RateLimitRequests, 100},
+		{"RateLimitWindow", cfg.RateLimitWindow, time.Minute},
+		{"PublicRateLimitRequests", cfg.PublicRateLimitRequests, 30},
+		{"PublicRateLimitWindow", cfg.PublicRateLimitWindow, time.Minute},
+		{"LoginRateLimitRequests", cfg.LoginRateLimitRequests, 5},
+		{"LoginRateLimitWindow", cfg.LoginRateLimitWindow, 15 * time.Minute},
+		{"TrustProxyHeaders", cfg.TrustProxyHeaders, false},
+		{"TrustedProxyCIDRs", len(cfg.TrustedProxyCIDRs), 0},
+		{"IdempotencyTTL", cfg.IdempotencyTTL, 24 * time.Hour},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -90,6 +129,25 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("SERVER_IDLE_TIMEOUT", "4s")
 	t.Setenv("REQUEST_TIMEOUT", "500ms")
 	t.Setenv("SHUTDOWN_TIMEOUT", "5s")
+	t.Setenv("REDIS_ADDR", "redis.internal:6380")
+	t.Setenv("REDIS_PASSWORD", "redis-secret")
+	t.Setenv("REDIS_DB", "3")
+	t.Setenv("REDIS_DIAL_TIMEOUT", "150ms")
+	t.Setenv("REDIS_READ_TIMEOUT", "250ms")
+	t.Setenv("REDIS_WRITE_TIMEOUT", "350ms")
+	t.Setenv("CACHE_TIMEOUT", "100ms")
+	t.Setenv("CACHE_TTL_SETTINGS", "2m")
+	t.Setenv("CACHE_TTL_SLA_POLICIES", "3m")
+	t.Setenv("CACHE_TTL_DASHBOARD_COUNTS", "30s")
+	t.Setenv("RATE_LIMIT_REQUESTS", "200")
+	t.Setenv("RATE_LIMIT_WINDOW", "2m")
+	t.Setenv("PUBLIC_RATE_LIMIT_REQUESTS", "40")
+	t.Setenv("PUBLIC_RATE_LIMIT_WINDOW", "90s")
+	t.Setenv("LOGIN_RATE_LIMIT_REQUESTS", "7")
+	t.Setenv("LOGIN_RATE_LIMIT_WINDOW", "10m")
+	t.Setenv("TRUST_PROXY_HEADERS", "true")
+	t.Setenv("TRUSTED_PROXY_CIDRS", "10.0.0.0/8, 192.168.0.0/16")
+	t.Setenv("IDEMPOTENCY_TTL", "12h")
 
 	cfg, err := Load()
 	if err != nil {
@@ -115,6 +173,43 @@ func TestLoadOverrides(t *testing.T) {
 		cfg.RequestTimeout != 500*time.Millisecond ||
 		cfg.ShutdownTimeout != 5*time.Second {
 		t.Errorf("timeouts: %+v", cfg)
+	}
+	if cfg.RedisAddr != "redis.internal:6380" || cfg.RedisPassword != "redis-secret" || cfg.RedisDB != 3 {
+		t.Errorf("redis connection: %+v", cfg)
+	}
+	if cfg.RedisDialTimeout != 150*time.Millisecond ||
+		cfg.RedisReadTimeout != 250*time.Millisecond ||
+		cfg.RedisWriteTimeout != 350*time.Millisecond ||
+		cfg.CacheTimeout != 100*time.Millisecond {
+		t.Errorf("redis timeouts: %+v", cfg)
+	}
+	if cfg.CacheTTLSettings != 2*time.Minute ||
+		cfg.CacheTTLSLAPolicies != 3*time.Minute ||
+		cfg.CacheTTLDashboardCounts != 30*time.Second {
+		t.Errorf("cache ttls: %+v", cfg)
+	}
+	if cfg.RateLimitRequests != 200 || cfg.RateLimitWindow != 2*time.Minute ||
+		cfg.PublicRateLimitRequests != 40 || cfg.PublicRateLimitWindow != 90*time.Second ||
+		cfg.LoginRateLimitRequests != 7 || cfg.LoginRateLimitWindow != 10*time.Minute {
+		t.Errorf("rate limits: %+v", cfg)
+	}
+	if !cfg.TrustProxyHeaders {
+		t.Error("trust proxy headers was not enabled")
+	}
+	wantPrefixes := []netip.Prefix{
+		netip.MustParsePrefix("10.0.0.0/8"),
+		netip.MustParsePrefix("192.168.0.0/16"),
+	}
+	if len(cfg.TrustedProxyCIDRs) != len(wantPrefixes) {
+		t.Fatalf("trusted proxies: %+v", cfg.TrustedProxyCIDRs)
+	}
+	for i, want := range wantPrefixes {
+		if cfg.TrustedProxyCIDRs[i] != want {
+			t.Errorf("trusted proxy %d: got %s, want %s", i, cfg.TrustedProxyCIDRs[i], want)
+		}
+	}
+	if cfg.IdempotencyTTL != 12*time.Hour {
+		t.Errorf("idempotency ttl: %s", cfg.IdempotencyTTL)
 	}
 }
 
@@ -289,6 +384,55 @@ func TestDSNIPv6Host(t *testing.T) {
 	if u.Host != "[::1]:5432" {
 		t.Errorf("host: %q", u.Host)
 	}
+}
+
+func TestLoadRejectsInvalidRedisAndLimiterValues(t *testing.T) {
+	setDefaults(t)
+	t.Setenv("REDIS_DB", "-1")
+	t.Setenv("RATE_LIMIT_REQUESTS", "0")
+	t.Setenv("PUBLIC_RATE_LIMIT_REQUESTS", "nope")
+	t.Setenv("LOGIN_RATE_LIMIT_REQUESTS", "-5")
+	t.Setenv("CACHE_TIMEOUT", "0s")
+	t.Setenv("IDEMPOTENCY_TTL", "-1h")
+	t.Setenv("TRUST_PROXY_HEADERS", "maybe")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	for _, want := range []string{
+		"REDIS_DB must be at least 0",
+		"RATE_LIMIT_REQUESTS must be at least 1",
+		"PUBLIC_RATE_LIMIT_REQUESTS must be an integer",
+		"LOGIN_RATE_LIMIT_REQUESTS must be at least 1",
+		"CACHE_TIMEOUT must be greater than zero",
+		"IDEMPOTENCY_TTL must be greater than zero",
+		"TRUST_PROXY_HEADERS must be true or false",
+	} {
+		assertContains(t, err, want)
+	}
+}
+
+func TestLoadRejectsInvalidTrustedProxyCIDR(t *testing.T) {
+	setDefaults(t)
+	t.Setenv("TRUSTED_PROXY_CIDRS", "10.0.0.0/8,not-a-cidr")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertContains(t, err, `TRUSTED_PROXY_CIDRS contains invalid CIDR "not-a-cidr"`)
+}
+
+func TestLoadRequiresCIDRsWhenProxyHeadersEnabled(t *testing.T) {
+	setDefaults(t)
+	t.Setenv("TRUST_PROXY_HEADERS", "true")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertContains(t, err, "TRUSTED_PROXY_CIDRS is required when TRUST_PROXY_HEADERS is true")
 }
 
 func assertContains(t *testing.T, err error, want string) {
