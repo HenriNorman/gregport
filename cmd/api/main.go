@@ -140,7 +140,8 @@ func main() {
 
 	// SLA policy wiring
 	slaRepo := sla.NewRepository(pool)
-	slaSvc := sla.NewService(slaRepo)
+	slaStore := sla.NewCachedStore(slaRepo, observedCache, cfg.CacheTTLSLAPolicies)
+	slaSvc := sla.NewService(slaStore)
 	slaHandler := sla.NewHandler(slaSvc)
 
 	// dashboard wiring

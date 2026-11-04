@@ -25,7 +25,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Organization settings | Complete — read (any member) and partial update (admin/owner), timezone/priority/support-email validation |
 | SLA policies | Complete — CRUD per org, one policy per priority, reference-safe deletion |
 | Dashboard | Complete — org-scoped ticket counts by status and priority |
-| Caching | In progress — Redis cache, org settings read-through; SLA and dashboard next |
+| Caching | In progress — Redis cache; org settings and SLA policies read-through; dashboard next |
 | API keys | Complete — create, list, revoke; `gp_live_` keys authenticate as agent-level principals |
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
@@ -234,6 +234,7 @@ The service layer depends on repository interfaces rather than concrete implemen
 
 - `models.go` — policy entity, request/response DTOs, and errors.
 - `repository.go` — org-scoped CRUD and unique/FK error mapping.
+- `cached_store.go` — read-through caches for lists and items with invalidation.
 - `service.go` — normalisation and validation rules.
 - `handler.go` — `/v1/sla-policies` endpoints.
 
@@ -567,14 +568,18 @@ Caching is applied at the repository boundary by a decorator
 | Data | Key | TTL | Invalidation |
 |:--|:--|:--|:--|
 | Organization settings | `org:{orgID}:settings` | `CACHE_TTL_SETTINGS` (5m) | Deleted after a successful `PATCH /v1/organization/settings` |
+| SLA policy list | `org:{orgID}:sla_policies` | `CACHE_TTL_SLA_POLICIES` (5m) | Deleted after a successful create, update, or delete |
+| SLA policy item | `org:{orgID}:sla_policy:{policyID}` | `CACHE_TTL_SLA_POLICIES` (5m) | Deleted after a successful update or delete |
 
 - A miss reads PostgreSQL and writes the result to Redis. Hits return the
-  serialized document and `updated_at` without touching the database.
-- Only successful reads are cached. `404 org_not_found` is never memoized.
+  serialized document without touching the database.
+- Only successful reads are cached. `404` responses are never memoized.
 - Corrupt cache entries are treated as misses and overwritten.
 - A read or write failure in Redis falls through to PostgreSQL.
 - Invalidation happens after the database write commits. If the delete fails,
   the stale entry expires at the TTL rather than blocking the update.
+- SLA list and item caches are independent: reading a list does not populate
+  every item, and a single update invalidates both affected keys.
 
 ### Redis Failure Policy
 
