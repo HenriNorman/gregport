@@ -24,6 +24,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Members | Complete — list (any member), role change and removal (admin/owner), last-owner protection |
 | Organization settings | Complete — read (any member) and partial update (admin/owner), timezone/priority/support-email validation |
 | SLA policies | Complete — CRUD per org, one policy per priority, reference-safe deletion |
+| Dashboard | Complete — org-scoped ticket counts by status and priority |
 | API keys | Complete — create, list, revoke; `gp_live_` keys authenticate as agent-level principals |
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
@@ -110,6 +111,27 @@ The SLA policy endpoints expose the `sla_policies` table:
 - Every read and write is scoped to the caller's org; another tenant's policy
   returns `404`.
 
+### Dashboard Counts
+
+`GET /v1/dashboard/counts` returns a single org-scoped summary:
+
+```json
+{
+  "total": 5,
+  "open": 3,
+  "unassigned": 2,
+  "overdue": 1,
+  "by_status": {"new": 1, "open": 1, "pending": 1, "solved": 1, "closed": 1},
+  "by_priority": {"low": 2, "normal": 1, "high": 1, "urgent": 1}
+}
+```
+
+- `open` is `new + open + pending`.
+- `unassigned` counts open tickets with no assignee.
+- `overdue` counts unresolved tickets whose `resolution_due_at` has passed.
+- Soft-deleted tickets are excluded from every number.
+- Counts are computed with one aggregate query scoped to the caller's org.
+
 ---
 
 ## Tech Stack
@@ -182,6 +204,16 @@ The service layer depends on repository interfaces rather than concrete implemen
 - `errors.go`
 - `tokens.go`
 - `repository_tokens_test.go`
+
+</details>
+
+<details>
+<summary><code>internal/dashboard/</code> — dashboard reads</summary>
+
+- `models.go` — ticket count summary and breakdowns.
+- `repository.go` — single aggregate query scoped by `org_id`.
+- `service.go` — service boundary for the future cached implementation.
+- `handler.go` — `GET /v1/dashboard/counts`.
 
 </details>
 

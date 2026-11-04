@@ -13,6 +13,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/HenriNorman/gregport/internal/auth"
+	"github.com/HenriNorman/gregport/internal/dashboard"
 	"github.com/HenriNorman/gregport/internal/middleware"
 	"github.com/HenriNorman/gregport/internal/organizations"
 	"github.com/HenriNorman/gregport/internal/platform/cache"
@@ -141,6 +142,11 @@ func main() {
 	slaSvc := sla.NewService(slaRepo)
 	slaHandler := sla.NewHandler(slaSvc)
 
+	// dashboard wiring
+	dashboardRepo := dashboard.NewRepository(pool)
+	dashboardSvc := dashboard.NewService(dashboardRepo)
+	dashboardHandler := dashboard.NewHandler(dashboardSvc)
+
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.WithLogger(logger))
@@ -183,6 +189,8 @@ func main() {
 				r.With(auth.RequireRole("owner", "admin")).Patch("/{id}", slaHandler.UpdatePolicy)
 				r.With(auth.RequireRole("owner", "admin")).Delete("/{id}", slaHandler.DeletePolicy)
 			})
+
+			r.Get("/dashboard/counts", dashboardHandler.GetCounts)
 
 			r.Route("/tickets", func(r chi.Router) {
 				r.Post("/", ticketsHandler.Create)

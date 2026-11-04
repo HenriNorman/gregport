@@ -118,6 +118,61 @@ definitions:
         example: Henri
         type: string
     type: object
+  dashboard.Counts:
+    properties:
+      by_priority:
+        $ref: '#/definitions/dashboard.PriorityCounts'
+      by_status:
+        $ref: '#/definitions/dashboard.StatusCounts'
+      open:
+        description: new + open + pending
+        example: 13
+        type: integer
+      overdue:
+        description: unresolved tickets past resolution_due_at
+        example: 3
+        type: integer
+      total:
+        example: 102
+        type: integer
+      unassigned:
+        description: open tickets with no assignee
+        example: 6
+        type: integer
+    type: object
+  dashboard.PriorityCounts:
+    properties:
+      high:
+        example: 5
+        type: integer
+      low:
+        example: 12
+        type: integer
+      normal:
+        example: 20
+        type: integer
+      urgent:
+        example: 1
+        type: integer
+    type: object
+  dashboard.StatusCounts:
+    properties:
+      closed:
+        example: 58
+        type: integer
+      new:
+        example: 4
+        type: integer
+      open:
+        example: 7
+        type: integer
+      pending:
+        example: 2
+        type: integer
+      solved:
+        example: 31
+        type: integer
+    type: object
   health.StatusResponse:
     properties:
       status:
@@ -994,6 +1049,28 @@ paths:
       summary: Create an organization, user, and owner membership
       tags:
       - auth
+  /v1/dashboard/counts:
+    get:
+      description: Any authenticated member may read counts. Soft-deleted tickets
+        are excluded. `open` is the sum of `new`, `open`, and `pending`; `unassigned`
+        counts open tickets without an assignee; `overdue` counts unresolved tickets
+        whose resolution due date has passed.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dashboard.Counts'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Get dashboard ticket counts
+      tags:
+      - dashboard
   /v1/invitations:
     get:
       description: Requires role owner or admin. Returns only pending, unexpired invitations.
