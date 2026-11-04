@@ -14,6 +14,7 @@ import (
 
 	"github.com/HenriNorman/gregport/internal/auth"
 	"github.com/HenriNorman/gregport/internal/dashboard"
+	"github.com/HenriNorman/gregport/internal/idempotency"
 	"github.com/HenriNorman/gregport/internal/middleware"
 	"github.com/HenriNorman/gregport/internal/organizations"
 	"github.com/HenriNorman/gregport/internal/platform/cache"
@@ -151,6 +152,14 @@ func main() {
 	dashboardHandler := dashboard.NewHandler(dashboardSvc)
 	ticketsSvc.SetCountsInvalidator(dashboard.NewInvalidator(observedCache))
 
+	// idempotency wiring (PostgreSQL-backed store, not Redis)
+	idempotencyRepo := idempotency.NewRepository(pool)
+	idempotencyCfg := middleware.IdempotencyConfig{
+		Store:    idempotencyRepo,
+		TTL:      cfg.IdempotencyTTL,
+		Counters: counters,
+	}
+
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.WithLogger(logger))
@@ -177,6 +186,7 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(auth.Authenticate(tm, ticketsSvc.AuthenticateAPIKey))
 			r.Use(middleware.RateLimit(authLimit))
+			r.Use(middleware.Idempotency(idempotencyCfg))
 
 			r.Get("/me", authHandler.Me)
 

@@ -689,8 +689,9 @@ that first claimed the key:
 
 ### HTTP Middleware
 
-`internal/middleware.Idempotency` enforces idempotency at the HTTP layer on
-routes that opt in (wired to POST endpoints in the next step):
+`internal/middleware.Idempotency` enforces idempotency at the HTTP layer. It is
+wired to all authenticated POST endpoints (ticket create, comment, assignment,
+merge, macro apply, teams, tags, macros, invitations, API keys, SLA policies):
 
 - The client sends `Idempotency-Key: <key>`. Requests without the header pass
   through unchanged.
@@ -1325,9 +1326,8 @@ graceful shutdown, fail-fast configuration validation, the multi-stage
 container image, the Compose stack, CI and the twelve-factor alignment table
 are all in place. The remaining gaps are documented with that table.
 
-Idempotency key persistence and HTTP middleware are now in place; wiring them
-onto POST endpoints remains.
+Idempotency key persistence, HTTP middleware, and POST-endpoint wiring are now
+in place.
 
-Next: wire idempotency to POST endpoints, Redis-backed API-key `last_used_at`
-throttling, notifications, webhooks, plus production deployment, standalone
-migration tooling and a real background worker.
+Next: Redis-backed API-key `last_used_at` throttling, notifications, webhooks,
+plus production deployment, standalone migration tooling and a real background worker.

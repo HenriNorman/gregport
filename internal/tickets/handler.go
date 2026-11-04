@@ -353,6 +353,7 @@ func NewHandler(svc *Service) *Handler {
 //	@Produce		json
 //	@Security		BearerAuth
 //	@Param			body	body		CreateTicketRequest	true	"Ticket payload"
+//	@Param			Idempotency-Key	header	string	false	"Idempotency key for safe retries"
 //	@Success		201		{object}	TicketDTO
 //	@Failure		400		{object}	httpx.APIError	"Malformed JSON or unknown field"
 //	@Failure		401		{object}	httpx.APIError	"Missing, malformed, expired, or invalid token"
@@ -585,6 +586,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 //	@Security		BearerAuth
 //	@Param			number	path		int						true	"Per-org ticket number"
 //	@Param			body	body		CreateCommentRequest	true	"Comment payload"
+//	@Param			Idempotency-Key	header	string	false	"Idempotency key for safe retries"
 //	@Success		201		{object}	CommentDTO
 //	@Failure		400		{object}	httpx.APIError
 //	@Failure		401		{object}	httpx.APIError
@@ -888,6 +890,7 @@ func (h *Handler) RemoveTeamMember(w http.ResponseWriter, r *http.Request) {
 //	@Security		BearerAuth
 //	@Param			number	path		int					true	"Per-org ticket number"
 //	@Param			body	body		AssignTicketRequest	true	"Assignment payload"
+//	@Param			Idempotency-Key	header	string	false	"Idempotency key for safe retries"
 //	@Success		200		{object}	TicketDTO
 //	@Failure		400		{object}	httpx.APIError
 //	@Failure		401		{object}	httpx.APIError
@@ -1187,6 +1190,7 @@ func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 //	@Security		BearerAuth
 //	@Param			number	path		int					true	"Source ticket number (the duplicate)"
 //	@Param			body	body		MergeTicketRequest	true	"Target ticket number"
+//	@Param			Idempotency-Key	header	string	false	"Idempotency key for safe retries"
 //	@Success		200		{object}	map[string]TicketDTO
 //	@Failure		400		{object}	httpx.APIError
 //	@Failure		401		{object}	httpx.APIError
@@ -1371,6 +1375,7 @@ func (h *Handler) DeleteMacro(w http.ResponseWriter, r *http.Request) {
 //	@Security		BearerAuth
 //	@Param			number	path	string	true	"Per-org ticket number"
 //	@Param			id		path	string	true	"Macro UUID"
+//	@Param			Idempotency-Key	header	string	false	"Idempotency key for safe retries"
 //	@Success		204		"No Content"
 //	@Failure		400		{object}	httpx.APIError
 //	@Failure		401		{object}	httpx.APIError
