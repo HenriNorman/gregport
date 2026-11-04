@@ -134,7 +134,8 @@ func main() {
 
 	// organization settings wiring
 	organizationsRepo := organizations.NewRepository(pool)
-	organizationsSvc := organizations.NewService(organizationsRepo)
+	organizationsStore := organizations.NewCachedStore(organizationsRepo, observedCache, cfg.CacheTTLSettings)
+	organizationsSvc := organizations.NewService(organizationsStore)
 	organizationsHandler := organizations.NewHandler(organizationsSvc)
 
 	// SLA policy wiring

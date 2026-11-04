@@ -25,6 +25,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Organization settings | Complete — read (any member) and partial update (admin/owner), timezone/priority/support-email validation |
 | SLA policies | Complete — CRUD per org, one policy per priority, reference-safe deletion |
 | Dashboard | Complete — org-scoped ticket counts by status and priority |
+| Caching | In progress — Redis cache, org settings read-through; SLA and dashboard next |
 | API keys | Complete — create, list, revoke; `gp_live_` keys authenticate as agent-level principals |
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
@@ -222,6 +223,7 @@ The service layer depends on repository interfaces rather than concrete implemen
 
 - `models.go` — typed settings document, partial update request, and errors.
 - `repository.go` — JSONB read/write against `organizations.settings`.
+- `cached_store.go` — read-through Redis decorator and update invalidation.
 - `service.go` — defaults, merging, normalisation, and validation.
 - `handler.go` — `GET` and `PATCH /v1/organization/settings`.
 
@@ -556,6 +558,23 @@ tenant is known yet.
 
 The key builders return an error when the org id is missing. A test enumerates
 every builder and fails if the org id is absent or two keys collide.
+
+### Read-through Caching
+
+Caching is applied at the repository boundary by a decorator
+(`organizations.CachedStore`) so the service and handler stay unaware of Redis.
+
+| Data | Key | TTL | Invalidation |
+|:--|:--|:--|:--|
+| Organization settings | `org:{orgID}:settings` | `CACHE_TTL_SETTINGS` (5m) | Deleted after a successful `PATCH /v1/organization/settings` |
+
+- A miss reads PostgreSQL and writes the result to Redis. Hits return the
+  serialized document and `updated_at` without touching the database.
+- Only successful reads are cached. `404 org_not_found` is never memoized.
+- Corrupt cache entries are treated as misses and overwritten.
+- A read or write failure in Redis falls through to PostgreSQL.
+- Invalidation happens after the database write commits. If the delete fails,
+  the stale entry expires at the TTL rather than blocking the update.
 
 ### Redis Failure Policy
 
