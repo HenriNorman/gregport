@@ -2,22 +2,23 @@ package tickets
 
 import (
 	"context"
-	"strings"
-	"encoding/json"
-	"fmt" 
-	"time"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
 
-	"golang.org/x/crypto/bcrypt"
 	"github.com/HenriNorman/gregport/internal/auth"
 	"github.com/HenriNorman/gregport/internal/platform/audit"
-	"github.com/google/uuid"
-	"github.com/HenriNorman/gregport/internal/platform/requestctx"
-	"github.com/jackc/pgx/v5"
 	"github.com/HenriNorman/gregport/internal/platform/database"
 	"github.com/HenriNorman/gregport/internal/platform/logging"
+	"github.com/HenriNorman/gregport/internal/platform/requestctx"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Service struct {
@@ -37,6 +38,12 @@ type CountsCacheInvalidator interface {
 // existing tests and callers can ignore the cache entirely.
 func (s *Service) SetCountsInvalidator(invalidator CountsCacheInvalidator) {
 	s.counts = invalidator
+}
+
+// SetLastUsedRedis wires the Redis client for cross-process last_used_at
+// throttling. Optional; without it the in-memory fallback is used.
+func (s *Service) SetLastUsedRedis(client *redis.Client) {
+	s.lastUsed.SetRedisClient(client)
 }
 
 func (s *Service) invalidateCounts(ctx context.Context, orgID uuid.UUID) {

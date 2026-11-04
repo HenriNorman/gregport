@@ -27,7 +27,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Dashboard | Complete — org-scoped ticket counts by status and priority |
 | Caching | Complete — Redis cache for org settings, SLA policies, and dashboard counts with write invalidation |
 | Idempotency | Complete — tenant-scoped PostgreSQL key store and HTTP middleware (pending, replay, conflict, expiry) |
-| API keys | Complete — create, list, revoke; `gp_live_` keys authenticate as agent-level principals |
+| API keys | Complete — create, list, revoke; `gp_live_` keys authenticate as agent-level principals; `last_used_at` throttled in Redis |
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
 | Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
@@ -803,10 +803,12 @@ This prevents the API from confirming whether a resource exists in another tenan
   reject revoked/expired, compare the SHA-256 of the full key with
   `subtle.ConstantTimeCompare`. Anything else takes the JWT path. Both paths
   produce a `Principal`; `Kind` distinguishes them.
-- **`last_used_at` is throttled in memory.** Each key's last write is tracked
-  in a `sync.Mutex`-guarded map; a write fires at most once per minute, in a
-  background goroutine. A burst of requests from one key does not hammer the
-  database. (Redis will replace the in-memory map in a later feat.)
+- **`last_used_at` is throttled in Redis.** Each key's last write is gated by
+  an atomic `SET NX ... EX` on `org:{orgID}:apikey:{apiKeyID}:last_used`, so
+  the database is written at most once per minute per key, coordinated across
+  API instances. Without Redis it falls back to a per-process in-memory map;
+  when Redis is unavailable authentication continues and the database is not
+  hammered.
 - **API keys are agent-level and limited to tickets and comments.** They
   pass every ticket operation (create, list, get, update, comment, assign,
   tag, watch, merge, macro) and fail every management gate — members, teams,
@@ -1329,5 +1331,7 @@ are all in place. The remaining gaps are documented with that table.
 Idempotency key persistence, HTTP middleware, and POST-endpoint wiring are now
 in place.
 
-Next: Redis-backed API-key `last_used_at` throttling, notifications, webhooks,
-plus production deployment, standalone migration tooling and a real background worker.
+Redis-backed API-key `last_used_at` throttling is now in place.
+
+Next: notifications, webhooks, plus production deployment, standalone migration
+tooling and a real background worker.

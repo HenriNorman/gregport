@@ -160,6 +160,9 @@ func main() {
 		Counters: counters,
 	}
 
+	// Redis-backed API-key last_used_at throttle (in-memory fallback otherwise)
+	ticketsSvc.SetLastUsedRedis(redisCache.Client())
+
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.WithLogger(logger))
