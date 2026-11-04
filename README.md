@@ -417,13 +417,14 @@ curl localhost:8080/readyz
 `/healthz` is a liveness probe. It returns `200` with `{"status":"ok"}` when
 the process can serve HTTP. It does not touch PostgreSQL.
 
-`/readyz` is a readiness probe. It pings PostgreSQL with a two-second deadline:
+`/readyz` is a readiness probe. It pings PostgreSQL and Redis with a
+two-second deadline:
 
 ```json
 {"status":"ok"}
 ```
 
-A `200` means the API can serve requests. If the ping fails, it returns `503`:
+A `200` means the API can serve requests. If either ping fails, it returns `503`:
 
 ```json
 {"status":"unready"}

@@ -806,8 +806,8 @@ paths:
       - health
   /readyz:
     get:
-      description: Pings PostgreSQL with a two-second deadline. Returns 503 when the
-        database is unreachable.
+      description: Pings PostgreSQL and Redis with a two-second deadline. Returns
+        503 when any dependency is unreachable.
       produces:
       - application/json
       responses:
@@ -816,7 +816,7 @@ paths:
           schema:
             $ref: '#/definitions/health.StatusResponse'
         "503":
-          description: Database is unreachable
+          description: Database or Redis is unreachable
           schema:
             $ref: '#/definitions/health.StatusResponse'
       summary: Readiness probe

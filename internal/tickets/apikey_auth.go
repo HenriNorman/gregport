@@ -132,10 +132,15 @@ func (t *LastUsedThrottle) mark(ctx context.Context, orgID, keyID uuid.UUID) {
 }
 
 func (t *LastUsedThrottle) markRedis(ctx context.Context, client *redis.Client, key string, keyID uuid.UUID) {
+	// Bound the Redis operation independently of the caller's context so a
+	// dead Redis instance cannot block authentication forever.
+	redisCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
 	// SET NX EX window: only the first request in the window wins the gate and
 	// performs the database update. The key expires at the window, allowing the
 	// next window's first request to update again.
-	created, err := client.SetNX(ctx, key, "1", t.window).Result()
+	created, err := client.SetNX(redisCtx, key, "1", t.window).Result()
 	if err != nil {
 		// Redis is down: fail open. Authentication continues, but last_used_at
 		// is not refreshed so the database is not hammered during an outage.

@@ -35,21 +35,23 @@ func Live(w http.ResponseWriter, _ *http.Request) {
 // Ready reports whether request-serving dependencies are reachable.
 //
 //	@Summary		Readiness probe
-//	@Description	Pings PostgreSQL with a two-second deadline. Returns 503 when the database is unreachable.
+//	@Description	Pings PostgreSQL and Redis with a two-second deadline. Returns 503 when any dependency is unreachable.
 //	@Tags			health
 //	@Produce		json
 //	@Success		200	{object}	StatusResponse
-//	@Failure		503	{object}	StatusResponse	"Database is unreachable"
+//	@Failure		503	{object}	StatusResponse	"Database or Redis is unreachable"
 //	@Router			/readyz [get]
-func Ready(db Pinger) http.HandlerFunc {
+func Ready(pingers ...Pinger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), readyTimeout)
 		defer cancel()
 
-		if err := db.Ping(ctx); err != nil {
-			logging.FromContext(r.Context()).Warn("readiness check failed", "error", err)
-			writeStatus(w, http.StatusServiceUnavailable, "unready")
-			return
+		for _, ping := range pingers {
+			if err := ping.Ping(ctx); err != nil {
+				logging.FromContext(r.Context()).Warn("readiness check failed", "error", err)
+				writeStatus(w, http.StatusServiceUnavailable, "unready")
+				return
+			}
 		}
 
 		writeStatus(w, http.StatusOK, "ok")

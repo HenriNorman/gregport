@@ -171,7 +171,7 @@ func main() {
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
 
 	r.Get("/healthz", health.Live)
-	r.Get("/readyz", health.Ready(pool))
+	r.Get("/readyz", health.Ready(pool, observedCache))
 
 	r.Route("/v1", func(r chi.Router) {
 		// public, with a stricter login limiter
