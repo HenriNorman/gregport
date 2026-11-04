@@ -25,7 +25,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Organization settings | Complete — read (any member) and partial update (admin/owner), timezone/priority/support-email validation |
 | SLA policies | Complete — CRUD per org, one policy per priority, reference-safe deletion |
 | Dashboard | Complete — org-scoped ticket counts by status and priority |
-| Caching | In progress — Redis cache; org settings and SLA policies read-through; dashboard next |
+| Caching | Complete — Redis cache for org settings, SLA policies, and dashboard counts with write invalidation |
 | API keys | Complete — create, list, revoke; `gp_live_` keys authenticate as agent-level principals |
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
@@ -213,7 +213,8 @@ The service layer depends on repository interfaces rather than concrete implemen
 
 - `models.go` — ticket count summary and breakdowns.
 - `repository.go` — single aggregate query scoped by `org_id`.
-- `service.go` — service boundary for the future cached implementation.
+- `cached_store.go` — read-through counts cache and ticket-write invalidator.
+- `service.go` — service boundary for the cached implementation.
 - `handler.go` — `GET /v1/dashboard/counts`.
 
 </details>
@@ -563,13 +564,15 @@ every builder and fails if the org id is absent or two keys collide.
 ### Read-through Caching
 
 Caching is applied at the repository boundary by a decorator
-(`organizations.CachedStore`) so the service and handler stay unaware of Redis.
+(`organizations.CachedStore`, `sla.CachedStore`, `dashboard.CachedStore`) so
+services and handlers stay unaware of Redis.
 
 | Data | Key | TTL | Invalidation |
 |:--|:--|:--|:--|
 | Organization settings | `org:{orgID}:settings` | `CACHE_TTL_SETTINGS` (5m) | Deleted after a successful `PATCH /v1/organization/settings` |
 | SLA policy list | `org:{orgID}:sla_policies` | `CACHE_TTL_SLA_POLICIES` (5m) | Deleted after a successful create, update, or delete |
 | SLA policy item | `org:{orgID}:sla_policy:{policyID}` | `CACHE_TTL_SLA_POLICIES` (5m) | Deleted after a successful update or delete |
+| Dashboard counts | `org:{orgID}:dashboard:counts` | `CACHE_TTL_DASHBOARD_COUNTS` (45s) | Deleted after a successful ticket create, update, delete, assign, or merge |
 
 - A miss reads PostgreSQL and writes the result to Redis. Hits return the
   serialized document without touching the database.
@@ -580,6 +583,10 @@ Caching is applied at the repository boundary by a decorator
   the stale entry expires at the TTL rather than blocking the update.
 - SLA list and item caches are independent: reading a list does not populate
   every item, and a single update invalidates both affected keys.
+- Dashboard counts use a deliberately short TTL. Ticket mutations evict the
+  key immediately; the TTL bounds staleness if an invalidation is lost while
+  Redis is unavailable, and an invalidation failure is logged, never surfaced
+  to the caller.
 
 ### Redis Failure Policy
 

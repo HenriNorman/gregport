@@ -17,12 +17,35 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 	"github.com/jackc/pgx/v5"
 	"github.com/HenriNorman/gregport/internal/platform/database"
+	"github.com/HenriNorman/gregport/internal/platform/logging"
 )
 
 type Service struct {
 	repo        *Repository
 	invitations *InvitationTokenManager
 	lastUsed    *LastUsedThrottle
+	counts      CountsCacheInvalidator
+}
+
+// CountsCacheInvalidator is implemented by the dashboard cache. Ticket
+// mutations call it after the database commit.
+type CountsCacheInvalidator interface {
+	InvalidateCounts(ctx context.Context, orgID uuid.UUID) error
+}
+
+// SetCountsInvalidator wires dashboard cache invalidation. It is optional so
+// existing tests and callers can ignore the cache entirely.
+func (s *Service) SetCountsInvalidator(invalidator CountsCacheInvalidator) {
+	s.counts = invalidator
+}
+
+func (s *Service) invalidateCounts(ctx context.Context, orgID uuid.UUID) {
+	if s.counts == nil {
+		return
+	}
+	if err := s.counts.InvalidateCounts(ctx, orgID); err != nil {
+		logging.FromContext(ctx).Warn("dashboard counts invalidation failed", "error", err)
+	}
 }
 
 func NewService(repo *Repository, invitations *InvitationTokenManager) *Service {
@@ -66,6 +89,9 @@ func (s *Service) CreateTicket(ctx context.Context, p requestctx.Principal, req 
 		Body:           req.Body,
 		Priority:       priority,
 	})
+	if err == nil {
+		s.invalidateCounts(ctx, p.OrgID)
+	}
 	return tk, err
 }
 
@@ -92,7 +118,7 @@ func (s *Service) UpdateTicket(ctx context.Context, p requestctx.Principal, numb
 		req.Subject = &v
 	}
 
-	return s.repo.UpdateTicket(ctx, UpdateInput{
+	tk, err := s.repo.UpdateTicket(ctx, UpdateInput{
 		OrgID:           p.OrgID,
 		Number:          number,
 		ExpectedVersion: version,
@@ -101,13 +127,21 @@ func (s *Service) UpdateTicket(ctx context.Context, p requestctx.Principal, numb
 		Priority:        req.Priority,
 		Subject:         req.Subject,
 	})
+	if err == nil {
+		s.invalidateCounts(ctx, p.OrgID)
+	}
+	return tk, err
 }
 
 func (s *Service) DeleteTicket(ctx context.Context, p requestctx.Principal, number int64) error {
 	if !CanDelete(p) {
 		return ErrForbidden
 	}
-	return s.repo.SoftDeleteTicket(ctx, p.OrgID, number, Actor{Type: "user", ID: &p.ActorID})
+	err := s.repo.SoftDeleteTicket(ctx, p.OrgID, number, Actor{Type: "user", ID: &p.ActorID})
+	if err == nil {
+		s.invalidateCounts(ctx, p.OrgID)
+	}
+	return err
 }
 
 func (s *Service) CreateComment(ctx context.Context, p requestctx.Principal, number int64, req CreateCommentRequest) (Comment, error) {
@@ -218,12 +252,16 @@ func (s *Service) AssignTicket(ctx context.Context, p requestctx.Principal, numb
 		if teamID == nil {
 			return Ticket{}, ErrInvalidInput
 		}
-		return s.repo.AssignAuto(ctx, AssignInput{
+		tk, err := s.repo.AssignAuto(ctx, AssignInput{
 			OrgID:  p.OrgID,
 			Number: number,
 			Actor:  Actor{Type: "user", ID: &p.ActorID},
 			TeamID: teamID,
 		})
+		if err == nil {
+			s.invalidateCounts(ctx, p.OrgID)
+		}
+		return tk, err
 	}
 
 	if req.Auto && assigneeID != nil {
@@ -234,13 +272,17 @@ func (s *Service) AssignTicket(ctx context.Context, p requestctx.Principal, numb
 		return Ticket{}, ErrInvalidInput
 	}
 
-	return s.repo.AssignTicket(ctx, AssignInput{
+	tk, err := s.repo.AssignTicket(ctx, AssignInput{
 		OrgID:      p.OrgID,
 		Number:     number,
 		Actor:      Actor{Type: "user", ID: &p.ActorID},
 		AssigneeID: assigneeID,
 		TeamID:     teamID,
 	})
+	if err == nil {
+		s.invalidateCounts(ctx, p.OrgID)
+	}
+	return tk, err
 }
 
 func (s *Service) CreateTag(ctx context.Context, p requestctx.Principal, name string) (Tag, error) {
@@ -290,8 +332,12 @@ func (s *Service) MergeTickets(ctx context.Context, p requestctx.Principal, sour
 	if sourceNumber == targetNumber {
 		return Ticket{}, Ticket{}, ErrMergeSelf
 	}
-	return s.repo.MergeTickets(ctx, p.OrgID, sourceNumber, targetNumber,
+	source, target, err := s.repo.MergeTickets(ctx, p.OrgID, sourceNumber, targetNumber,
 		Actor{Type: "user", ID: &p.ActorID})
+	if err == nil {
+		s.invalidateCounts(ctx, p.OrgID)
+	}
+	return source, target, err
 }
 
 func (s *Service) CreateMacro(ctx context.Context, p requestctx.Principal, req CreateMacroRequest) (Macro, error) {

@@ -146,8 +146,10 @@ func main() {
 
 	// dashboard wiring
 	dashboardRepo := dashboard.NewRepository(pool)
-	dashboardSvc := dashboard.NewService(dashboardRepo)
+	dashboardStore := dashboard.NewCachedStore(dashboardRepo, observedCache, cfg.CacheTTLDashboardCounts)
+	dashboardSvc := dashboard.NewService(dashboardStore)
 	dashboardHandler := dashboard.NewHandler(dashboardSvc)
+	ticketsSvc.SetCountsInvalidator(dashboard.NewInvalidator(observedCache))
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
