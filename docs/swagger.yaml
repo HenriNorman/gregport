@@ -118,6 +118,12 @@ definitions:
         example: Henri
         type: string
     type: object
+  health.StatusResponse:
+    properties:
+      status:
+        example: ok
+        type: string
+    type: object
   httpx.APIError:
     properties:
       code:
@@ -614,6 +620,38 @@ info:
   title: gregport API
   version: 1.0.0
 paths:
+  /healthz:
+    get:
+      description: Returns 200 while the process can serve HTTP. It does not touch
+        PostgreSQL.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/health.StatusResponse'
+      summary: Liveness probe
+      tags:
+      - health
+  /readyz:
+    get:
+      description: Pings PostgreSQL with a two-second deadline. Returns 503 when the
+        database is unreachable.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/health.StatusResponse'
+        "503":
+          description: Database is unreachable
+          schema:
+            $ref: '#/definitions/health.StatusResponse'
+      summary: Readiness probe
+      tags:
+      - health
   /v1/api-keys:
     get:
       description: Requires role owner or admin. Never returns the raw key or the
