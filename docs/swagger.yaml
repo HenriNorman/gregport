@@ -142,6 +142,48 @@ definitions:
       message:
         type: string
     type: object
+  organizations.Settings:
+    properties:
+      default_priority:
+        enum:
+        - low
+        - normal
+        - high
+        - urgent
+        example: normal
+        type: string
+      support_email:
+        example: support@acme.com
+        type: string
+      timezone:
+        example: UTC
+        type: string
+    type: object
+  organizations.SettingsResponse:
+    properties:
+      settings:
+        $ref: '#/definitions/organizations.Settings'
+      updated_at:
+        example: "2026-01-15T10:00:00Z"
+        type: string
+    type: object
+  organizations.UpdateSettingsRequest:
+    properties:
+      default_priority:
+        enum:
+        - low
+        - normal
+        - high
+        - urgent
+        example: high
+        type: string
+      support_email:
+        example: support@acme.com
+        type: string
+      timezone:
+        example: Europe/Nairobi
+        type: string
+    type: object
   tickets.APIKeyDTO:
     properties:
       created_at:
@@ -1302,6 +1344,77 @@ paths:
       summary: Change a member's role
       tags:
       - members
+  /v1/organization/settings:
+    get:
+      description: Any authenticated member may read settings. Fields missing from
+        the stored document fall back to `UTC` for the timezone and `normal` for the
+        default priority.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/organizations.SettingsResponse'
+        "401":
+          description: Missing or invalid credentials
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Organization not found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Get organization settings
+      tags:
+      - organizations
+    patch:
+      consumes:
+      - application/json
+      description: Requires role `owner` or `admin`. Omitted fields keep their current
+        value. The timezone must be a valid IANA name, the default priority must be
+        one of `low`, `normal`, `high`, `urgent`, and the support email must be a
+        bare address. Send an empty string to clear the support email.
+      parameters:
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/organizations.UpdateSettingsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/organizations.SettingsResponse'
+        "400":
+          description: Malformed JSON or unknown field
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Missing or invalid credentials
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Insufficient permissions
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Organization not found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Invalid timezone, priority, or support email
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Update organization settings
+      tags:
+      - organizations
   /v1/tags:
     get:
       description: Any member of the org may list tags.

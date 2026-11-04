@@ -14,6 +14,7 @@ import (
 
 	"github.com/HenriNorman/gregport/internal/auth"
 	"github.com/HenriNorman/gregport/internal/middleware"
+	"github.com/HenriNorman/gregport/internal/organizations"
 	"github.com/HenriNorman/gregport/internal/platform/cache"
 	"github.com/HenriNorman/gregport/internal/platform/clientip"
 	"github.com/HenriNorman/gregport/internal/platform/config"
@@ -129,6 +130,11 @@ func main() {
 	ticketsSvc := tickets.NewService(ticketsRepo, tickets.NewInvitationTokenManager(7*24*time.Hour))
 	ticketsHandler := tickets.NewHandler(ticketsSvc)
 
+	// organization settings wiring
+	organizationsRepo := organizations.NewRepository(pool)
+	organizationsSvc := organizations.NewService(organizationsRepo)
+	organizationsHandler := organizations.NewHandler(organizationsSvc)
+
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.WithLogger(logger))
@@ -157,6 +163,12 @@ func main() {
 			r.Use(middleware.RateLimit(authLimit))
 
 			r.Get("/me", authHandler.Me)
+
+			r.Route("/organization", func(r chi.Router) {
+				r.Get("/settings", organizationsHandler.GetSettings)
+				r.With(auth.RequireRole("owner", "admin")).
+					Patch("/settings", organizationsHandler.UpdateSettings)
+			})
 
 			r.Route("/tickets", func(r chi.Router) {
 				r.Post("/", ticketsHandler.Create)

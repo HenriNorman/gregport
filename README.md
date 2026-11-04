@@ -22,6 +22,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Macros | Complete — CRUD (admin/owner) and apply to a ticket (any member) |
 | Invitations | Complete — create (admin/owner, grant table), list pending, revoke, accept (new and existing user) |
 | Members | Complete — list (any member), role change and removal (admin/owner), last-owner protection |
+| Organization settings | Complete — read (any member) and partial update (admin/owner), timezone/priority/support-email validation |
 | API keys | Complete — create, list, revoke; `gp_live_` keys authenticate as agent-level principals |
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
@@ -64,6 +65,27 @@ Teams support creation, listing, updating, and deletion, along with adding and r
 Ticket assignment supports manual assignment to an individual agent or a team, and round-robin (`auto: true`) within a team.
 
 Round-robin picks the team member with the oldest `last_assigned_at` inside the same transaction, with `SKIP LOCKED` so concurrent assigns do not pick the same agent.
+
+### Organization Settings
+
+`GET /v1/organization/settings` is available to every authenticated member.
+`PATCH /v1/organization/settings` requires `owner` or `admin`.
+
+Settings live in the `organizations.settings` JSONB column and are exposed as a
+typed document:
+
+```json
+{"settings":{"timezone":"UTC","default_priority":"normal","support_email":""},"updated_at":"2026-11-04T10:00:00Z"}
+```
+
+- Updates are partial: omitted fields keep their stored value.
+- Missing values read back as `UTC` and `normal`.
+- The timezone must be a valid IANA name; the IANA database is embedded in the
+  binary so validation also works in the minimal Alpine image.
+- The support email must be a bare address and is lowercased. Send an empty
+  string to clear it.
+- Settings reads and writes are always scoped to the caller's org; another
+  tenant's settings are never reachable.
 
 ---
 
@@ -137,6 +159,16 @@ The service layer depends on repository interfaces rather than concrete implemen
 - `errors.go`
 - `tokens.go`
 - `repository_tokens_test.go`
+
+</details>
+
+<details>
+<summary><code>internal/organizations/</code> — organization settings</summary>
+
+- `models.go` — typed settings document, partial update request, and errors.
+- `repository.go` — JSONB read/write against `organizations.settings`.
+- `service.go` — defaults, merging, normalisation, and validation.
+- `handler.go` — `GET` and `PATCH /v1/organization/settings`.
 
 </details>
 
