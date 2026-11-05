@@ -32,6 +32,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
 | Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
 | Production basics | Complete — logging, error envelope, timeouts, health checks, graceful shutdown, config validation, multi-stage image, compose stack, CI and twelve-factor summary |
+| Background worker | In progress — `cmd/worker` skeleton with its own config, logs, PostgreSQL/Redis connections, health probes and graceful shutdown |
 | SLA, notifications, webhooks | SLA policies exposed; notifications and webhooks schema defined, not exposed |
 
 ### Authentication
@@ -192,8 +193,9 @@ The service layer depends on repository interfaces rather than concrete implemen
 <details>
 <summary><code>Dockerfile</code> and <code>docker-compose.yml</code> — container build and local stack</summary>
 
-- `Dockerfile` — multi-stage build producing a non-root Alpine runtime image.
-- `docker-compose.yml` — PostgreSQL, Redis, and API, with health checks and migrations.
+- `Dockerfile` — multi-stage build producing a non-root Alpine runtime image for the API.
+- `Dockerfile.worker` — the same build for the background worker image.
+- `docker-compose.yml` — PostgreSQL, Redis, the API and the worker, with health checks and migrations.
 - `.dockerignore` — keeps VCS metadata, secrets and docs out of the build context.
 
 </details>
@@ -202,6 +204,14 @@ The service layer depends on repository interfaces rather than concrete implemen
 <summary><code>cmd/api/</code> — application entry point</summary>
 
 - `main.go` — application initialization and entry point.
+
+</details>
+
+<details>
+<summary><code>cmd/worker/</code> — background worker entry point</summary>
+
+- `main.go` — worker initialization: config, logger, PostgreSQL, Redis, health server.
+- `server.go` — health HTTP server with the same signal-driven graceful shutdown as the API.
 
 </details>
 
@@ -400,6 +410,14 @@ docker compose logs -f api
 curl localhost:8080/healthz
 ```
 
+The worker is a separate process with its own health probes:
+
+```bash
+docker compose logs -f worker
+curl localhost:8081/healthz
+curl localhost:8081/readyz
+```
+
 Stop the stack with `docker compose down`. To delete the database volume and
 re-apply migrations from scratch:
 
@@ -482,6 +500,7 @@ network:
 | `db` | `postgres:16-alpine` with a named `pgdata` volume and a `pg_isready` health check. |
 | `redis` | `redis:7-alpine` with a `redis-cli ping` health check. Cache and limiter state are intentionally not persisted. |
 | `api` | Built from the local `Dockerfile`; waits for `db` and `redis` to be healthy and reads its environment from `.env`. |
+| `worker` | Built from `Dockerfile.worker`; connects to the same database and Redis, exposes its health probes on `${WORKER_PORT:-8081}`, and has a 40s stop grace period for in-flight jobs. |
 
 - PostgreSQL publishes `${DB_PORT:-5432}` on the host; the API connects
   internally on `db:5432`, regardless of the host port.
@@ -539,6 +558,13 @@ The application reads its configuration from environment variables.
 | `TRUST_PROXY_HEADERS` | No | `false` | Honour `X-Forwarded-For` only when explicitly enabled |
 | `TRUSTED_PROXY_CIDRS` | No | — | Comma-separated trusted proxy CIDRs |
 | `IDEMPOTENCY_TTL` | No | `24h` | How long an idempotency key is retained |
+| `WORKER_PORT` | No | `8081` | Worker health/metrics port |
+| `WORKER_CONCURRENCY` | No | `20` | Worker jobs processed concurrently per queue |
+| `WORKER_SHUTDOWN_TIMEOUT` | No | `30s` | Time allowed to drain in-flight jobs |
+| `WORKER_READ_HEADER_TIMEOUT` | No | `5s` | Worker health server timeout |
+| `WORKER_READ_TIMEOUT` | No | `10s` | Worker health server timeout |
+| `WORKER_WRITE_TIMEOUT` | No | `10s` | Worker health server timeout |
+| `WORKER_IDLE_TIMEOUT` | No | `60s` | Worker health server idle timeout |
 
 Configuration is validated at startup, before the database is opened. Missing
 or invalid values make the process exit non-zero, and every problem found is
@@ -555,6 +581,8 @@ reported together. In particular:
 - Rate-limit request counts must be at least one; windows must be positive.
 - `TRUST_PROXY_HEADERS=true` requires at least one valid `TRUSTED_PROXY_CIDRS` entry.
 - `IDEMPOTENCY_TTL` must be positive.
+- The worker reads the shared database/Redis variables plus the `WORKER_*`
+  knobs. It does not require `JWT_SECRET`, because it never authenticates users.
 - The database DSN is built with `url.URL`, so characters such as `@`, `:`,
   `/`, `?`, `#` and `%` in credentials are escaped automatically.
 

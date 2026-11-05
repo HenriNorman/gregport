@@ -69,5 +69,38 @@ services:
     stop_grace_period: 20s
     restart: unless-stopped
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    image: gregport-worker:local
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      DB_NAME: ${DB_NAME:-gregport}
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+      WORKER_PORT: ${WORKER_PORT:-8081}
+    ports:
+      - "${WORKER_PORT:-8081}:${WORKER_PORT:-8081}"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:$${WORKER_PORT:-8081}/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    stop_grace_period: 40s
+    restart: unless-stopped
+
 volumes:
   pgdata:
