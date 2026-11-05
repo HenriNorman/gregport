@@ -102,5 +102,24 @@ services:
     stop_grace_period: 40s
     restart: unless-stopped
 
+  # Optional queue UI for operations. It is excluded from the default profile
+  # because it is unauthenticated; start it with:
+  #   docker compose --profile ops up -d asynqmon
+  asynqmon:
+    image: hibiken/asynqmon:0.7.2
+    profiles: ["ops"]
+    command:
+      - "--redis-addr=redis:6379"
+      - "--redis-db=${REDIS_DB:-0}"
+      - "--redis-password=${REDIS_PASSWORD:-}"
+      - "--port=8080"
+      - "--read-only"
+    ports:
+      - "${ASYNQMON_PORT:-8082}:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pgdata:

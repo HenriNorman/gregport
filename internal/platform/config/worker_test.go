@@ -17,6 +17,7 @@ func clearWorkerEnv(t *testing.T) {
 		"WORKER_READ_HEADER_TIMEOUT", "WORKER_READ_TIMEOUT",
 		"WORKER_WRITE_TIMEOUT", "WORKER_IDLE_TIMEOUT",
 		"WORKER_OUTBOX_INTERVAL", "WORKER_OUTBOX_BATCH",
+		"WORKER_QUEUE_STATS_INTERVAL",
 		"JWT_SECRET",
 	} {
 		t.Setenv(key, "")
@@ -53,6 +54,9 @@ func TestLoadWorkerDefaults(t *testing.T) {
 	if cfg.OutboxInterval != time.Second || cfg.OutboxBatch != 100 {
 		t.Fatalf("outbox defaults: interval=%s batch=%d", cfg.OutboxInterval, cfg.OutboxBatch)
 	}
+	if cfg.QueueStatsInterval != time.Minute {
+		t.Fatalf("queue stats interval: %s", cfg.QueueStatsInterval)
+	}
 }
 
 func TestLoadWorkerDoesNotRequireJWTSecret(t *testing.T) {
@@ -83,6 +87,7 @@ func TestLoadWorkerOverrides(t *testing.T) {
 	t.Setenv("WORKER_IDLE_TIMEOUT", "5s")
 	t.Setenv("WORKER_OUTBOX_INTERVAL", "250ms")
 	t.Setenv("WORKER_OUTBOX_BATCH", "25")
+	t.Setenv("WORKER_QUEUE_STATS_INTERVAL", "30s")
 
 	cfg, err := LoadWorker()
 	if err != nil {
@@ -110,6 +115,9 @@ func TestLoadWorkerOverrides(t *testing.T) {
 	}
 	if cfg.OutboxInterval != 250*time.Millisecond || cfg.OutboxBatch != 25 {
 		t.Fatalf("outbox overrides: interval=%s batch=%d", cfg.OutboxInterval, cfg.OutboxBatch)
+	}
+	if cfg.QueueStatsInterval != 30*time.Second {
+		t.Fatalf("queue stats override: %s", cfg.QueueStatsInterval)
 	}
 }
 
@@ -154,6 +162,16 @@ func TestLoadWorkerValidation(t *testing.T) {
 			env:  map[string]string{"DB_PASSWORD": "secret", "WORKER_OUTBOX_BATCH": "0"},
 			want: "WORKER_OUTBOX_BATCH",
 		},
+		{
+			name: "invalid queue stats interval",
+			env:  map[string]string{"DB_PASSWORD": "secret", "WORKER_QUEUE_STATS_INTERVAL": "often"},
+			want: "WORKER_QUEUE_STATS_INTERVAL",
+		},
+		{
+			name: "negative queue stats interval",
+			env:  map[string]string{"DB_PASSWORD": "secret", "WORKER_QUEUE_STATS_INTERVAL": "-1s"},
+			want: "WORKER_QUEUE_STATS_INTERVAL",
+		},
 	}
 
 	for _, tt := range tests {
@@ -171,6 +189,20 @@ func TestLoadWorkerValidation(t *testing.T) {
 				t.Fatalf("error %q does not mention %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestLoadWorkerAllowsZeroQueueStatsInterval(t *testing.T) {
+	clearWorkerEnv(t)
+	t.Setenv("DB_PASSWORD", "secret")
+	t.Setenv("WORKER_QUEUE_STATS_INTERVAL", "0s")
+
+	cfg, err := LoadWorker()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.QueueStatsInterval != 0 {
+		t.Fatalf("queue stats interval: %s, want 0", cfg.QueueStatsInterval)
 	}
 }
 

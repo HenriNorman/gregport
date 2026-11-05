@@ -32,7 +32,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
 | Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
 | Production basics | Complete — logging, error envelope, timeouts, health checks, graceful shutdown, config validation, multi-stage image, compose stack, CI and twelve-factor summary |
-| Background worker | In progress — `cmd/worker` with config, logs, connections, health probes, graceful shutdown, asynq queue servers and the outbox dispatcher |
+| Background worker | In progress — `cmd/worker` with config, logs, connections, health probes, graceful shutdown, asynq queue servers, the outbox dispatcher, queue statistics and the Asynqmon dead-letter view |
 | SLA, notifications, webhooks | SLA policies exposed; notifications and webhooks schema defined, not exposed |
 
 ### Authentication
@@ -334,6 +334,7 @@ The service layer depends on repository interfaces rather than concrete implemen
 
 - `queue.go` — asynq task types, queue weights, client, deterministic `Job` enqueueing, servers and the slog/error adapters.
 - `retry.go` — exponential backoff with ±20% jitter, capped at one hour.
+- `inspector.go` — queue snapshots and the dead-letter (archived task) view with retry/delete helpers.
 
 </details>
 
@@ -349,6 +350,7 @@ The service layer depends on repository interfaces rather than concrete implemen
 
 - `health.go` — `/healthz` and `/readyz` (PostgreSQL, Redis cache and queue).
 - `handlers.go` — asynq handler registration.
+- `queue_stats.go` — periodic queue/dead-letter snapshot logging.
 
 </details>
 
@@ -502,8 +504,8 @@ container; `localhost` refers to the container itself.
 
 ### Docker Compose Stack
 
-`docker compose up --build -d --wait` starts three services on the `gregport`
-network:
+`docker compose up --build -d --wait` starts the core services on the
+`gregport` network:
 
 | Service | Purpose |
 |:--|:--|
@@ -511,6 +513,7 @@ network:
 | `redis` | `redis:7-alpine` with a `redis-cli ping` health check. Cache and limiter state are intentionally not persisted. |
 | `api` | Built from the local `Dockerfile`; waits for `db` and `redis` to be healthy and reads its environment from `.env`. |
 | `worker` | Built from `Dockerfile.worker`; connects to the same database and Redis, exposes its health probes on `${WORKER_PORT:-8081}`, and has a 40s stop grace period for in-flight jobs. |
+| `asynqmon` | Optional queue UI from `hibiken/asynqmon`. It lives in the `ops` profile and is not started by default. |
 
 - PostgreSQL publishes `${DB_PORT:-5432}` on the host; the API connects
   internally on `db:5432`, regardless of the host port.
@@ -523,6 +526,17 @@ network:
   `/healthz`.
 - `stop_grace_period` is `20s`, above the default `SHUTDOWN_TIMEOUT` of `15s`,
   so Docker waits for graceful shutdown instead of killing the process early.
+- Asynqmon publishes `${ASYNQMON_PORT:-8082}` when the `ops` profile is enabled:
+
+  ```bash
+  docker compose --profile ops up -d asynqmon
+  open http://localhost:8082
+  ```
+
+  It runs with `--read-only`, so the UI can inspect queues and archived tasks
+  but cannot retry or delete them. Remove that flag for an operator session
+  that needs to requeue dead letters. The UI has no authentication: keep it on
+  a private network and never expose it publicly.
 - Compose refuses to start if `DB_PASSWORD` or `JWT_SECRET` is missing.
 
 ---
@@ -578,6 +592,7 @@ The application reads its configuration from environment variables.
 | `WORKER_IDLE_TIMEOUT` | No | `60s` | Worker health server idle timeout |
 | `WORKER_OUTBOX_INTERVAL` | No | `1s` | How often the outbox dispatcher polls |
 | `WORKER_OUTBOX_BATCH` | No | `100` | Maximum events claimed per outbox transaction |
+| `WORKER_QUEUE_STATS_INTERVAL` | No | `1m` | Queue snapshot interval; `0` disables the snapshot log |
 
 Configuration is validated at startup, before the database is opened. Missing
 or invalid values make the process exit non-zero, and every problem found is
@@ -849,6 +864,29 @@ email uses the unique `(event_id, to_email, template)` index for this.
 `DispatchOnce` keeps draining full batches so a backlog is cleared without
 waiting one interval per batch. Unknown event types are marked dispatched
 without producing a job, so they cannot pollute every poll.
+
+### Queue visibility and dead letters
+
+`internal/queue/inspector.go` wraps asynq's inspector with four operations:
+
+- `Queues(ctx)` lists queues that currently hold state.
+- `Stats(ctx, queues)` returns pending, active, scheduled, retry, archived,
+  completed, paused, latency and memory figures.
+- `DeadLetters(ctx, queue, page, pageSize)` lists archived tasks, newest
+  failure first, with type, payload, retry count and last error.
+- `RetryDeadLetter` and `DeleteDeadLetter` requeue or permanently remove one.
+
+The worker logs a snapshot every `WORKER_QUEUE_STATS_INTERVAL` (default `1m`;
+set `0` to disable). Snapshots containing archived tasks are logged at `WARN`,
+because the archived set is the dead-letter queue: those tasks exhausted their
+retries or returned `queue.Permanent`. Alerting on that warning surfaces
+delivery problems without polling the UI.
+
+For interactive inspection, start Asynqmon with the `ops` profile as shown in
+the Compose section. Its Queue view shows pending, active, scheduled, retry and
+archived tasks per queue; the Archived tab is the dead-letter view. Running the
+UI read-only is the safe default; use `RetryDeadLetter`/`DeleteDeadLetter` or a
+non-read-only Asynqmon session for operator actions.
 
 ---
 
@@ -1347,6 +1385,34 @@ These tests do not require a database.
 - Multiple problems are joined into one error instead of failing one at a time.
 - The DSN escapes reserved characters in usernames and passwords, keeps the
   original values after URL parsing, and formats IPv6 hosts with brackets.
+
+### Queue and Worker Tests
+
+The queue tests use `miniredis`, so they are fast and need no live Redis.
+The dispatcher tests are PostgreSQL integration tests.
+
+- Queue weights are `critical: 6`, `default: 3`, `low: 1`, and the CPU queue is
+  isolated on its own server.
+- Task marshaling, validation of incomplete jobs, and `queue.Permanent`
+  wrapping `asynq.SkipRetry`.
+- Backoff is exactly 5s, 10s, 20s … capped at one hour, and two hundred samples
+  per attempt stay inside the ±20% jitter band while still varying.
+- Inspector statistics report pending/size per queue and skip idle queues.
+- Dead-letter lifecycle: archive, list with payload/retry metadata, requeue,
+  archive again, delete, and verify the queue is empty.
+- Dead-letter pagination returns every task exactly once and clamps page zero
+  and oversized page sizes.
+- Inspector input validation and cancelled-context propagation for every
+  operation.
+- Queue snapshot logging emits `INFO` normally, `WARN` when `archived > 0`,
+  logs inspector errors and keeps ticking, stops on cancellation, and is fully
+  disabled at `WORKER_QUEUE_STATS_INTERVAL=0`.
+- Outbox dispatcher: one event becomes one deterministic job and is marked
+  dispatched; two dispatchers splitting 150 events produce 150 distinct jobs
+  with none left undispatched; an enqueue failure rolls the whole batch back; a
+  partial failure leaves every event undispatched for the retry; unknown event
+  types are marked dispatched without jobs; `Run` dispatches on its interval
+  and stops on cancellation.
 
 ### Timeout Tests
 

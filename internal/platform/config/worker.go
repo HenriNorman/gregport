@@ -38,8 +38,9 @@ type WorkerConfig struct {
 	WorkerWriteTimeout      time.Duration
 	WorkerIdleTimeout       time.Duration
 
-	OutboxInterval time.Duration
-	OutboxBatch    int
+	OutboxInterval     time.Duration
+	OutboxBatch        int
+	QueueStatsInterval time.Duration
 }
 
 // LoadWorker reads the worker configuration from the environment. Defaults
@@ -72,6 +73,8 @@ func LoadWorker() (WorkerConfig, error) {
 
 		OutboxInterval: time.Second,
 		OutboxBatch:    100,
+
+		QueueStatsInterval: time.Minute,
 	}
 
 	var errs []error
@@ -95,21 +98,23 @@ func LoadWorker() (WorkerConfig, error) {
 	}
 
 	durations := []struct {
-		name string
-		dst  *time.Duration
+		name      string
+		dst       *time.Duration
+		allowZero bool
 	}{
-		{"REDIS_DIAL_TIMEOUT", &cfg.RedisDialTimeout},
-		{"REDIS_READ_TIMEOUT", &cfg.RedisReadTimeout},
-		{"REDIS_WRITE_TIMEOUT", &cfg.RedisWriteTimeout},
-		{"WORKER_SHUTDOWN_TIMEOUT", &cfg.WorkerShutdownTimeout},
-		{"WORKER_READ_HEADER_TIMEOUT", &cfg.WorkerReadHeaderTimeout},
-		{"WORKER_READ_TIMEOUT", &cfg.WorkerReadTimeout},
-		{"WORKER_WRITE_TIMEOUT", &cfg.WorkerWriteTimeout},
-		{"WORKER_IDLE_TIMEOUT", &cfg.WorkerIdleTimeout},
-		{"WORKER_OUTBOX_INTERVAL", &cfg.OutboxInterval},
+		{"REDIS_DIAL_TIMEOUT", &cfg.RedisDialTimeout, false},
+		{"REDIS_READ_TIMEOUT", &cfg.RedisReadTimeout, false},
+		{"REDIS_WRITE_TIMEOUT", &cfg.RedisWriteTimeout, false},
+		{"WORKER_SHUTDOWN_TIMEOUT", &cfg.WorkerShutdownTimeout, false},
+		{"WORKER_READ_HEADER_TIMEOUT", &cfg.WorkerReadHeaderTimeout, false},
+		{"WORKER_READ_TIMEOUT", &cfg.WorkerReadTimeout, false},
+		{"WORKER_WRITE_TIMEOUT", &cfg.WorkerWriteTimeout, false},
+		{"WORKER_IDLE_TIMEOUT", &cfg.WorkerIdleTimeout, false},
+		{"WORKER_OUTBOX_INTERVAL", &cfg.OutboxInterval, false},
+		{"WORKER_QUEUE_STATS_INTERVAL", &cfg.QueueStatsInterval, true},
 	}
 	for _, d := range durations {
-		value, err := envDuration(d.name, *d.dst, false)
+		value, err := envDuration(d.name, *d.dst, d.allowZero)
 		if err != nil {
 			errs = append(errs, err)
 			continue

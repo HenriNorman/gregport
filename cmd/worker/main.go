@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -108,21 +109,34 @@ func run() error {
 		close(dispatcherDone)
 	}()
 
-	// Stop and join the dispatcher before any deferred Close runs, so it can
-	// never write to a closed pool or Redis client.
+	// Queue statistics make dead letters visible without opening Asynqmon.
+	inspector := queue.NewInspector(queueCfg)
+	defer inspector.Close()
+	statsDone := make(chan struct{})
+	go func() {
+		worker.RunQueueStats(workerCtx, inspector, logger, cfg.QueueStatsInterval)
+		close(statsDone)
+	}()
+
+	// Stop and join background work before any deferred Close runs, so it can
+	// never write to a closed pool, Redis client or inspector.
 	defer func() {
 		cancelWorker()
-		select {
-		case <-dispatcherDone:
-		case <-time.After(cfg.WorkerShutdownTimeout):
-			logger.Warn("outbox dispatcher did not stop within the shutdown timeout")
-		}
+		waitBackground(dispatcherDone, "outbox dispatcher", logger, cfg.WorkerShutdownTimeout)
+		waitBackground(statsDone, "queue statistics", logger, cfg.WorkerShutdownTimeout)
 	}()
 
 	logger.Info("outbox dispatcher started",
 		"interval", cfg.OutboxInterval.String(),
 		"batch", cfg.OutboxBatch,
 	)
+	if cfg.QueueStatsInterval > 0 {
+		logger.Info("queue statistics enabled",
+			"interval", cfg.QueueStatsInterval.String(),
+		)
+	} else {
+		logger.Info("queue statistics disabled")
+	}
 
 	handler := worker.HealthHandler(pool, redisCache, queueClient)
 	srv := newServer(cfg, handler)
@@ -139,4 +153,14 @@ func run() error {
 
 	logger.Info("worker stopped")
 	return nil
+}
+
+// waitBackground joins a background goroutine, warning instead of hanging past
+// the shutdown budget.
+func waitBackground(done <-chan struct{}, name string, logger *slog.Logger, timeout time.Duration) {
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		logger.Warn("background task did not stop within the shutdown timeout", "task", name)
+	}
 }
