@@ -110,9 +110,22 @@ func run() error {
 		return nil
 	})
 
+	autoCloseChecker := tickets.NewAutoCloseChecker(ticketsRepo, cfg.AutoCloseWindow)
+	autoCloseHandler := asynq.HandlerFunc(func(ctx context.Context, task *asynq.Task) error {
+		n, err := autoCloseChecker.CheckAutoClose(ctx, cfg.AutoCloseCheckBatch)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			logger.Info("auto close check", "closed", n)
+		}
+		return nil
+	})
+
 	mux := worker.NewMux(
 		worker.HandlerRegistration{Type: queue.TaskEmailSend, Handler: emailHandler},
 		worker.HandlerRegistration{Type: queue.TaskSLABreachCheck, Handler: breachHandler},
+		worker.HandlerRegistration{Type: queue.TaskAutoClose, Handler: autoCloseHandler},
 	)
 	ioServer := queue.NewIOServer(queueCfg)
 	cpuServer := queue.NewCPUServer(queueCfg)
@@ -132,15 +145,23 @@ func run() error {
 		"queues", "critical,default,low,cpu",
 	)
 
-	// The dispatcher turns committed outbox rows into queue jobs. It shares the
-	// process signal context, so a shutdown stops polling immediately.
+	// All background work shares workerCtx so a shutdown stops polling
+	// immediately. Each goroutine closes its own done channel when it exits.
 	workerCtx, cancelWorker := context.WithCancel(signalCtx)
+	type donePair struct {
+		done chan struct{}
+		name string
+	}
+	var done []donePair
+
+	// The dispatcher turns committed outbox rows into queue jobs.
 	dispatcher := outbox.NewDispatcher(pool, queueClient, logger, cfg.OutboxBatch, cfg.OutboxInterval)
 	dispatcherDone := make(chan struct{})
 	go func() {
 		dispatcher.Run(workerCtx)
 		close(dispatcherDone)
 	}()
+	done = append(done, donePair{done: dispatcherDone, name: "outbox dispatcher"})
 
 	// Queue statistics make dead letters visible without opening Asynqmon.
 	inspector := queue.NewInspector(queueCfg)
@@ -150,11 +171,9 @@ func run() error {
 		worker.RunQueueStats(workerCtx, inspector, logger, cfg.QueueStatsInterval)
 		close(statsDone)
 	}()
+	done = append(done, donePair{done: statsDone, name: "queue statistics"})
 
-	// The SLA breach scheduler enqueues a sla:breach_check task on every tick.
-	// The task ID is truncated to the current minute so duplicate enqueues
-	// within the same minute are deduplicated by ErrTaskIDConflict, while a new
-	// minute gets a fresh ID even if the previous task is still archived.
+	// SLA breach scheduler: enqueues a sla:breach_check task each tick.
 	if cfg.SLABreachCheckInterval > 0 {
 		breachTickerDone := make(chan struct{})
 		go func() {
@@ -179,22 +198,45 @@ func run() error {
 				}
 			}
 		}()
-
-		defer func() {
-			cancelWorker()
-			waitBackground(dispatcherDone, "outbox dispatcher", logger, cfg.WorkerShutdownTimeout)
-			waitBackground(statsDone, "queue statistics", logger, cfg.WorkerShutdownTimeout)
-			waitBackground(breachTickerDone, "sla breach scheduler", logger, cfg.WorkerShutdownTimeout)
-		}()
-	} else {
-		// Stop and join background work before any deferred Close runs, so it can
-		// never write to a closed pool, Redis client or inspector.
-		defer func() {
-			cancelWorker()
-			waitBackground(dispatcherDone, "outbox dispatcher", logger, cfg.WorkerShutdownTimeout)
-			waitBackground(statsDone, "queue statistics", logger, cfg.WorkerShutdownTimeout)
-		}()
+		done = append(done, donePair{done: breachTickerDone, name: "sla breach scheduler"})
 	}
+
+	// Auto-close scheduler: enqueues a ticket:auto_close task each tick.
+	if cfg.AutoCloseCheckInterval > 0 {
+		autoCloseTickerDone := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(cfg.AutoCloseCheckInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-workerCtx.Done():
+					close(autoCloseTickerDone)
+					return
+				case <-ticker.C:
+					taskID := "ticket:auto_close:" + time.Now().UTC().Truncate(time.Minute).Format(time.RFC3339)
+					if err := queueClient.EnqueueJob(workerCtx, queue.Job{
+						ID:       taskID,
+						Type:     queue.TaskAutoClose,
+						Queue:    queue.QueueDefault,
+						Payload:  []byte(`{}`),
+						MaxRetry: 5,
+					}); err != nil && workerCtx.Err() == nil {
+						logger.Error("enqueue ticket auto close", "error", err)
+					}
+				}
+			}
+		}()
+		done = append(done, donePair{done: autoCloseTickerDone, name: "auto close scheduler"})
+	}
+
+	// Stop and join background work before any deferred Close runs, so it can
+	// never write to a closed pool, Redis client or inspector.
+	defer func() {
+		cancelWorker()
+		for _, pair := range done {
+			waitBackground(pair.done, pair.name, logger, cfg.WorkerShutdownTimeout)
+		}
+	}()
 
 	logger.Info("outbox dispatcher started",
 		"interval", cfg.OutboxInterval.String(),
@@ -214,6 +256,15 @@ func run() error {
 		)
 	} else {
 		logger.Info("sla breach scheduler disabled")
+	}
+	if cfg.AutoCloseCheckInterval > 0 {
+		logger.Info("auto close scheduler enabled",
+			"interval", cfg.AutoCloseCheckInterval.String(),
+			"window", cfg.AutoCloseWindow.String(),
+			"batch", cfg.AutoCloseCheckBatch,
+		)
+	} else {
+		logger.Info("auto close scheduler disabled")
 	}
 
 	handler := worker.HealthHandler(pool, redisCache, queueClient)

@@ -19,6 +19,7 @@ func clearWorkerEnv(t *testing.T) {
 		"WORKER_OUTBOX_INTERVAL", "WORKER_OUTBOX_BATCH",
 		"WORKER_QUEUE_STATS_INTERVAL",
 		"SLA_BREACH_CHECK_INTERVAL", "SLA_BREACH_CHECK_BATCH",
+		"AUTO_CLOSE_CHECK_INTERVAL", "AUTO_CLOSE_WINDOW", "AUTO_CLOSE_CHECK_BATCH",
 		"SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD",
 		"SMTP_FROM", "SMTP_FROM_NAME",
 		"JWT_SECRET",
@@ -72,6 +73,15 @@ func TestLoadWorkerDefaults(t *testing.T) {
 	if cfg.SLABreachCheckBatch != 100 {
 		t.Fatalf("sla breach batch: %d", cfg.SLABreachCheckBatch)
 	}
+	if cfg.AutoCloseWindow != 7*24*time.Hour {
+		t.Fatalf("auto close window: %s", cfg.AutoCloseWindow)
+	}
+	if cfg.AutoCloseCheckInterval != time.Hour {
+		t.Fatalf("auto close check interval: %s", cfg.AutoCloseCheckInterval)
+	}
+	if cfg.AutoCloseCheckBatch != 100 {
+		t.Fatalf("auto close check batch: %d", cfg.AutoCloseCheckBatch)
+	}
 }
 
 func TestLoadWorkerDoesNotRequireJWTSecret(t *testing.T) {
@@ -111,6 +121,9 @@ func TestLoadWorkerOverrides(t *testing.T) {
 	t.Setenv("SMTP_FROM_NAME", "Example")
 	t.Setenv("SLA_BREACH_CHECK_INTERVAL", "45s")
 	t.Setenv("SLA_BREACH_CHECK_BATCH", "50")
+	t.Setenv("AUTO_CLOSE_CHECK_INTERVAL", "30m")
+	t.Setenv("AUTO_CLOSE_WINDOW", "72h")
+	t.Setenv("AUTO_CLOSE_CHECK_BATCH", "25")
 
 	cfg, err := LoadWorker()
 	if err != nil {
@@ -156,6 +169,15 @@ func TestLoadWorkerOverrides(t *testing.T) {
 	}
 	if cfg.SLABreachCheckBatch != 50 {
 		t.Fatalf("sla breach batch override: %d", cfg.SLABreachCheckBatch)
+	}
+	if cfg.AutoCloseCheckInterval != 30*time.Minute {
+		t.Fatalf("auto close check interval override: %s", cfg.AutoCloseCheckInterval)
+	}
+	if cfg.AutoCloseWindow != 3*24*time.Hour {
+		t.Fatalf("auto close window override: %s", cfg.AutoCloseWindow)
+	}
+	if cfg.AutoCloseCheckBatch != 25 {
+		t.Fatalf("auto close check batch override: %d", cfg.AutoCloseCheckBatch)
 	}
 }
 
@@ -225,6 +247,31 @@ func TestLoadWorkerValidation(t *testing.T) {
 			env:  map[string]string{"DB_PASSWORD": "secret", "SLA_BREACH_CHECK_BATCH": "0"},
 			want: "SLA_BREACH_CHECK_BATCH",
 		},
+		{
+			name: "invalid auto close check interval",
+			env:  map[string]string{"DB_PASSWORD": "secret", "AUTO_CLOSE_CHECK_INTERVAL": "soon"},
+			want: "AUTO_CLOSE_CHECK_INTERVAL",
+		},
+		{
+			name: "negative auto close check interval",
+			env:  map[string]string{"DB_PASSWORD": "secret", "AUTO_CLOSE_CHECK_INTERVAL": "-1s"},
+			want: "AUTO_CLOSE_CHECK_INTERVAL",
+		},
+		{
+			name: "invalid auto close window",
+			env:  map[string]string{"DB_PASSWORD": "secret", "AUTO_CLOSE_WINDOW": "soon"},
+			want: "AUTO_CLOSE_WINDOW",
+		},
+		{
+			name: "negative auto close window",
+			env:  map[string]string{"DB_PASSWORD": "secret", "AUTO_CLOSE_WINDOW": "-1s"},
+			want: "AUTO_CLOSE_WINDOW",
+		},
+		{
+			name: "invalid auto close batch",
+			env:  map[string]string{"DB_PASSWORD": "secret", "AUTO_CLOSE_CHECK_BATCH": "0"},
+			want: "AUTO_CLOSE_CHECK_BATCH",
+		},
 	}
 
 	for _, tt := range tests {
@@ -270,6 +317,34 @@ func TestLoadWorkerAllowsZeroSlaBreachInterval(t *testing.T) {
 	}
 	if cfg.SLABreachCheckInterval != 0 {
 		t.Fatalf("sla breach interval: %s, want 0", cfg.SLABreachCheckInterval)
+	}
+}
+
+func TestLoadWorkerAllowsZeroAutoCloseCheckInterval(t *testing.T) {
+	clearWorkerEnv(t)
+	t.Setenv("DB_PASSWORD", "secret")
+	t.Setenv("AUTO_CLOSE_CHECK_INTERVAL", "0s")
+
+	cfg, err := LoadWorker()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.AutoCloseCheckInterval != 0 {
+		t.Fatalf("auto close check interval: %s, want 0", cfg.AutoCloseCheckInterval)
+	}
+}
+
+func TestLoadWorkerAllowsZeroAutoCloseWindow(t *testing.T) {
+	clearWorkerEnv(t)
+	t.Setenv("DB_PASSWORD", "secret")
+	t.Setenv("AUTO_CLOSE_WINDOW", "0s")
+
+	cfg, err := LoadWorker()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.AutoCloseWindow != 0 {
+		t.Fatalf("auto close window: %s, want 0", cfg.AutoCloseWindow)
 	}
 }
 

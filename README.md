@@ -613,6 +613,9 @@ The application reads its configuration from environment variables.
 | `SMTP_FROM_NAME` | No | `Gregport` | Display name for the `From` header |
 | `SLA_BREACH_CHECK_INTERVAL` | No | `1m` | SLA breach check interval; `0` disables the scheduler |
 | `SLA_BREACH_CHECK_BATCH` | No | `100` | Maximum tickets checked per breach run |
+| `AUTO_CLOSE_WINDOW` | No | `168h` | How long a solved ticket ages before being auto-closed; `0` closes immediately |
+| `AUTO_CLOSE_CHECK_INTERVAL` | No | `1h` | Auto-close check interval; `0` disables the scheduler |
+| `AUTO_CLOSE_CHECK_BATCH` | No | `100` | Maximum tickets closed per auto-close run |
 
 Configuration is validated at startup, before the database is opened. Missing
 or invalid values make the process exit non-zero, and every problem found is
@@ -936,6 +939,29 @@ treated as success), while each new minute gets a fresh task ID. The batch size
 is controlled by `SLA_BREACH_CHECK_BATCH` (default `100`).
 
 Set `SLA_BREACH_CHECK_INTERVAL=0` to disable the scheduler.
+
+## Auto Close Scheduler
+
+The worker runs a scheduled auto-close check every `AUTO_CLOSE_CHECK_INTERVAL`
+(default `1h`). It scans tickets that have been in `solved` status for longer
+than `AUTO_CLOSE_WINDOW` (default `168h`, i.e. 7 days) and transitions them to
+`closed`, setting `closed_at`:
+
+- Only solved tickets with `closed_at IS NULL` and `resolved_at` at or before
+  `now() - window` are candidates.
+- Each closure is handled atomically: `status` is set to `closed`, `closed_at`
+  is stamped, and a `ticket.closed` ticket event is recorded in the same
+  transaction.
+- Soft-deleted and non-solved tickets are skipped.
+
+Like the breach check, candidate rows are locked with `FOR UPDATE SKIP LOCKED`,
+so multiple workers never close the same ticket. Each scheduler run enqueues a
+single `ticket:auto_close` task on the `default` queue with a task ID truncated
+to the current minute, so duplicate enqueues within the same minute are
+deduplicated (asynq reports `ErrTaskIDConflict`, treated as success). The batch
+size is controlled by `AUTO_CLOSE_CHECK_BATCH` (default `100`).
+
+Set `AUTO_CLOSE_CHECK_INTERVAL=0` to disable the scheduler.
 
 ---
 
