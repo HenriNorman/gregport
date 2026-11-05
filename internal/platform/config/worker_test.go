@@ -16,6 +16,7 @@ func clearWorkerEnv(t *testing.T) {
 		"WORKER_PORT", "WORKER_CONCURRENCY", "WORKER_CPU_CONCURRENCY", "WORKER_SHUTDOWN_TIMEOUT",
 		"WORKER_READ_HEADER_TIMEOUT", "WORKER_READ_TIMEOUT",
 		"WORKER_WRITE_TIMEOUT", "WORKER_IDLE_TIMEOUT",
+		"WORKER_OUTBOX_INTERVAL", "WORKER_OUTBOX_BATCH",
 		"JWT_SECRET",
 	} {
 		t.Setenv(key, "")
@@ -49,6 +50,9 @@ func TestLoadWorkerDefaults(t *testing.T) {
 	if cfg.RedisAddr != "localhost:6379" || cfg.RedisDB != 0 {
 		t.Fatalf("redis defaults: %+v", cfg)
 	}
+	if cfg.OutboxInterval != time.Second || cfg.OutboxBatch != 100 {
+		t.Fatalf("outbox defaults: interval=%s batch=%d", cfg.OutboxInterval, cfg.OutboxBatch)
+	}
 }
 
 func TestLoadWorkerDoesNotRequireJWTSecret(t *testing.T) {
@@ -77,6 +81,8 @@ func TestLoadWorkerOverrides(t *testing.T) {
 	t.Setenv("WORKER_READ_TIMEOUT", "3s")
 	t.Setenv("WORKER_WRITE_TIMEOUT", "4s")
 	t.Setenv("WORKER_IDLE_TIMEOUT", "5s")
+	t.Setenv("WORKER_OUTBOX_INTERVAL", "250ms")
+	t.Setenv("WORKER_OUTBOX_BATCH", "25")
 
 	cfg, err := LoadWorker()
 	if err != nil {
@@ -101,6 +107,9 @@ func TestLoadWorkerOverrides(t *testing.T) {
 		cfg.WorkerWriteTimeout != 4*time.Second ||
 		cfg.WorkerIdleTimeout != 5*time.Second {
 		t.Fatalf("duration overrides: %+v", cfg)
+	}
+	if cfg.OutboxInterval != 250*time.Millisecond || cfg.OutboxBatch != 25 {
+		t.Fatalf("outbox overrides: interval=%s batch=%d", cfg.OutboxInterval, cfg.OutboxBatch)
 	}
 }
 
@@ -134,6 +143,16 @@ func TestLoadWorkerValidation(t *testing.T) {
 			name: "invalid log level",
 			env:  map[string]string{"DB_PASSWORD": "secret", "LOG_LEVEL": "loud"},
 			want: "log level",
+		},
+		{
+			name: "invalid outbox interval",
+			env:  map[string]string{"DB_PASSWORD": "secret", "WORKER_OUTBOX_INTERVAL": "0s"},
+			want: "WORKER_OUTBOX_INTERVAL",
+		},
+		{
+			name: "invalid outbox batch",
+			env:  map[string]string{"DB_PASSWORD": "secret", "WORKER_OUTBOX_BATCH": "0"},
+			want: "WORKER_OUTBOX_BATCH",
 		},
 	}
 

@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 
+	"github.com/HenriNorman/gregport/internal/outbox"
 	"github.com/HenriNorman/gregport/internal/platform/cache"
 	"github.com/HenriNorman/gregport/internal/platform/config"
 	"github.com/HenriNorman/gregport/internal/platform/database"
@@ -94,6 +96,32 @@ func run() error {
 		"io_concurrency", cfg.WorkerConcurrency,
 		"cpu_concurrency", cfg.WorkerCPUConcurrency,
 		"queues", "critical,default,low,cpu",
+	)
+
+	// The dispatcher turns committed outbox rows into queue jobs. It shares the
+	// process signal context, so a shutdown stops polling immediately.
+	workerCtx, cancelWorker := context.WithCancel(signalCtx)
+	dispatcher := outbox.NewDispatcher(pool, queueClient, logger, cfg.OutboxBatch, cfg.OutboxInterval)
+	dispatcherDone := make(chan struct{})
+	go func() {
+		dispatcher.Run(workerCtx)
+		close(dispatcherDone)
+	}()
+
+	// Stop and join the dispatcher before any deferred Close runs, so it can
+	// never write to a closed pool or Redis client.
+	defer func() {
+		cancelWorker()
+		select {
+		case <-dispatcherDone:
+		case <-time.After(cfg.WorkerShutdownTimeout):
+			logger.Warn("outbox dispatcher did not stop within the shutdown timeout")
+		}
+	}()
+
+	logger.Info("outbox dispatcher started",
+		"interval", cfg.OutboxInterval.String(),
+		"batch", cfg.OutboxBatch,
 	)
 
 	handler := worker.HealthHandler(pool, redisCache, queueClient)

@@ -57,6 +57,50 @@ func TestPermanentSkipsRetry(t *testing.T) {
 	}
 }
 
+func TestJobValidate(t *testing.T) {
+	valid := Job{ID: "event:email", Type: TaskEmailSend, Queue: QueueCritical, MaxRetry: 10}
+
+	tests := []struct {
+		name    string
+		mutate  func(*Job)
+		wantErr bool
+	}{
+		{name: "valid"},
+		{name: "missing id", mutate: func(j *Job) { j.ID = "" }, wantErr: true},
+		{name: "missing type", mutate: func(j *Job) { j.Type = "" }, wantErr: true},
+		{name: "missing queue", mutate: func(j *Job) { j.Queue = "" }, wantErr: true},
+		{name: "zero retries", mutate: func(j *Job) { j.MaxRetry = 0 }, wantErr: true},
+		{name: "negative retries", mutate: func(j *Job) { j.MaxRetry = -1 }, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job := valid
+			if tt.mutate != nil {
+				tt.mutate(&job)
+			}
+			err := job.Validate()
+			if tt.wantErr && err == nil {
+				t.Fatal("expected an error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestEnqueueJobRejectsInvalidJobBeforeUsingRedis(t *testing.T) {
+	// No client is constructed: validation must run first, so this cannot
+	// dial Redis even though the inner client is nil.
+	c := &Client{}
+
+	err := c.EnqueueJob(context.Background(), Job{Type: TaskEmailSend, Queue: QueueCritical, MaxRetry: 1})
+	if err == nil || !strings.Contains(err.Error(), "job id") {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+}
+
 func TestNewServersConstructed(t *testing.T) {
 	cfg := Config{
 		Redis:           RedisOptions{Addr: "127.0.0.1:6379"},

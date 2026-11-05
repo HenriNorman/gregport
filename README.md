@@ -32,7 +32,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
 | Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
 | Production basics | Complete — logging, error envelope, timeouts, health checks, graceful shutdown, config validation, multi-stage image, compose stack, CI and twelve-factor summary |
-| Background worker | In progress — `cmd/worker` with config, logs, connections, health probes, graceful shutdown and asynq queue servers |
+| Background worker | In progress — `cmd/worker` with config, logs, connections, health probes, graceful shutdown, asynq queue servers and the outbox dispatcher |
 | SLA, notifications, webhooks | SLA policies exposed; notifications and webhooks schema defined, not exposed |
 
 ### Authentication
@@ -307,21 +307,6 @@ The service layer depends on repository interfaces rather than concrete implemen
 </details>
 
 <details>
-<summary><code>internal/platform/</code> — shared infrastructure</summary>
-
-- `cache/` — Redis-backed `Cache` interface, tenant-scoped key builders, and an in-memory test double.
-- `clientip/` — client-IP resolution with opt-in trusted-proxy handling.
-- `config/` — configuration loading from environment variables.
-- `database/` — pgx connection pool and transaction management.
-- `httpx/` — `DecodeJSON`, `WriteJSON`, `WriteError`, and `APIError`.
-- `logging/` — JSON `slog` construction, log-level parsing, and the request-scoped logger in the context.
-- `metrics/` — process-local counters for cache, rate-limit, and idempotency outcomes.
-- `ratelimit/` — atomic Redis sliding-window limiter and the in-memory login fallback.
-- `requestctx/` — authenticated principal stored in request context.
-
-</details>
-
-<details>
 <summary><code>migrations/</code> — database migrations</summary>
 
 - SQL schema and migrations.
@@ -338,7 +323,32 @@ The service layer depends on repository interfaces rather than concrete implemen
 - `database/` — pgx connection pool and transaction management.
 - `httpx/` — `DecodeJSON`, `WriteJSON`, `WriteError`, and `APIError`.
 - `logging/` — JSON `slog` construction, log-level parsing, and the request-scoped logger in the context.
+- `metrics/` — process-local counters for cache, rate-limit, and idempotency outcomes.
+- `ratelimit/` — atomic Redis sliding-window limiter and the in-memory login fallback.
 - `requestctx/` — authenticated principal stored in request context, `Kind` (user | api_key) and `ActorID`.
+
+</details>
+
+<details>
+<summary><code>internal/queue/</code> — Redis queue</summary>
+
+- `queue.go` — asynq task types, queue weights, client, deterministic `Job` enqueueing, servers and the slog/error adapters.
+- `retry.go` — exponential backoff with ±20% jitter, capped at one hour.
+
+</details>
+
+<details>
+<summary><code>internal/outbox/</code> — transactional outbox</summary>
+
+- `dispatcher.go` — claims `ticket_events` with `FOR UPDATE SKIP LOCKED`, maps event types to consumers and marks rows dispatched.
+
+</details>
+
+<details>
+<summary><code>internal/worker/</code> — worker runtime</summary>
+
+- `health.go` — `/healthz` and `/readyz` (PostgreSQL, Redis cache and queue).
+- `handlers.go` — asynq handler registration.
 
 </details>
 
@@ -566,6 +576,8 @@ The application reads its configuration from environment variables.
 | `WORKER_READ_TIMEOUT` | No | `10s` | Worker health server timeout |
 | `WORKER_WRITE_TIMEOUT` | No | `10s` | Worker health server timeout |
 | `WORKER_IDLE_TIMEOUT` | No | `60s` | Worker health server idle timeout |
+| `WORKER_OUTBOX_INTERVAL` | No | `1s` | How often the outbox dispatcher polls |
+| `WORKER_OUTBOX_BATCH` | No | `100` | Maximum events claimed per outbox transaction |
 
 Configuration is validated at startup, before the database is opened. Missing
 or invalid values make the process exit non-zero, and every problem found is
@@ -807,6 +819,36 @@ of truth; the queue is the delivery mechanism.
   `WORKER_CONCURRENCY` workers. CPU-bound jobs run on a second asynq server
   with `WORKER_CPU_CONCURRENCY` workers, near the core count, so they cannot
   occupy the I/O pool.
+
+### Outbox dispatcher
+
+Ticket mutations write their `ticket_events` row in the same PostgreSQL
+transaction as the ticket change. That row is the durable outbox: the API never
+needs to talk to Redis to make an event safe.
+
+The worker drains the outbox every `WORKER_OUTBOX_INTERVAL`:
+
+1. Claim up to `WORKER_OUTBOX_BATCH` rows with
+   `SELECT ... WHERE dispatched_at IS NULL ORDER BY created_at, id LIMIT $1
+   FOR UPDATE SKIP LOCKED`. Two workers can poll concurrently without claiming
+   the same row.
+2. Map each event type to its consumers (`ticket.created`, `comment.added`,
+   `ticket.assigned` and `sla.breached` currently fan out to email).
+3. Enqueue each consumer with a deterministic task ID, `eventID:consumer`, so a
+   repeated enqueue cannot create a second job. asynq reports that duplicate as
+   `ErrTaskIDConflict`, which the client treats as success.
+4. Mark the event's `dispatched_at` in the same transaction. If enqueueing
+   fails the transaction rolls back, the events stay undispatched and the next
+   poll retries them.
+
+The result is **at-least-once** delivery. Redis and PostgreSQL cannot be
+updated atomically, so a crash after enqueueing but before committing can leave
+a job in Redis while the event is dispatched again later. Consumers therefore
+check whether their effect already exists and treat a duplicate as success;
+email uses the unique `(event_id, to_email, template)` index for this.
+`DispatchOnce` keeps draining full batches so a backlog is cleared without
+waiting one interval per batch. Unknown event types are marked dispatched
+without producing a job, so they cannot pollute every poll.
 
 ---
 

@@ -37,6 +37,9 @@ type WorkerConfig struct {
 	WorkerReadTimeout       time.Duration
 	WorkerWriteTimeout      time.Duration
 	WorkerIdleTimeout       time.Duration
+
+	OutboxInterval time.Duration
+	OutboxBatch    int
 }
 
 // LoadWorker reads the worker configuration from the environment. Defaults
@@ -66,6 +69,9 @@ func LoadWorker() (WorkerConfig, error) {
 		WorkerReadTimeout:       10 * time.Second,
 		WorkerWriteTimeout:      10 * time.Second,
 		WorkerIdleTimeout:       60 * time.Second,
+
+		OutboxInterval: time.Second,
+		OutboxBatch:    100,
 	}
 
 	var errs []error
@@ -100,6 +106,7 @@ func LoadWorker() (WorkerConfig, error) {
 		{"WORKER_READ_TIMEOUT", &cfg.WorkerReadTimeout},
 		{"WORKER_WRITE_TIMEOUT", &cfg.WorkerWriteTimeout},
 		{"WORKER_IDLE_TIMEOUT", &cfg.WorkerIdleTimeout},
+		{"WORKER_OUTBOX_INTERVAL", &cfg.OutboxInterval},
 	}
 	for _, d := range durations {
 		value, err := envDuration(d.name, *d.dst, false)
@@ -118,6 +125,7 @@ func LoadWorker() (WorkerConfig, error) {
 		{"REDIS_DB", &cfg.RedisDB, 0},
 		{"WORKER_CONCURRENCY", &cfg.WorkerConcurrency, 1},
 		{"WORKER_CPU_CONCURRENCY", &cfg.WorkerCPUConcurrency, 1},
+		{"WORKER_OUTBOX_BATCH", &cfg.OutboxBatch, 1},
 	}
 	for _, n := range ints {
 		value, err := envInt(n.name, *n.dst, n.min)

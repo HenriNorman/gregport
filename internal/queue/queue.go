@@ -6,6 +6,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -93,6 +94,53 @@ func NewClient(cfg Config) *Client {
 // delays.
 func (c *Client) Enqueue(ctx context.Context, task *asynq.Task, opts ...asynq.Option) error {
 	_, err := c.inner.EnqueueContext(ctx, task, opts...)
+	return err
+}
+
+// Job is a queue task with the metadata the outbox needs to make enqueueing
+// deterministic and testable.
+type Job struct {
+	ID       string
+	Type     string
+	Queue    string
+	Payload  []byte
+	MaxRetry int
+}
+
+// Validate rejects incomplete jobs before they reach Redis.
+func (j Job) Validate() error {
+	if j.ID == "" {
+		return fmt.Errorf("queue: job id is required")
+	}
+	if j.Type == "" {
+		return fmt.Errorf("queue: job type is required")
+	}
+	if j.Queue == "" {
+		return fmt.Errorf("queue: job queue is required")
+	}
+	if j.MaxRetry < 1 {
+		return fmt.Errorf("queue: job max retry must be positive")
+	}
+	return nil
+}
+
+// EnqueueJob enqueues a Job with its deterministic task ID. A duplicate ID
+// means another dispatcher already enqueued the same logical job, which is
+// success for an at-least-once pipeline.
+func (c *Client) EnqueueJob(ctx context.Context, job Job) error {
+	if err := job.Validate(); err != nil {
+		return err
+	}
+
+	opts := []asynq.Option{
+		asynq.Queue(job.Queue),
+		asynq.TaskID(job.ID),
+		asynq.MaxRetry(job.MaxRetry),
+	}
+	_, err := c.inner.EnqueueContext(ctx, asynq.NewTask(job.Type, job.Payload), opts...)
+	if errors.Is(err, asynq.ErrTaskIDConflict) {
+		return nil
+	}
 	return err
 }
 
