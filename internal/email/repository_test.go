@@ -224,3 +224,55 @@ func TestRepositoryLoadCommentMissing(t *testing.T) {
 		t.Fatalf("expected ErrCommentNotFound, got %v", err)
 	}
 }
+
+func TestRepositoryPurgeOldDeliveries(t *testing.T) {
+	pool := emailRepoTestPool(t)
+	orgID, ticketID := seedEmailOrg(t, pool)
+	repo := NewRepository(pool)
+
+	// Seed a ticket event so the email_delivery FK is satisfied.
+	var eventID uuid.UUID
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO ticket_events (org_id, ticket_id, actor_type, event_type, data)
+		 VALUES ($1, $2, 'system', 'ticket.created', '{}') RETURNING id`,
+		orgID, ticketID,
+	).Scan(&eventID); err != nil {
+		t.Fatalf("seed ticket event: %v", err)
+	}
+
+	old := time.Now().Add(-48 * time.Hour)
+	recent := time.Now().Add(-1 * time.Hour)
+
+	// Old sent -> purged. Old dead -> purged. Recent sent -> kept. Pending -> kept.
+	insert := func(createdAt time.Time, status string, toEmail string) {
+		if _, err := pool.Exec(context.Background(),
+			`INSERT INTO email_deliveries (org_id, event_id, to_email, template, payload, status, created_at)
+			 VALUES ($1, $2, $3, $4, '{}', $5, $6)`,
+			orgID, eventID, toEmail, "ticket_created", status, createdAt,
+		); err != nil {
+			t.Fatalf("insert delivery: %v", err)
+		}
+	}
+	insert(old, StatusSent, "old-sent@example.com")
+	insert(old, StatusDead, "old-dead@example.com")
+	insert(recent, StatusSent, "recent@example.com")
+	insert(time.Now(), StatusPending, "pending@example.com")
+
+	n, err := repo.PurgeOldDeliveries(context.Background(), old, 100)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("purged: %d, want 2 (old sent + old dead)", n)
+	}
+
+	var count int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM email_deliveries WHERE org_id = $1`, orgID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count deliveries: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("remaining deliveries: %d, want 2 (recent sent + pending)", count)
+	}
+}

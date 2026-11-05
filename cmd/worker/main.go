@@ -14,7 +14,10 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/HenriNorman/gregport/internal/email"
+	"github.com/HenriNorman/gregport/internal/housekeeping"
+	"github.com/HenriNorman/gregport/internal/idempotency"
 	"github.com/HenriNorman/gregport/internal/outbox"
+	"github.com/HenriNorman/gregport/internal/platform/audit"
 	"github.com/HenriNorman/gregport/internal/platform/cache"
 	"github.com/HenriNorman/gregport/internal/platform/config"
 	"github.com/HenriNorman/gregport/internal/platform/database"
@@ -122,10 +125,46 @@ func run() error {
 		return nil
 	})
 
+	idempotencyRepo := idempotency.NewRepository(pool)
+	housekeepingChecker := housekeeping.NewChecker(
+		func(ctx context.Context, before time.Time, batch int) (int64, error) {
+			return idempotencyRepo.PurgeExpired(ctx, before)
+		},
+		func(ctx context.Context, before time.Time, batch int) (int64, error) {
+			return ticketsRepo.PurgeDispatchedEvents(ctx, before, batch)
+		},
+		func(ctx context.Context, before time.Time, batch int) (int64, error) {
+			return audit.PurgeOldLogs(ctx, pool, before, batch)
+		},
+		func(ctx context.Context, before time.Time, batch int) (int64, error) {
+			return emailRepo.PurgeOldDeliveries(ctx, before, batch)
+		},
+	)
+	housekeepingHandler := asynq.HandlerFunc(func(ctx context.Context, task *asynq.Task) error {
+		summary, err := housekeepingChecker.Run(ctx, housekeeping.Config{
+			IDempotencyTTL:         cfg.IDempotencyTTL,
+			TicketEventRetention:   cfg.TicketEventRetention,
+			AuditLogRetention:      cfg.AuditLogRetention,
+			EmailDeliveryRetention: cfg.EmailDeliveryRetention,
+			Batch:                  cfg.HousekeepingBatch,
+		})
+		if err != nil {
+			return err
+		}
+		logger.Info("housekeeping run",
+			"idempotency_keys_purged", summary.IDempotencyKeysPurged,
+			"ticket_events_purged", summary.TicketEventsPurged,
+			"audit_logs_purged", summary.AuditLogsPurged,
+			"email_deliveries_purged", summary.EmailDeliveriesPurged,
+		)
+		return nil
+	})
+
 	mux := worker.NewMux(
 		worker.HandlerRegistration{Type: queue.TaskEmailSend, Handler: emailHandler},
 		worker.HandlerRegistration{Type: queue.TaskSLABreachCheck, Handler: breachHandler},
 		worker.HandlerRegistration{Type: queue.TaskAutoClose, Handler: autoCloseHandler},
+		worker.HandlerRegistration{Type: queue.TaskHousekeeping, Handler: housekeepingHandler},
 	)
 	ioServer := queue.NewIOServer(queueCfg)
 	cpuServer := queue.NewCPUServer(queueCfg)
@@ -229,6 +268,35 @@ func run() error {
 		done = append(done, donePair{done: autoCloseTickerDone, name: "auto close scheduler"})
 	}
 
+	// Housekeeping scheduler: enqueues a housekeeping:run task each tick on the
+	// low queue.
+	if cfg.HousekeepingInterval > 0 {
+		housekeepingTickerDone := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(cfg.HousekeepingInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-workerCtx.Done():
+					close(housekeepingTickerDone)
+					return
+				case <-ticker.C:
+					taskID := "housekeeping:run:" + time.Now().UTC().Truncate(time.Minute).Format(time.RFC3339)
+					if err := queueClient.EnqueueJob(workerCtx, queue.Job{
+						ID:       taskID,
+						Type:     queue.TaskHousekeeping,
+						Queue:    queue.QueueLow,
+						Payload:  []byte(`{}`),
+						MaxRetry: 5,
+					}); err != nil && workerCtx.Err() == nil {
+						logger.Error("enqueue housekeeping run", "error", err)
+					}
+				}
+			}
+		}()
+		done = append(done, donePair{done: housekeepingTickerDone, name: "housekeeping scheduler"})
+	}
+
 	// Stop and join background work before any deferred Close runs, so it can
 	// never write to a closed pool, Redis client or inspector.
 	defer func() {
@@ -265,6 +333,18 @@ func run() error {
 		)
 	} else {
 		logger.Info("auto close scheduler disabled")
+	}
+	if cfg.HousekeepingInterval > 0 {
+		logger.Info("housekeeping scheduler enabled",
+			"interval", cfg.HousekeepingInterval.String(),
+			"batch", cfg.HousekeepingBatch,
+			"ticket_event_retention", cfg.TicketEventRetention.String(),
+			"audit_log_retention", cfg.AuditLogRetention.String(),
+			"email_delivery_retention", cfg.EmailDeliveryRetention.String(),
+			"idempotency_ttl", cfg.IDempotencyTTL.String(),
+		)
+	} else {
+		logger.Info("housekeeping scheduler disabled")
 	}
 
 	handler := worker.HealthHandler(pool, redisCache, queueClient)

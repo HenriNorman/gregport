@@ -346,6 +346,14 @@ The service layer depends on repository interfaces rather than concrete implemen
 </details>
 
 <details>
+<summary><code>internal/housekeeping/</code> — retention-based pruning</summary>
+
+- `housekeeping.go` — runs the configured purge funcs (idempotency keys,
+  dispatched ticket events, audit logs, email deliveries) bounded by batch.
+
+</details>
+
+<details>
 <summary><code>internal/email/</code> — email delivery</summary>
 
 - `models.go` — delivery payload, planned and persisted delivery, templates and statuses.
@@ -616,6 +624,12 @@ The application reads its configuration from environment variables.
 | `AUTO_CLOSE_WINDOW` | No | `168h` | How long a solved ticket ages before being auto-closed; `0` closes immediately |
 | `AUTO_CLOSE_CHECK_INTERVAL` | No | `1h` | Auto-close check interval; `0` disables the scheduler |
 | `AUTO_CLOSE_CHECK_BATCH` | No | `100` | Maximum tickets closed per auto-close run |
+| `HOUSEKEEPING_INTERVAL` | No | `1h` | Housekeeping run interval; `0` disables the scheduler |
+| `HOUSEKEEPING_BATCH` | No | `100` | Maximum rows deleted per housekeeping purge |
+| `TICKET_EVENT_RETENTION` | No | `720h` | How long dispatched ticket events are retained; `0` disables the purge |
+| `AUDIT_LOG_RETENTION` | No | `2160h` | How long audit log rows are retained; `0` disables the purge |
+| `EMAIL_DELIVERY_RETENTION` | No | `720h` | How long sent or dead email deliveries are retained; `0` disables the purge |
+| `IDEMPOTENCY_TTL` | No | `24h` | How long idempotency keys are retained before housekeeping purges them |
 
 Configuration is validated at startup, before the database is opened. Missing
 or invalid values make the process exit non-zero, and every problem found is
@@ -962,6 +976,32 @@ deduplicated (asynq reports `ErrTaskIDConflict`, treated as success). The batch
 size is controlled by `AUTO_CLOSE_CHECK_BATCH` (default `100`).
 
 Set `AUTO_CLOSE_CHECK_INTERVAL=0` to disable the scheduler.
+
+## Housekeeping Scheduler
+
+The worker runs a scheduled housekeeping run every `HOUSEKEEPING_INTERVAL`
+(default `1h`). It prunes rows that have outlived their retention window:
+
+- **Idempotency keys**: expired keys (older than `IDEMPOTENCY_TTL`) are deleted
+  so the idempotency store doesn't grow without bound.
+- **Dispatched ticket events**: `ticket_events` rows that have been dispatched
+  (`dispatched_at IS NOT NULL`) and are older than `TICKET_EVENT_RETENTION`
+  are deleted. Events still referenced by an email delivery are skipped, and
+  undispatched events (the outbox source of truth) are never purged.
+- **Audit logs**: `audit_logs` rows older than `AUDIT_LOG_RETENTION` are deleted.
+- **Email deliveries**: sent or dead deliveries older than
+  `EMAIL_DELIVERY_RETENTION` are deleted. Pending and failed deliveries (which
+  may still be retried) are kept.
+
+Every purge is bounded by `HOUSEKEEPING_BATCH` (default `100`) rows per
+statement, so a long retention window never blocks the worker. Purges are
+independent: a failure in one is logged and does not abort the others. Each
+scheduler run enqueues a single `housekeeping:run` task on the `low` queue with
+a task ID truncated to the current minute, so duplicate enqueues within the
+same minute are deduplicated.
+
+Set `HOUSEKEEPING_INTERVAL=0` to disable the scheduler, or set any retention
+window to `0` to disable that individual purge.
 
 ---
 

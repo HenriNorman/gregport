@@ -128,3 +128,30 @@ func (r *Repository) RecordAttempt(ctx context.Context, id uuid.UUID, status str
 	}
 	return nil
 }
+
+// PurgeOldDeliveries deletes email deliveries older than before, limited to
+// batch rows. Sent and dead deliveries are eligible; pending and failed
+// deliveries (which may still be retried) are kept.
+func (r *Repository) PurgeOldDeliveries(ctx context.Context, before time.Time, batch int) (int64, error) {
+	if before.IsZero() {
+		return 0, fmt.Errorf("purge time is required")
+	}
+	if batch <= 0 {
+		batch = 100
+	}
+	tag, err := r.pool.Exec(ctx,
+		`WITH to_delete AS (
+		         SELECT id FROM email_deliveries
+		         WHERE created_at <= $1
+		           AND status IN ($2, $3)
+		         LIMIT $4
+		     )
+		     DELETE FROM email_deliveries
+		     WHERE id IN (SELECT id FROM to_delete)`,
+		before, StatusSent, StatusDead, batch,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("purge old email deliveries: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}

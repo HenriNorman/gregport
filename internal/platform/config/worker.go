@@ -49,6 +49,15 @@ type WorkerConfig struct {
 	AutoCloseCheckInterval time.Duration
 	AutoCloseCheckBatch    int
 
+	HousekeepingInterval time.Duration
+	HousekeepingBatch    int
+
+	TicketEventRetention   time.Duration
+	AuditLogRetention      time.Duration
+	EmailDeliveryRetention time.Duration
+
+	IDempotencyTTL time.Duration
+
 	SMTPHost     string
 	SMTPPort     int
 	SMTPUser     string
@@ -97,6 +106,15 @@ func LoadWorker() (WorkerConfig, error) {
 		AutoCloseCheckInterval: time.Hour,
 		AutoCloseCheckBatch:    100,
 
+		HousekeepingInterval: time.Hour,
+		HousekeepingBatch:    100,
+
+		TicketEventRetention:   720 * time.Hour,
+		AuditLogRetention:      2160 * time.Hour,
+		EmailDeliveryRetention: 720 * time.Hour,
+
+		IDempotencyTTL: 24 * time.Hour,
+
 		SMTPHost:     getEnv("SMTP_HOST", "localhost"),
 		SMTPPort:     2525,
 		SMTPUser:     os.Getenv("SMTP_USER"),
@@ -143,6 +161,11 @@ func LoadWorker() (WorkerConfig, error) {
 		{"SLA_BREACH_CHECK_INTERVAL", &cfg.SLABreachCheckInterval, true},
 		{"AUTO_CLOSE_CHECK_INTERVAL", &cfg.AutoCloseCheckInterval, true},
 		{"AUTO_CLOSE_WINDOW", &cfg.AutoCloseWindow, true},
+		{"HOUSEKEEPING_INTERVAL", &cfg.HousekeepingInterval, true},
+		{"TICKET_EVENT_RETENTION", &cfg.TicketEventRetention, true},
+		{"AUDIT_LOG_RETENTION", &cfg.AuditLogRetention, true},
+		{"EMAIL_DELIVERY_RETENTION", &cfg.EmailDeliveryRetention, true},
+		{"IDEMPOTENCY_TTL", &cfg.IDempotencyTTL, true},
 	}
 	for _, d := range durations {
 		value, err := envDuration(d.name, *d.dst, d.allowZero)
@@ -164,6 +187,7 @@ func LoadWorker() (WorkerConfig, error) {
 		{"WORKER_OUTBOX_BATCH", &cfg.OutboxBatch, 1},
 		{"SLA_BREACH_CHECK_BATCH", &cfg.SLABreachCheckBatch, 1},
 		{"AUTO_CLOSE_CHECK_BATCH", &cfg.AutoCloseCheckBatch, 1},
+		{"HOUSEKEEPING_BATCH", &cfg.HousekeepingBatch, 1},
 		{"SMTP_PORT", &cfg.SMTPPort, 1},
 	}
 	for _, n := range ints {

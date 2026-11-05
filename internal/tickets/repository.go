@@ -445,6 +445,37 @@ func (r *Repository) SoftDeleteTicket(ctx context.Context, orgID uuid.UUID, numb
 	})
 }
 
+// PurgeDispatchedEvents deletes dispatched ticket_events older than before,
+// limited to batch rows. Events still referenced by an email_delivery are
+// skipped so the event_id foreign key is never violated; the email delivery
+// purge should run first to unblock them.
+func (r *Repository) PurgeDispatchedEvents(ctx context.Context, before time.Time, batch int) (int64, error) {
+	if before.IsZero() {
+		return 0, fmt.Errorf("purge time is required")
+	}
+	if batch <= 0 {
+		batch = 100
+	}
+	tag, err := r.pool.Exec(ctx,
+		`WITH to_delete AS (
+		         SELECT id FROM ticket_events
+		         WHERE dispatched_at IS NOT NULL
+		           AND created_at <= $1
+		           AND NOT EXISTS (
+		                   SELECT 1 FROM email_deliveries e WHERE e.event_id = ticket_events.id
+		               )
+		         LIMIT $2
+		     )
+		     DELETE FROM ticket_events
+		     WHERE id IN (SELECT id FROM to_delete)`,
+		before, batch,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("purge dispatched ticket events: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (r *Repository) CreateComment(ctx context.Context, in CreateCommentInput) (Comment, error) {
 	var out Comment
 	var curMerged *uuid.UUID

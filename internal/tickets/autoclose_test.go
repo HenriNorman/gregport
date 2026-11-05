@@ -59,6 +59,7 @@ func seedAutocloseOrg(t *testing.T, pool *pgxpool.Pool, resolvedAt time.Time) (o
 
 	t.Cleanup(func() {
 		bg := context.Background()
+		_, _ = pool.Exec(bg, `DELETE FROM email_deliveries WHERE org_id = $1`, orgID)
 		_, _ = pool.Exec(bg, `DELETE FROM ticket_events WHERE org_id = $1`, orgID)
 		_, _ = pool.Exec(bg, `DELETE FROM tickets WHERE org_id = $1`, orgID)
 		_, _ = pool.Exec(bg, `DELETE FROM customers WHERE org_id = $1`, orgID)
@@ -275,5 +276,108 @@ func TestAutoCloseConcurrentRunners(t *testing.T) {
 	}
 	if count := countClosedEvents(t, pool, orgID); count != 15 {
 		t.Fatalf("closed events: %d, want 15", count)
+	}
+}
+
+func seedTicketEvent(t *testing.T, pool *pgxpool.Pool, orgID, ticketID uuid.UUID, eventType string, createdAt time.Time, dispatched bool) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	var dispatchedArg any
+	if dispatched {
+		dispatchedArg = time.Now()
+	}
+	if err := pool.QueryRow(context.Background(),
+		`INSERT INTO ticket_events (org_id, ticket_id, actor_type, event_type, data, created_at, dispatched_at)
+		 VALUES ($1, $2, 'system', $3, '{}', $4, $5)
+		 RETURNING id`,
+		orgID, ticketID, eventType, createdAt, dispatchedArg,
+	).Scan(&id); err != nil {
+		t.Fatalf("seed ticket event: %v", err)
+	}
+	return id
+}
+
+func seedEmailDelivery(t *testing.T, pool *pgxpool.Pool, orgID, eventID uuid.UUID) error {
+	t.Helper()
+	_, err := pool.Exec(context.Background(),
+		`INSERT INTO email_deliveries (org_id, event_id, to_email, template, payload, status)
+		 VALUES ($1, $2, $3, $4, '{}', 'sent')`,
+		orgID, eventID, "customer@example.com", "ticket_created",
+	)
+	return err
+}
+
+func countTicketEvents(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM ticket_events WHERE org_id = $1`,
+		orgID,
+	).Scan(&n); err != nil {
+		t.Fatalf("count ticket events: %v", err)
+	}
+	return n
+}
+
+func TestPurgeDispatchedEvents(t *testing.T) {
+	pool := autocloseTestPool(t)
+	orgID, ticketID, customerID := seedAutocloseOrg(t, pool, time.Now())
+	_ = customerID
+
+	repo := NewRepository(pool)
+	old := time.Now().Add(-48 * time.Hour)
+	recent := time.Now().Add(-1 * time.Hour)
+
+	// Dispatched and old -> should be purged.
+	oldID := seedTicketEvent(t, pool, orgID, ticketID, "ticket.created", old, true)
+	// Dispatched but recent -> should be kept.
+	recentID := seedTicketEvent(t, pool, orgID, ticketID, "ticket.created", recent, true)
+	// Undispatched and old -> should be kept (outbox source of truth).
+	undispatchedID := seedTicketEvent(t, pool, orgID, ticketID, "ticket.created", old, false)
+	// Dispatched, old, but referenced by an email_delivery -> should be kept.
+	referencedID := seedTicketEvent(t, pool, orgID, ticketID, "ticket.created", old, true)
+	if err := seedEmailDelivery(t, pool, orgID, referencedID); err != nil {
+		t.Fatalf("seed email delivery: %v", err)
+	}
+
+	n, err := repo.PurgeDispatchedEvents(context.Background(), old, 100)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("purged: %d, want 1 (only old dispatched unreferenced event)", n)
+	}
+
+	remaining := countTicketEvents(t, pool, orgID)
+	if remaining != 3 {
+		t.Fatalf("remaining ticket events: %d, want 3", remaining)
+	}
+	// recentID and referencedID stay dispatched; undispatchedID stays undispatched.
+	for _, id := range []uuid.UUID{recentID, referencedID} {
+		var dispatched *time.Time
+		if err := pool.QueryRow(context.Background(),
+			`SELECT dispatched_at FROM ticket_events WHERE id = $1`, id,
+		).Scan(&dispatched); err != nil {
+			t.Fatalf("scan event %s: %v", id, err)
+		}
+		if dispatched == nil {
+			t.Fatalf("event %s was unexpectedly purged or undispatched", id)
+		}
+	}
+	// undispatchedID must still exist with dispatched_at NULL.
+	var dispatched *time.Time
+	if err := pool.QueryRow(context.Background(),
+		`SELECT dispatched_at FROM ticket_events WHERE id = $1`, undispatchedID,
+	).Scan(&dispatched); err != nil {
+		t.Fatalf("scan undispatched event: %v", err)
+	}
+	if dispatched != nil {
+		t.Fatalf("undispatched event should have dispatched_at NULL")
+	}
+	// oldID must be gone.
+	if err := pool.QueryRow(context.Background(),
+		`SELECT 1 FROM ticket_events WHERE id = $1`, oldID,
+	).Scan(&dispatched); err == nil {
+		t.Fatalf("old dispatched event was not purged")
 	}
 }

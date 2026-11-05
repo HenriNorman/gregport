@@ -20,6 +20,9 @@ func clearWorkerEnv(t *testing.T) {
 		"WORKER_QUEUE_STATS_INTERVAL",
 		"SLA_BREACH_CHECK_INTERVAL", "SLA_BREACH_CHECK_BATCH",
 		"AUTO_CLOSE_CHECK_INTERVAL", "AUTO_CLOSE_WINDOW", "AUTO_CLOSE_CHECK_BATCH",
+		"HOUSEKEEPING_INTERVAL", "HOUSEKEEPING_BATCH",
+		"TICKET_EVENT_RETENTION", "AUDIT_LOG_RETENTION", "EMAIL_DELIVERY_RETENTION",
+		"IDEMPOTENCY_TTL",
 		"SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD",
 		"SMTP_FROM", "SMTP_FROM_NAME",
 		"JWT_SECRET",
@@ -82,6 +85,24 @@ func TestLoadWorkerDefaults(t *testing.T) {
 	if cfg.AutoCloseCheckBatch != 100 {
 		t.Fatalf("auto close check batch: %d", cfg.AutoCloseCheckBatch)
 	}
+	if cfg.HousekeepingInterval != time.Hour {
+		t.Fatalf("housekeeping interval: %s", cfg.HousekeepingInterval)
+	}
+	if cfg.HousekeepingBatch != 100 {
+		t.Fatalf("housekeeping batch: %d", cfg.HousekeepingBatch)
+	}
+	if cfg.TicketEventRetention != 720*time.Hour {
+		t.Fatalf("ticket event retention: %s", cfg.TicketEventRetention)
+	}
+	if cfg.AuditLogRetention != 2160*time.Hour {
+		t.Fatalf("audit log retention: %s", cfg.AuditLogRetention)
+	}
+	if cfg.EmailDeliveryRetention != 720*time.Hour {
+		t.Fatalf("email delivery retention: %s", cfg.EmailDeliveryRetention)
+	}
+	if cfg.IDempotencyTTL != 24*time.Hour {
+		t.Fatalf("idempotency TTL: %s", cfg.IDempotencyTTL)
+	}
 }
 
 func TestLoadWorkerDoesNotRequireJWTSecret(t *testing.T) {
@@ -124,6 +145,12 @@ func TestLoadWorkerOverrides(t *testing.T) {
 	t.Setenv("AUTO_CLOSE_CHECK_INTERVAL", "30m")
 	t.Setenv("AUTO_CLOSE_WINDOW", "72h")
 	t.Setenv("AUTO_CLOSE_CHECK_BATCH", "25")
+	t.Setenv("HOUSEKEEPING_INTERVAL", "2h")
+	t.Setenv("HOUSEKEEPING_BATCH", "75")
+	t.Setenv("TICKET_EVENT_RETENTION", "48h")
+	t.Setenv("AUDIT_LOG_RETENTION", "100h")
+	t.Setenv("EMAIL_DELIVERY_RETENTION", "200h")
+	t.Setenv("IDEMPOTENCY_TTL", "6h")
 
 	cfg, err := LoadWorker()
 	if err != nil {
@@ -178,6 +205,24 @@ func TestLoadWorkerOverrides(t *testing.T) {
 	}
 	if cfg.AutoCloseCheckBatch != 25 {
 		t.Fatalf("auto close check batch override: %d", cfg.AutoCloseCheckBatch)
+	}
+	if cfg.HousekeepingInterval != 2*time.Hour {
+		t.Fatalf("housekeeping interval override: %s", cfg.HousekeepingInterval)
+	}
+	if cfg.HousekeepingBatch != 75 {
+		t.Fatalf("housekeeping batch override: %d", cfg.HousekeepingBatch)
+	}
+	if cfg.TicketEventRetention != 48*time.Hour {
+		t.Fatalf("ticket event retention override: %s", cfg.TicketEventRetention)
+	}
+	if cfg.AuditLogRetention != 100*time.Hour {
+		t.Fatalf("audit log retention override: %s", cfg.AuditLogRetention)
+	}
+	if cfg.EmailDeliveryRetention != 200*time.Hour {
+		t.Fatalf("email delivery retention override: %s", cfg.EmailDeliveryRetention)
+	}
+	if cfg.IDempotencyTTL != 6*time.Hour {
+		t.Fatalf("idempotency TTL override: %s", cfg.IDempotencyTTL)
 	}
 }
 
@@ -272,6 +317,31 @@ func TestLoadWorkerValidation(t *testing.T) {
 			env:  map[string]string{"DB_PASSWORD": "secret", "AUTO_CLOSE_CHECK_BATCH": "0"},
 			want: "AUTO_CLOSE_CHECK_BATCH",
 		},
+		{
+			name: "invalid housekeeping interval",
+			env:  map[string]string{"DB_PASSWORD": "secret", "HOUSEKEEPING_INTERVAL": "soon"},
+			want: "HOUSEKEEPING_INTERVAL",
+		},
+		{
+			name: "negative housekeeping interval",
+			env:  map[string]string{"DB_PASSWORD": "secret", "HOUSEKEEPING_INTERVAL": "-1s"},
+			want: "HOUSEKEEPING_INTERVAL",
+		},
+		{
+			name: "invalid housekeeping batch",
+			env:  map[string]string{"DB_PASSWORD": "secret", "HOUSEKEEPING_BATCH": "0"},
+			want: "HOUSEKEEPING_BATCH",
+		},
+		{
+			name: "invalid ticket event retention",
+			env:  map[string]string{"DB_PASSWORD": "secret", "TICKET_EVENT_RETENTION": "soon"},
+			want: "TICKET_EVENT_RETENTION",
+		},
+		{
+			name: "invalid idempotency TTL",
+			env:  map[string]string{"DB_PASSWORD": "secret", "IDEMPOTENCY_TTL": "soon"},
+			want: "IDEMPOTENCY_TTL",
+		},
 	}
 
 	for _, tt := range tests {
@@ -345,6 +415,34 @@ func TestLoadWorkerAllowsZeroAutoCloseWindow(t *testing.T) {
 	}
 	if cfg.AutoCloseWindow != 0 {
 		t.Fatalf("auto close window: %s, want 0", cfg.AutoCloseWindow)
+	}
+}
+
+func TestLoadWorkerAllowsZeroHousekeepingInterval(t *testing.T) {
+	clearWorkerEnv(t)
+	t.Setenv("DB_PASSWORD", "secret")
+	t.Setenv("HOUSEKEEPING_INTERVAL", "0s")
+
+	cfg, err := LoadWorker()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.HousekeepingInterval != 0 {
+		t.Fatalf("housekeeping interval: %s, want 0", cfg.HousekeepingInterval)
+	}
+}
+
+func TestLoadWorkerAllowsZeroTicketEventRetention(t *testing.T) {
+	clearWorkerEnv(t)
+	t.Setenv("DB_PASSWORD", "secret")
+	t.Setenv("TICKET_EVENT_RETENTION", "0s")
+
+	cfg, err := LoadWorker()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.TicketEventRetention != 0 {
+		t.Fatalf("ticket event retention: %s, want 0", cfg.TicketEventRetention)
 	}
 }
 

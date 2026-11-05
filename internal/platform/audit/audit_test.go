@@ -90,3 +90,55 @@ func TestRecord_InsertsRow(t *testing.T) {
 		t.Fatalf("entity_id mismatch: %v", gotEnt)
 	}
 }
+
+func TestPurgeOldLogs(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	var orgID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO organizations (name, slug) VALUES ('Audit Purge Test', $1) RETURNING id`,
+		"auditpurge-"+uuid.NewString()[:8],
+	).Scan(&orgID); err != nil {
+		t.Fatalf("org: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = pool.Exec(bg, `DELETE FROM audit_logs WHERE org_id = $1`, orgID)
+		_, _ = pool.Exec(bg, `DELETE FROM organizations WHERE id = $1`, orgID)
+	})
+
+	old := time.Now().Add(-48 * time.Hour)
+	recent := time.Now().Add(-1 * time.Hour)
+
+	insert := func(createdAt time.Time) {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO audit_logs (org_id, actor_type, actor_id, action, entity_type, entity_id, data, created_at)
+			 VALUES ($1, 'system', NULL, 'test.action', 'test_entity', NULL, '{}', $2)`,
+			orgID, createdAt,
+		); err != nil {
+			t.Fatalf("insert audit log: %v", err)
+		}
+	}
+	insert(old)
+	insert(old)
+	insert(recent)
+
+	n, err := PurgeOldLogs(ctx, pool, old, 100)
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("purged: %d, want 2 (old audit logs)", n)
+	}
+
+	var count int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM audit_logs WHERE org_id = $1`, orgID,
+	).Scan(&count); err != nil {
+		t.Fatalf("count audit logs: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("remaining audit logs: %d, want 1 (recent)", count)
+	}
+}
