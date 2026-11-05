@@ -112,6 +112,15 @@ The SLA policy endpoints expose the `sla_policies` table:
   references the policy, so due-date history is never orphaned.
 - Every read and write is scoped to the caller's org; another tenant's policy
   returns `404`.
+- The ticket service applies the org's cached policy on create: the matching
+  priority supplies `sla_policy_id`, `first_response_due_at` and
+  `resolution_due_at`. Changing a ticket's priority recomputes both deadlines
+  from the ticket's creation time; a priority with no policy clears them.
+- `internal/sla/engine.go` is a pure calculator. `WallClock` adds calendar
+  minutes behind the `Calculator` interface, so a business-hours calendar can
+  replace it later without touching the ticket service. Non-positive targets
+  return `ErrInvalidDeadline`; a lookup or calculation failure logs a warning
+  and leaves the ticket without SLA dates rather than failing the write.
 
 ### Dashboard Counts
 
@@ -243,6 +252,7 @@ The service layer depends on repository interfaces rather than concrete implemen
 <summary><code>internal/sla/</code> — SLA policies</summary>
 
 - `models.go` — policy entity, request/response DTOs, and errors.
+- `engine.go` — pure wall-clock deadline calculator behind a `Calculator` interface.
 - `repository.go` — org-scoped CRUD and unique/FK error mapping.
 - `cached_store.go` — read-through caches for lists and items with invalidation.
 - `service.go` — normalisation and validation rules.
@@ -330,6 +340,15 @@ The service layer depends on repository interfaces rather than concrete implemen
 
 Migrations live in `migrations/`. The Compose stack applies the `*.up.sql`
 files in order when the database volume is first created.
+
+`0004_worker_sla_email` prepares the background pipeline:
+
+- `ticket_events.dispatched_at` (partial index where it is `NULL`) marks the
+  outbox rows the dispatcher still has to enqueue.
+- `tickets.first_response_breached_at` and `tickets.resolution_breached_at`
+  record the one-time breach markers, with partial indexes on the due columns.
+- `email_deliveries.event_id` plus a unique index over
+  `(event_id, to_email, template)` makes email delivery idempotent.
 
 ---
 

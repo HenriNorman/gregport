@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/HenriNorman/gregport/internal/auth"
+	"github.com/HenriNorman/gregport/internal/platform/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/HenriNorman/gregport/internal/platform/database"
-	"github.com/HenriNorman/gregport/internal/auth"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type ListFilter struct {
@@ -41,6 +41,14 @@ type UpdateInput struct {
 	Status          *string
 	Priority        *string
 	Subject         *string
+
+	// RecomputeSLA is set when priority changed. When true the three SLA
+	// fields are written as given, including NULL when the new priority has no
+	// policy.
+	RecomputeSLA       bool
+	SLAPolicyID        *uuid.UUID
+	FirstResponseDueAt *time.Time
+	ResolutionDueAt    *time.Time
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
@@ -55,6 +63,10 @@ type CreateInput struct {
 	Subject        string
 	Body           string
 	Priority       string
+
+	SLAPolicyID        *uuid.UUID
+	FirstResponseDueAt *time.Time
+	ResolutionDueAt    *time.Time
 }
 
 type AssignInput struct {
@@ -100,15 +112,19 @@ func (r *Repository) CreateTicket(ctx context.Context, in CreateInput) (Ticket, 
 		}
 
 		if err := tx.QueryRow(ctx,
-			`INSERT INTO tickets (org_id, number, requester_id, subject, priority, channel)
-			 VALUES ($1, $2, $3, $4, $5, 'api')
+			`INSERT INTO tickets (org_id, number, requester_id, subject, priority, channel,
+			                      sla_policy_id, first_response_due_at, resolution_due_at)
+			 VALUES ($1, $2, $3, $4, $5, 'api', $6, $7, $8)
 			 RETURNING id, org_id, number, requester_id, subject, status, priority,
+			           sla_policy_id, first_response_due_at, resolution_due_at,
 			           channel, version, created_at, updated_at`,
 			in.OrgID, number, requesterID, in.Subject, in.Priority,
+			in.SLAPolicyID, in.FirstResponseDueAt, in.ResolutionDueAt,
 		).Scan(
 			&ticket.ID, &ticket.OrgID, &ticket.Number, &ticket.RequesterID,
-			&ticket.Subject, &ticket.Status, &ticket.Priority, &ticket.Channel,
-			&ticket.Version, &ticket.CreatedAt, &ticket.UpdatedAt,
+			&ticket.Subject, &ticket.Status, &ticket.Priority,
+			&ticket.SLAPolicyID, &ticket.FirstResponseDueAt, &ticket.ResolutionDueAt,
+			&ticket.Channel, &ticket.Version, &ticket.CreatedAt, &ticket.UpdatedAt,
 		); err != nil {
 			return fmt.Errorf("insert ticket: %w", err)
 		}
@@ -285,7 +301,7 @@ func (r *Repository) UpdateTicket(ctx context.Context, in UpdateInput) (Ticket, 
 			}
 			return fmt.Errorf("lock ticket: %w", err)
 		}
-		
+
 		if curMerged != nil {
 			return ErrTicketMerged
 		}
@@ -326,6 +342,11 @@ func (r *Repository) UpdateTicket(ctx context.Context, in UpdateInput) (Ticket, 
 		}
 		if in.Priority != nil {
 			add("priority", *in.Priority)
+		}
+		if in.RecomputeSLA {
+			add("sla_policy_id", in.SLAPolicyID)
+			add("first_response_due_at", in.FirstResponseDueAt)
+			add("resolution_due_at", in.ResolutionDueAt)
 		}
 		if in.Subject != nil {
 			add("subject", *in.Subject)
@@ -467,7 +488,7 @@ func (r *Repository) CreateComment(ctx context.Context, in CreateCommentInput) (
 			); err != nil {
 				return fmt.Errorf("bump ticket: %w", err)
 			}
-		} 
+		}
 		// customer comments have actor_user_id NULL and can't be watchers)
 		if in.Actor.ID != nil {
 			if _, err := tx.Exec(ctx,
@@ -1290,9 +1311,9 @@ func (r *Repository) MergeTickets(ctx context.Context, orgID uuid.UUID, sourceNu
 	return source, target, nil
 }
 
-//in the Model it was Actions, not body
-//but in the DB its body, so now body fetched from the DB is assigned into 
-//actions field in internal/tickets/models.go
+// in the Model it was Actions, not body
+// but in the DB its body, so now body fetched from the DB is assigned into
+// actions field in internal/tickets/models.go
 func (r *Repository) CreateMacro(ctx context.Context, orgID, createdBy uuid.UUID, name string, actions []byte) (Macro, error) {
 	var m Macro
 	err := r.pool.QueryRow(ctx,
@@ -1462,9 +1483,9 @@ func (r *Repository) DeleteInvitation(ctx context.Context, orgID, invitationID u
 // user). Duplicate membership returns ErrDuplicateMembership.
 func (r *Repository) AcceptInvitation(ctx context.Context, tokenHash string, existingUserID *uuid.UUID, name, passwordHash string) (auth.User, auth.Organization, auth.Membership, error) {
 	var (
-		outUser  auth.User
-		outOrg   auth.Organization
-		outMem   auth.Membership
+		outUser auth.User
+		outOrg  auth.Organization
+		outMem  auth.Membership
 	)
 
 	err := database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
@@ -1649,6 +1670,7 @@ func (r *Repository) UpdateMemberRoleTx(ctx context.Context, tx pgx.Tx, orgID, u
 	}
 	return nil
 }
+
 // RemoveMember deletes a membership and revokes the user's refresh tokens
 // for this org. Refuses to remove the last owner.
 func (r *Repository) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error {

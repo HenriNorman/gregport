@@ -15,6 +15,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/database"
 	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
+	"github.com/HenriNorman/gregport/internal/sla"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
@@ -26,6 +27,20 @@ type Service struct {
 	invitations *InvitationTokenManager
 	lastUsed    *LastUsedThrottle
 	counts      CountsCacheInvalidator
+	sla         SLAStore
+	deadlines   sla.Calculator
+}
+
+// SLAStore is the policy source the ticket service consults. The cached SLA
+// store from the caching layer satisfies it.
+type SLAStore interface {
+	List(ctx context.Context, orgID uuid.UUID) ([]sla.Policy, error)
+}
+
+// SetSLAStore wires SLA policy lookup. Without it tickets are created without
+// due dates, which keeps the service usable in isolation.
+func (s *Service) SetSLAStore(store SLAStore) {
+	s.sla = store
 }
 
 // CountsCacheInvalidator is implemented by the dashboard cache. Ticket
@@ -59,6 +74,7 @@ func NewService(repo *Repository, invitations *InvitationTokenManager) *Service 
 	s := &Service{
 		repo:        repo,
 		invitations: invitations,
+		deadlines:   sla.WallClock{},
 	}
 	s.lastUsed = NewLastUsedThrottle(func(ctx context.Context, keyID uuid.UUID) error {
 		_, err := repo.pool.Exec(ctx,
@@ -66,6 +82,40 @@ func NewService(repo *Repository, invitations *InvitationTokenManager) *Service 
 		return err
 	})
 	return s
+}
+
+// slaDates resolves the policy for a priority and computes its deadlines.
+// Any lookup or calculation failure degrades to "no SLA" rather than blocking
+// ticket writes, and is logged for operators.
+type slaDates struct {
+	policyID   *uuid.UUID
+	firstDue   *time.Time
+	resolveDue *time.Time
+}
+
+func (s *Service) slaDatesFor(ctx context.Context, orgID uuid.UUID, priority string, createdAt time.Time) slaDates {
+	if s.sla == nil || s.deadlines == nil {
+		return slaDates{}
+	}
+
+	policies, err := s.sla.List(ctx, orgID)
+	if err != nil {
+		logging.FromContext(ctx).Warn("sla policy lookup failed", "error", err)
+		return slaDates{}
+	}
+	for i := range policies {
+		if policies[i].Priority != priority {
+			continue
+		}
+		d, err := s.deadlines.Deadlines(createdAt, sla.TargetFromPolicy(policies[i]))
+		if err != nil {
+			logging.FromContext(ctx).Warn("sla deadline calculation failed", "error", err)
+			return slaDates{}
+		}
+		id := policies[i].ID
+		return slaDates{policyID: &id, firstDue: &d.FirstResponse, resolveDue: &d.Resolution}
+	}
+	return slaDates{}
 }
 
 func (s *Service) CreateTicket(ctx context.Context, p requestctx.Principal, req CreateTicketRequest) (Ticket, error) {
@@ -87,14 +137,19 @@ func (s *Service) CreateTicket(ctx context.Context, p requestctx.Principal, req 
 		return Ticket{}, ErrInvalidInput
 	}
 
+	dates := s.slaDatesFor(ctx, p.OrgID, priority, time.Now().UTC())
+
 	tk, _, err := s.repo.CreateTicket(ctx, CreateInput{
-		OrgID:          p.OrgID,
-		Actor:          Actor{Type: "user", ID: &p.ActorID},
-		RequesterEmail: strings.ToLower(strings.TrimSpace(req.RequesterEmail)),
-		RequesterName:  strings.TrimSpace(req.RequesterName),
-		Subject:        subject,
-		Body:           req.Body,
-		Priority:       priority,
+		OrgID:              p.OrgID,
+		Actor:              Actor{Type: "user", ID: &p.ActorID},
+		RequesterEmail:     strings.ToLower(strings.TrimSpace(req.RequesterEmail)),
+		RequesterName:      strings.TrimSpace(req.RequesterName),
+		Subject:            subject,
+		Body:               req.Body,
+		Priority:           priority,
+		SLAPolicyID:        dates.policyID,
+		FirstResponseDueAt: dates.firstDue,
+		ResolutionDueAt:    dates.resolveDue,
 	})
 	if err == nil {
 		s.invalidateCounts(ctx, p.OrgID)
@@ -125,14 +180,31 @@ func (s *Service) UpdateTicket(ctx context.Context, p requestctx.Principal, numb
 		req.Subject = &v
 	}
 
+	var dates slaDates
+	recomputeSLA := false
+	if req.Priority != nil {
+		current, err := s.repo.GetTicket(ctx, p.OrgID, number)
+		if err != nil {
+			return Ticket{}, err
+		}
+		if current.Priority != *req.Priority {
+			recomputeSLA = true
+			dates = s.slaDatesFor(ctx, p.OrgID, *req.Priority, current.CreatedAt)
+		}
+	}
+
 	tk, err := s.repo.UpdateTicket(ctx, UpdateInput{
-		OrgID:           p.OrgID,
-		Number:          number,
-		ExpectedVersion: version,
-		Actor:           Actor{Type: "user", ID: &p.ActorID},
-		Status:          req.Status,
-		Priority:        req.Priority,
-		Subject:         req.Subject,
+		OrgID:              p.OrgID,
+		Number:             number,
+		ExpectedVersion:    version,
+		Actor:              Actor{Type: "user", ID: &p.ActorID},
+		Status:             req.Status,
+		Priority:           req.Priority,
+		Subject:            req.Subject,
+		RecomputeSLA:       recomputeSLA,
+		SLAPolicyID:        dates.policyID,
+		FirstResponseDueAt: dates.firstDue,
+		ResolutionDueAt:    dates.resolveDue,
 	})
 	if err == nil {
 		s.invalidateCounts(ctx, p.OrgID)

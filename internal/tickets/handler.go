@@ -41,15 +41,17 @@ type RequesterDTO struct {
 }
 
 type TicketDTO struct {
-	Number    int64        `json:"number"    example:"1042"`
-	ID        string       `json:"id"        example:"550e8400-e29b-41d4-a716-446655440000"`
-	Subject   string       `json:"subject"   example:"Cannot log in"`
-	Status    string       `json:"status"    example:"open"   enums:"new,open,pending,solved,closed"`
-	Priority  string       `json:"priority"  example:"normal" enums:"low,normal,high,urgent"`
-	Requester RequesterDTO `json:"requester"`
-	Version   int          `json:"version"   example:"3"`
-	CreatedAt time.Time    `json:"created_at" example:"2026-01-15T10:00:00Z"`
-	UpdatedAt time.Time    `json:"updated_at" example:"2026-01-15T10:00:00Z"`
+	Number             int64        `json:"number"                        example:"1042"`
+	ID                 string       `json:"id"                            example:"550e8400-e29b-41d4-a716-446655440000"`
+	Subject            string       `json:"subject"                       example:"Cannot log in"`
+	Status             string       `json:"status"                        example:"open"   enums:"new,open,pending,solved,closed"`
+	Priority           string       `json:"priority"                      example:"normal" enums:"low,normal,high,urgent"`
+	Requester          RequesterDTO `json:"requester"`
+	FirstResponseDueAt *time.Time   `json:"first_response_due_at,omitempty" example:"2026-01-15T10:15:00Z"`
+	ResolutionDueAt    *time.Time   `json:"resolution_due_at,omitempty"    example:"2026-01-15T12:00:00Z"`
+	Version            int          `json:"version"                       example:"3"`
+	CreatedAt          time.Time    `json:"created_at"                    example:"2026-01-15T10:00:00Z"`
+	UpdatedAt          time.Time    `json:"updated_at"                    example:"2026-01-15T10:00:00Z"`
 }
 
 type CommentDTO struct {
@@ -107,6 +109,9 @@ func toTicketDTO(t Ticket) TicketDTO {
 		Version:   t.Version,
 		CreatedAt: t.CreatedAt,
 		UpdatedAt: t.UpdatedAt,
+
+		FirstResponseDueAt: t.FirstResponseDueAt,
+		ResolutionDueAt:    t.ResolutionDueAt,
 	}
 }
 

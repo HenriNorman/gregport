@@ -144,6 +144,7 @@ func main() {
 	slaStore := sla.NewCachedStore(slaRepo, observedCache, cfg.CacheTTLSLAPolicies)
 	slaSvc := sla.NewService(slaStore)
 	slaHandler := sla.NewHandler(slaSvc)
+	ticketsSvc.SetSLAStore(slaStore)
 
 	// dashboard wiring
 	dashboardRepo := dashboard.NewRepository(pool)
