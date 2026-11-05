@@ -32,7 +32,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
 | Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
 | Production basics | Complete — logging, error envelope, timeouts, health checks, graceful shutdown, config validation, multi-stage image, compose stack, CI and twelve-factor summary |
-| Background worker | In progress — `cmd/worker` skeleton with its own config, logs, PostgreSQL/Redis connections, health probes and graceful shutdown |
+| Background worker | In progress — `cmd/worker` with config, logs, connections, health probes, graceful shutdown and asynq queue servers |
 | SLA, notifications, webhooks | SLA policies exposed; notifications and webhooks schema defined, not exposed |
 
 ### Authentication
@@ -560,6 +560,7 @@ The application reads its configuration from environment variables.
 | `IDEMPOTENCY_TTL` | No | `24h` | How long an idempotency key is retained |
 | `WORKER_PORT` | No | `8081` | Worker health/metrics port |
 | `WORKER_CONCURRENCY` | No | `20` | Worker jobs processed concurrently per queue |
+| `WORKER_CPU_CONCURRENCY` | No | number of CPUs | Concurrency of the CPU-bound queue server |
 | `WORKER_SHUTDOWN_TIMEOUT` | No | `30s` | Time allowed to drain in-flight jobs |
 | `WORKER_READ_HEADER_TIMEOUT` | No | `5s` | Worker health server timeout |
 | `WORKER_READ_TIMEOUT` | No | `10s` | Worker health server timeout |
@@ -756,6 +757,56 @@ merge, macro apply, teams, tags, macros, invitations, API keys, SLA policies):
 - A panic releases the key so the client can retry, then re-panics for the
   recovery middleware.
 - Store failures return `500` and never run the handler.
+
+---
+
+## Background Worker
+
+`cmd/worker` is a second deployable binary. It has its own configuration
+loader, JSON logger, PostgreSQL pool, Redis client, health probes and
+signal-driven shutdown. The API and the worker share packages but never share
+processes.
+
+### Queue choice: asynq
+
+The queue is [`hibiken/asynq`](https://github.com/hibiken/asynq), backed by the
+Redis instance already used for caching, rate limiting and idempotency. The
+alternatives were:
+
+- **asynq** — retries, exponential backoff, scheduled tasks, priorities, an
+  archived set (the dead-letter queue) and Asynqmon out of the box. Redis is
+  already a dependency.
+- **River** — a PostgreSQL queue that can enqueue inside the same transaction.
+  That removes the dual-write gap, but it adds a second transactional code path
+  and more database load. Our outbox already makes the event durable in
+  PostgreSQL, so a Redis queue cannot lose an event: a crash between
+  "enqueue" and "mark dispatched" produces a duplicate, and every consumer is
+  idempotent by design.
+
+asynq is the simplest fit for the current stack. The outbox remains the source
+of truth; the queue is the delivery mechanism.
+
+### Queues and retries
+
+| Queue | Weight | Work |
+|:--|--:|:--|
+| `critical` | 6 | Email delivery |
+| `default` | 3 | Breach checks, auto-close |
+| `low` | 1 | Housekeeping |
+| `cpu` | — | CPU-bound jobs (thumbnails, exports) on a separate server |
+
+- Retries use exponential backoff from 5 seconds, doubling to a one-hour cap,
+  with ±20% jitter so workers do not retry in synchronized waves.
+- Permanent failures (for example an invalid email address) return
+  `queue.Permanent(err)`, which wraps `asynq.SkipRetry` so the task is archived
+  immediately instead of retried.
+- Exhausted tasks stay in asynq's archived set, the dead-letter view. They are
+  inspectable in Asynqmon and an `errorHandler` logs each retry and each
+  exhaustion.
+- I/O-bound jobs run on the `critical`/`default`/`low` server with
+  `WORKER_CONCURRENCY` workers. CPU-bound jobs run on a second asynq server
+  with `WORKER_CPU_CONCURRENCY` workers, near the core count, so they cannot
+  occupy the I/O pool.
 
 ---
 

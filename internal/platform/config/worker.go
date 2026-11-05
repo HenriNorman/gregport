@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/HenriNorman/gregport/internal/platform/logging"
@@ -30,6 +31,7 @@ type WorkerConfig struct {
 
 	WorkerPort              string
 	WorkerConcurrency       int
+	WorkerCPUConcurrency    int
 	WorkerShutdownTimeout   time.Duration
 	WorkerReadHeaderTimeout time.Duration
 	WorkerReadTimeout       time.Duration
@@ -58,6 +60,7 @@ func LoadWorker() (WorkerConfig, error) {
 
 		WorkerPort:              getEnv("WORKER_PORT", "8081"),
 		WorkerConcurrency:       20,
+		WorkerCPUConcurrency:    runtime.NumCPU(),
 		WorkerShutdownTimeout:   30 * time.Second,
 		WorkerReadHeaderTimeout: 5 * time.Second,
 		WorkerReadTimeout:       10 * time.Second,
@@ -114,6 +117,7 @@ func LoadWorker() (WorkerConfig, error) {
 	}{
 		{"REDIS_DB", &cfg.RedisDB, 0},
 		{"WORKER_CONCURRENCY", &cfg.WorkerConcurrency, 1},
+		{"WORKER_CPU_CONCURRENCY", &cfg.WorkerCPUConcurrency, 1},
 	}
 	for _, n := range ints {
 		value, err := envInt(n.name, *n.dst, n.min)

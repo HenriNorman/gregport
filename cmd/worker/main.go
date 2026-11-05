@@ -14,6 +14,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/config"
 	"github.com/HenriNorman/gregport/internal/platform/database"
 	"github.com/HenriNorman/gregport/internal/platform/logging"
+	"github.com/HenriNorman/gregport/internal/queue"
 	"github.com/HenriNorman/gregport/internal/worker"
 )
 
@@ -59,7 +60,43 @@ func run() error {
 	})
 	defer redisCache.Close()
 
-	handler := worker.HealthHandler(pool, redisCache)
+	queueCfg := queue.Config{
+		Redis: queue.RedisOptions{
+			Addr:         cfg.RedisAddr,
+			Password:     cfg.RedisPassword,
+			DB:           cfg.RedisDB,
+			DialTimeout:  cfg.RedisDialTimeout,
+			ReadTimeout:  cfg.RedisReadTimeout,
+			WriteTimeout: cfg.RedisWriteTimeout,
+		},
+		IOConcurrency:   cfg.WorkerConcurrency,
+		CPUConcurrency:  cfg.WorkerCPUConcurrency,
+		ShutdownTimeout: cfg.WorkerShutdownTimeout,
+		Logger:          logger,
+	}
+	queueClient := queue.NewClient(queueCfg)
+	defer queueClient.Close()
+
+	mux := worker.NewMux()
+	ioServer := queue.NewIOServer(queueCfg)
+	cpuServer := queue.NewCPUServer(queueCfg)
+
+	if err := ioServer.Start(mux); err != nil {
+		return fmt.Errorf("start io queue server: %w", err)
+	}
+	defer ioServer.Shutdown()
+	if err := cpuServer.Start(mux); err != nil {
+		return fmt.Errorf("start cpu queue server: %w", err)
+	}
+	defer cpuServer.Shutdown()
+
+	logger.Info("queue servers started",
+		"io_concurrency", cfg.WorkerConcurrency,
+		"cpu_concurrency", cfg.WorkerCPUConcurrency,
+		"queues", "critical,default,low,cpu",
+	)
+
+	handler := worker.HealthHandler(pool, redisCache, queueClient)
 	srv := newServer(cfg, handler)
 	ln, err := net.Listen("tcp", srv.Addr)
 	if err != nil {
@@ -67,7 +104,7 @@ func run() error {
 	}
 	defer ln.Close()
 
-	logger.Info("worker health listening", "port", cfg.WorkerPort, "concurrency", cfg.WorkerConcurrency)
+	logger.Info("worker health listening", "port", cfg.WorkerPort)
 	if err := runServer(signalCtx, srv, ln, cfg.WorkerShutdownTimeout, logger); err != nil {
 		return err
 	}

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ func clearWorkerEnv(t *testing.T) {
 		"DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME", "LOG_LEVEL",
 		"REDIS_ADDR", "REDIS_PASSWORD", "REDIS_DB",
 		"REDIS_DIAL_TIMEOUT", "REDIS_READ_TIMEOUT", "REDIS_WRITE_TIMEOUT",
-		"WORKER_PORT", "WORKER_CONCURRENCY", "WORKER_SHUTDOWN_TIMEOUT",
+		"WORKER_PORT", "WORKER_CONCURRENCY", "WORKER_CPU_CONCURRENCY", "WORKER_SHUTDOWN_TIMEOUT",
 		"WORKER_READ_HEADER_TIMEOUT", "WORKER_READ_TIMEOUT",
 		"WORKER_WRITE_TIMEOUT", "WORKER_IDLE_TIMEOUT",
 		"JWT_SECRET",
@@ -38,6 +39,9 @@ func TestLoadWorkerDefaults(t *testing.T) {
 	}
 	if cfg.WorkerConcurrency != 20 {
 		t.Fatalf("concurrency: %d", cfg.WorkerConcurrency)
+	}
+	if cfg.WorkerCPUConcurrency != runtime.NumCPU() {
+		t.Fatalf("cpu concurrency: %d, want %d", cfg.WorkerCPUConcurrency, runtime.NumCPU())
 	}
 	if cfg.WorkerShutdownTimeout != 30*time.Second {
 		t.Fatalf("shutdown: %s", cfg.WorkerShutdownTimeout)
@@ -67,6 +71,7 @@ func TestLoadWorkerOverrides(t *testing.T) {
 	t.Setenv("REDIS_DB", "3")
 	t.Setenv("WORKER_PORT", "9091")
 	t.Setenv("WORKER_CONCURRENCY", "7")
+	t.Setenv("WORKER_CPU_CONCURRENCY", "3")
 	t.Setenv("WORKER_SHUTDOWN_TIMEOUT", "45s")
 	t.Setenv("WORKER_READ_HEADER_TIMEOUT", "2s")
 	t.Setenv("WORKER_READ_TIMEOUT", "3s")
@@ -86,6 +91,9 @@ func TestLoadWorkerOverrides(t *testing.T) {
 	}
 	if cfg.WorkerPort != "9091" || cfg.WorkerConcurrency != 7 {
 		t.Fatalf("worker overrides: %+v", cfg)
+	}
+	if cfg.WorkerCPUConcurrency != 3 {
+		t.Fatalf("cpu concurrency override: %d", cfg.WorkerCPUConcurrency)
 	}
 	if cfg.WorkerShutdownTimeout != 45*time.Second ||
 		cfg.WorkerReadHeaderTimeout != 2*time.Second ||
