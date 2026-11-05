@@ -42,6 +42,9 @@ type WorkerConfig struct {
 	OutboxBatch        int
 	QueueStatsInterval time.Duration
 
+	SLABreachCheckInterval time.Duration
+	SLABreachCheckBatch    int
+
 	SMTPHost     string
 	SMTPPort     int
 	SMTPUser     string
@@ -82,6 +85,9 @@ func LoadWorker() (WorkerConfig, error) {
 		OutboxBatch:    100,
 
 		QueueStatsInterval: time.Minute,
+
+		SLABreachCheckInterval: time.Minute,
+		SLABreachCheckBatch:    100,
 
 		SMTPHost:     getEnv("SMTP_HOST", "localhost"),
 		SMTPPort:     2525,
@@ -126,6 +132,7 @@ func LoadWorker() (WorkerConfig, error) {
 		{"WORKER_IDLE_TIMEOUT", &cfg.WorkerIdleTimeout, false},
 		{"WORKER_OUTBOX_INTERVAL", &cfg.OutboxInterval, false},
 		{"WORKER_QUEUE_STATS_INTERVAL", &cfg.QueueStatsInterval, true},
+		{"SLA_BREACH_CHECK_INTERVAL", &cfg.SLABreachCheckInterval, true},
 	}
 	for _, d := range durations {
 		value, err := envDuration(d.name, *d.dst, d.allowZero)
@@ -145,6 +152,7 @@ func LoadWorker() (WorkerConfig, error) {
 		{"WORKER_CONCURRENCY", &cfg.WorkerConcurrency, 1},
 		{"WORKER_CPU_CONCURRENCY", &cfg.WorkerCPUConcurrency, 1},
 		{"WORKER_OUTBOX_BATCH", &cfg.OutboxBatch, 1},
+		{"SLA_BREACH_CHECK_BATCH", &cfg.SLABreachCheckBatch, 1},
 		{"SMTP_PORT", &cfg.SMTPPort, 1},
 	}
 	for _, n := range ints {

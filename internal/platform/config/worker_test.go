@@ -18,6 +18,7 @@ func clearWorkerEnv(t *testing.T) {
 		"WORKER_WRITE_TIMEOUT", "WORKER_IDLE_TIMEOUT",
 		"WORKER_OUTBOX_INTERVAL", "WORKER_OUTBOX_BATCH",
 		"WORKER_QUEUE_STATS_INTERVAL",
+		"SLA_BREACH_CHECK_INTERVAL", "SLA_BREACH_CHECK_BATCH",
 		"SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD",
 		"SMTP_FROM", "SMTP_FROM_NAME",
 		"JWT_SECRET",
@@ -65,6 +66,12 @@ func TestLoadWorkerDefaults(t *testing.T) {
 	if cfg.SMTPFrom != "no-reply@localhost" || cfg.SMTPFromName != "Gregport" {
 		t.Fatalf("smtp from defaults: %s %s", cfg.SMTPFrom, cfg.SMTPFromName)
 	}
+	if cfg.SLABreachCheckInterval != time.Minute {
+		t.Fatalf("sla breach interval: %s", cfg.SLABreachCheckInterval)
+	}
+	if cfg.SLABreachCheckBatch != 100 {
+		t.Fatalf("sla breach batch: %d", cfg.SLABreachCheckBatch)
+	}
 }
 
 func TestLoadWorkerDoesNotRequireJWTSecret(t *testing.T) {
@@ -102,6 +109,8 @@ func TestLoadWorkerOverrides(t *testing.T) {
 	t.Setenv("SMTP_PASSWORD", "pass")
 	t.Setenv("SMTP_FROM", "noreply@example.com")
 	t.Setenv("SMTP_FROM_NAME", "Example")
+	t.Setenv("SLA_BREACH_CHECK_INTERVAL", "45s")
+	t.Setenv("SLA_BREACH_CHECK_BATCH", "50")
 
 	cfg, err := LoadWorker()
 	if err != nil {
@@ -141,6 +150,12 @@ func TestLoadWorkerOverrides(t *testing.T) {
 	}
 	if cfg.SMTPFrom != "noreply@example.com" || cfg.SMTPFromName != "Example" {
 		t.Fatalf("smtp from override: %s %s", cfg.SMTPFrom, cfg.SMTPFromName)
+	}
+	if cfg.SLABreachCheckInterval != 45*time.Second {
+		t.Fatalf("sla breach interval override: %s", cfg.SLABreachCheckInterval)
+	}
+	if cfg.SLABreachCheckBatch != 50 {
+		t.Fatalf("sla breach batch override: %d", cfg.SLABreachCheckBatch)
 	}
 }
 
@@ -195,6 +210,21 @@ func TestLoadWorkerValidation(t *testing.T) {
 			env:  map[string]string{"DB_PASSWORD": "secret", "WORKER_QUEUE_STATS_INTERVAL": "-1s"},
 			want: "WORKER_QUEUE_STATS_INTERVAL",
 		},
+		{
+			name: "invalid sla breach interval",
+			env:  map[string]string{"DB_PASSWORD": "secret", "SLA_BREACH_CHECK_INTERVAL": "soon"},
+			want: "SLA_BREACH_CHECK_INTERVAL",
+		},
+		{
+			name: "negative sla breach interval",
+			env:  map[string]string{"DB_PASSWORD": "secret", "SLA_BREACH_CHECK_INTERVAL": "-1s"},
+			want: "SLA_BREACH_CHECK_INTERVAL",
+		},
+		{
+			name: "invalid sla breach batch",
+			env:  map[string]string{"DB_PASSWORD": "secret", "SLA_BREACH_CHECK_BATCH": "0"},
+			want: "SLA_BREACH_CHECK_BATCH",
+		},
 	}
 
 	for _, tt := range tests {
@@ -226,6 +256,20 @@ func TestLoadWorkerAllowsZeroQueueStatsInterval(t *testing.T) {
 	}
 	if cfg.QueueStatsInterval != 0 {
 		t.Fatalf("queue stats interval: %s, want 0", cfg.QueueStatsInterval)
+	}
+}
+
+func TestLoadWorkerAllowsZeroSlaBreachInterval(t *testing.T) {
+	clearWorkerEnv(t)
+	t.Setenv("DB_PASSWORD", "secret")
+	t.Setenv("SLA_BREACH_CHECK_INTERVAL", "0s")
+
+	cfg, err := LoadWorker()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.SLABreachCheckInterval != 0 {
+		t.Fatalf("sla breach interval: %s, want 0", cfg.SLABreachCheckInterval)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hibiken/asynq"
 	"github.com/joho/godotenv"
 
 	"github.com/HenriNorman/gregport/internal/email"
@@ -19,6 +20,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/database"
 	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/queue"
+	"github.com/HenriNorman/gregport/internal/tickets"
 	"github.com/HenriNorman/gregport/internal/worker"
 )
 
@@ -95,7 +97,23 @@ func run() error {
 	)
 	emailHandler := email.NewTaskHandler(emailSvc, breaker, logger)
 
-	mux := worker.NewMux(emailHandler)
+	ticketsRepo := tickets.NewRepository(pool)
+	breachChecker := tickets.NewBreachChecker(ticketsRepo)
+	breachHandler := asynq.HandlerFunc(func(ctx context.Context, task *asynq.Task) error {
+		n, err := breachChecker.CheckBreaches(ctx, cfg.SLABreachCheckBatch)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			logger.Info("sla breach check", "breaches", n)
+		}
+		return nil
+	})
+
+	mux := worker.NewMux(
+		worker.HandlerRegistration{Type: queue.TaskEmailSend, Handler: emailHandler},
+		worker.HandlerRegistration{Type: queue.TaskSLABreachCheck, Handler: breachHandler},
+	)
 	ioServer := queue.NewIOServer(queueCfg)
 	cpuServer := queue.NewCPUServer(queueCfg)
 
@@ -133,13 +151,50 @@ func run() error {
 		close(statsDone)
 	}()
 
-	// Stop and join background work before any deferred Close runs, so it can
-	// never write to a closed pool, Redis client or inspector.
-	defer func() {
-		cancelWorker()
-		waitBackground(dispatcherDone, "outbox dispatcher", logger, cfg.WorkerShutdownTimeout)
-		waitBackground(statsDone, "queue statistics", logger, cfg.WorkerShutdownTimeout)
-	}()
+	// The SLA breach scheduler enqueues a sla:breach_check task on every tick.
+	// The task ID is truncated to the current minute so duplicate enqueues
+	// within the same minute are deduplicated by ErrTaskIDConflict, while a new
+	// minute gets a fresh ID even if the previous task is still archived.
+	if cfg.SLABreachCheckInterval > 0 {
+		breachTickerDone := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(cfg.SLABreachCheckInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-workerCtx.Done():
+					close(breachTickerDone)
+					return
+				case <-ticker.C:
+					taskID := "sla:breach_check:" + time.Now().UTC().Truncate(time.Minute).Format(time.RFC3339)
+					if err := queueClient.EnqueueJob(workerCtx, queue.Job{
+						ID:       taskID,
+						Type:     queue.TaskSLABreachCheck,
+						Queue:    queue.QueueDefault,
+						Payload:  []byte(`{}`),
+						MaxRetry: 5,
+					}); err != nil && workerCtx.Err() == nil {
+						logger.Error("enqueue sla breach check", "error", err)
+					}
+				}
+			}
+		}()
+
+		defer func() {
+			cancelWorker()
+			waitBackground(dispatcherDone, "outbox dispatcher", logger, cfg.WorkerShutdownTimeout)
+			waitBackground(statsDone, "queue statistics", logger, cfg.WorkerShutdownTimeout)
+			waitBackground(breachTickerDone, "sla breach scheduler", logger, cfg.WorkerShutdownTimeout)
+		}()
+	} else {
+		// Stop and join background work before any deferred Close runs, so it can
+		// never write to a closed pool, Redis client or inspector.
+		defer func() {
+			cancelWorker()
+			waitBackground(dispatcherDone, "outbox dispatcher", logger, cfg.WorkerShutdownTimeout)
+			waitBackground(statsDone, "queue statistics", logger, cfg.WorkerShutdownTimeout)
+		}()
+	}
 
 	logger.Info("outbox dispatcher started",
 		"interval", cfg.OutboxInterval.String(),
@@ -151,6 +206,14 @@ func run() error {
 		)
 	} else {
 		logger.Info("queue statistics disabled")
+	}
+	if cfg.SLABreachCheckInterval > 0 {
+		logger.Info("sla breach scheduler enabled",
+			"interval", cfg.SLABreachCheckInterval.String(),
+			"batch", cfg.SLABreachCheckBatch,
+		)
+	} else {
+		logger.Info("sla breach scheduler disabled")
 	}
 
 	handler := worker.HealthHandler(pool, redisCache, queueClient)

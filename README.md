@@ -611,6 +611,8 @@ The application reads its configuration from environment variables.
 | `SMTP_PASSWORD` | No | — | SMTP auth password |
 | `SMTP_FROM` | No | `no-reply@localhost` | Envelope `From` address |
 | `SMTP_FROM_NAME` | No | `Gregport` | Display name for the `From` header |
+| `SLA_BREACH_CHECK_INTERVAL` | No | `1m` | SLA breach check interval; `0` disables the scheduler |
+| `SLA_BREACH_CHECK_BATCH` | No | `100` | Maximum tickets checked per breach run |
 
 Configuration is validated at startup, before the database is opened. Missing
 or invalid values make the process exit non-zero, and every problem found is
@@ -905,6 +907,35 @@ the Compose section. Its Queue view shows pending, active, scheduled, retry and
 archived tasks per queue; the Archived tab is the dead-letter view. Running the
 UI read-only is the safe default; use `RetryDeadLetter`/`DeleteDeadLetter` or a
 non-read-only Asynqmon session for operator actions.
+
+## SLA Breach Scheduler
+
+The worker runs a scheduled SLA breach check every `SLA_BREACH_CHECK_INTERVAL`
+(default `1m`). It scans tickets whose `first_response_due_at` or
+`resolution_due_at` has passed and marks them as breached:
+
+- A ticket is flagged for a **first-response breach** when the first-response
+  due date has passed, the agent has not yet responded (`first_response_at` is
+  `NULL`), and the breach has not already been recorded.
+- A ticket is flagged for a **resolution breach** when the resolution due date
+  has passed, the ticket is not yet resolved (`resolved_at` is `NULL`), and the
+  breach has not already been recorded.
+- Soft-deleted tickets are skipped.
+
+Each breach is handled atomically: the breach column is set and an
+`sla.breached` ticket event is recorded in the same transaction. The outbox
+dispatcher then fans the event out to the email consumer. Because the breach
+column is the idempotency marker, running the check concurrently on multiple
+workers never double-marks a breach: candidate rows are locked with
+`FOR UPDATE SKIP LOCKED`.
+
+Each scheduler run enqueues a single `sla:breach_check` task on the `default`
+queue. The task ID is truncated to the current minute, so duplicate enqueues
+within the same minute are deduplicated (asynq reports `ErrTaskIDConflict`,
+treated as success), while each new minute gets a fresh task ID. The batch size
+is controlled by `SLA_BREACH_CHECK_BATCH` (default `100`).
+
+Set `SLA_BREACH_CHECK_INTERVAL=0` to disable the scheduler.
 
 ---
 
