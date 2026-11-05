@@ -18,6 +18,8 @@ func clearWorkerEnv(t *testing.T) {
 		"WORKER_WRITE_TIMEOUT", "WORKER_IDLE_TIMEOUT",
 		"WORKER_OUTBOX_INTERVAL", "WORKER_OUTBOX_BATCH",
 		"WORKER_QUEUE_STATS_INTERVAL",
+		"SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD",
+		"SMTP_FROM", "SMTP_FROM_NAME",
 		"JWT_SECRET",
 	} {
 		t.Setenv(key, "")
@@ -57,6 +59,12 @@ func TestLoadWorkerDefaults(t *testing.T) {
 	if cfg.QueueStatsInterval != time.Minute {
 		t.Fatalf("queue stats interval: %s", cfg.QueueStatsInterval)
 	}
+	if cfg.SMTPHost != "localhost" || cfg.SMTPPort != 2525 {
+		t.Fatalf("smtp defaults: host=%s port=%d", cfg.SMTPHost, cfg.SMTPPort)
+	}
+	if cfg.SMTPFrom != "no-reply@localhost" || cfg.SMTPFromName != "Gregport" {
+		t.Fatalf("smtp from defaults: %s %s", cfg.SMTPFrom, cfg.SMTPFromName)
+	}
 }
 
 func TestLoadWorkerDoesNotRequireJWTSecret(t *testing.T) {
@@ -88,6 +96,12 @@ func TestLoadWorkerOverrides(t *testing.T) {
 	t.Setenv("WORKER_OUTBOX_INTERVAL", "250ms")
 	t.Setenv("WORKER_OUTBOX_BATCH", "25")
 	t.Setenv("WORKER_QUEUE_STATS_INTERVAL", "30s")
+	t.Setenv("SMTP_HOST", "smtp.example.com")
+	t.Setenv("SMTP_PORT", "587")
+	t.Setenv("SMTP_USER", "user")
+	t.Setenv("SMTP_PASSWORD", "pass")
+	t.Setenv("SMTP_FROM", "noreply@example.com")
+	t.Setenv("SMTP_FROM_NAME", "Example")
 
 	cfg, err := LoadWorker()
 	if err != nil {
@@ -118,6 +132,15 @@ func TestLoadWorkerOverrides(t *testing.T) {
 	}
 	if cfg.QueueStatsInterval != 30*time.Second {
 		t.Fatalf("queue stats override: %s", cfg.QueueStatsInterval)
+	}
+	if cfg.SMTPHost != "smtp.example.com" || cfg.SMTPPort != 587 {
+		t.Fatalf("smtp host/port override: %s %d", cfg.SMTPHost, cfg.SMTPPort)
+	}
+	if cfg.SMTPUser != "user" || cfg.SMTPPassword != "pass" {
+		t.Fatalf("smtp auth override: %s %s", cfg.SMTPUser, cfg.SMTPPassword)
+	}
+	if cfg.SMTPFrom != "noreply@example.com" || cfg.SMTPFromName != "Example" {
+		t.Fatalf("smtp from override: %s %s", cfg.SMTPFrom, cfg.SMTPFromName)
 	}
 }
 

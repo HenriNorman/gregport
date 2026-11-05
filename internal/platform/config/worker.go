@@ -41,6 +41,13 @@ type WorkerConfig struct {
 	OutboxInterval     time.Duration
 	OutboxBatch        int
 	QueueStatsInterval time.Duration
+
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUser     string
+	SMTPPassword string
+	SMTPFrom     string
+	SMTPFromName string
 }
 
 // LoadWorker reads the worker configuration from the environment. Defaults
@@ -75,6 +82,13 @@ func LoadWorker() (WorkerConfig, error) {
 		OutboxBatch:    100,
 
 		QueueStatsInterval: time.Minute,
+
+		SMTPHost:     getEnv("SMTP_HOST", "localhost"),
+		SMTPPort:     2525,
+		SMTPUser:     os.Getenv("SMTP_USER"),
+		SMTPPassword: os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom:     getEnv("SMTP_FROM", "no-reply@localhost"),
+		SMTPFromName: getEnv("SMTP_FROM_NAME", "Gregport"),
 	}
 
 	var errs []error
@@ -131,6 +145,7 @@ func LoadWorker() (WorkerConfig, error) {
 		{"WORKER_CONCURRENCY", &cfg.WorkerConcurrency, 1},
 		{"WORKER_CPU_CONCURRENCY", &cfg.WorkerCPUConcurrency, 1},
 		{"WORKER_OUTBOX_BATCH", &cfg.OutboxBatch, 1},
+		{"SMTP_PORT", &cfg.SMTPPort, 1},
 	}
 	for _, n := range ints {
 		value, err := envInt(n.name, *n.dst, n.min)

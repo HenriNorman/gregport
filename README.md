@@ -346,6 +346,18 @@ The service layer depends on repository interfaces rather than concrete implemen
 </details>
 
 <details>
+<summary><code>internal/email/</code> — email delivery</summary>
+
+- `models.go` — delivery payload, planned and persisted delivery, templates and statuses.
+- `repository.go` — loads ticket/comment context, persists delivery rows, marks sent/failed/dead.
+- `service.go` — plans recipients per event type, idempotent via the unique `(event_id, to_email, template)` index.
+- `sender.go` — `Sender` interface and `CircuitBreaker` backed by `sony/gobreaker`.
+- `smtp.go` — `SMTPSender` delivering over SMTP via the standard library.
+- `handler.go` — asynq `email:send` task handler; plans, sends, and records outcomes.
+
+</details>
+
+<details>
 <summary><code>internal/worker/</code> — worker runtime</summary>
 
 - `health.go` — `/healthz` and `/readyz` (PostgreSQL, Redis cache and queue).
@@ -593,6 +605,12 @@ The application reads its configuration from environment variables.
 | `WORKER_OUTBOX_INTERVAL` | No | `1s` | How often the outbox dispatcher polls |
 | `WORKER_OUTBOX_BATCH` | No | `100` | Maximum events claimed per outbox transaction |
 | `WORKER_QUEUE_STATS_INTERVAL` | No | `1m` | Queue snapshot interval; `0` disables the snapshot log |
+| `SMTP_HOST` | No | `localhost` | Outgoing SMTP host |
+| `SMTP_PORT` | No | `2525` | Outgoing SMTP port |
+| `SMTP_USER` | No | — | SMTP auth username |
+| `SMTP_PASSWORD` | No | — | SMTP auth password |
+| `SMTP_FROM` | No | `no-reply@localhost` | Envelope `From` address |
+| `SMTP_FROM_NAME` | No | `Gregport` | Display name for the `From` header |
 
 Configuration is validated at startup, before the database is opened. Missing
 or invalid values make the process exit non-zero, and every problem found is
@@ -887,6 +905,31 @@ the Compose section. Its Queue view shows pending, active, scheduled, retry and
 archived tasks per queue; the Archived tab is the dead-letter view. Running the
 UI read-only is the safe default; use `RetryDeadLetter`/`DeleteDeadLetter` or a
 non-read-only Asynqmon session for operator actions.
+
+---
+
+## Email Delivery
+
+Email is delivered from the worker via the `email:send` queue task, which the
+outbox dispatcher enqueues for `ticket.created`, `comment.added`,
+`ticket.assigned` and `sla.breached` events. Delivery is idempotent:
+
+- Planning persists one `email_deliveries` row per `(event_id, to_email,
+  template)` before sending. The partial unique index on that triple means a
+  replayed event returns the existing row instead of creating a second email.
+- A `SMTPSender` delivers each email, wrapped in a `CircuitBreaker`
+  (`sony/gobreaker`) that trips after `maxDeliveryAttempts` consecutive
+  failures and probes again after `SMTP`-configured reset timeout. While the
+  circuit is open, delivery fails fast without calling the mail provider.
+- Send outcomes are recorded back to `email_deliveries`: `pending` → `sent`,
+  `failed` (with `next_retry_at` and `last_error`), or `dead` after the attempt
+  cap. Already-sent or dead deliveries are skipped on replay.
+- Missing tickets or comments are terminal: the handler logs a warning and
+  stops retrying instead of failing the task.
+
+SMTP is configured with `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
+`SMTP_PASSWORD`, `SMTP_FROM` and `SMTP_FROM_NAME`. Empty credentials mean no
+SMTP AUTH.
 
 ---
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/joho/godotenv"
 
+	"github.com/HenriNorman/gregport/internal/email"
 	"github.com/HenriNorman/gregport/internal/outbox"
 	"github.com/HenriNorman/gregport/internal/platform/cache"
 	"github.com/HenriNorman/gregport/internal/platform/config"
@@ -80,7 +81,21 @@ func run() error {
 	queueClient := queue.NewClient(queueCfg)
 	defer queueClient.Close()
 
-	mux := worker.NewMux()
+	emailRepo := email.NewRepository(pool)
+	emailSvc := email.NewService(emailRepo)
+
+	smtpSender := email.NewSMTPSender(
+		cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword,
+		cfg.SMTPFrom, cfg.SMTPFromName,
+	)
+	breaker := email.NewCircuitBreaker(
+		smtpSender,
+		5, // trip after 5 consecutive failures
+		30*time.Second,
+	)
+	emailHandler := email.NewTaskHandler(emailSvc, breaker, logger)
+
+	mux := worker.NewMux(emailHandler)
 	ioServer := queue.NewIOServer(queueCfg)
 	cpuServer := queue.NewCPUServer(queueCfg)
 
