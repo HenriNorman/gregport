@@ -1598,6 +1598,13 @@ The dispatcher tests are PostgreSQL integration tests.
   partial failure leaves every event undispatched for the retry; unknown event
   types are marked dispatched without jobs; `Run` dispatches on its interval
   and stops on cancellation.
+- The full ticket-event pipeline runs end to end against PostgreSQL and a real
+  asynq server on in-process Redis: ticket creation applies SLA due dates and
+  writes the outbox row, the consumer map builds the deterministic email job,
+  queue routing reaches the email handler, and the delivery is persisted as
+  `sent`. The test replays the task twice and proves only one email is sent,
+  then drives the breach and auto-close checkers and verifies their events use
+  the same path (`sla.breached` emails; `ticket.closed` has no consumer).
 
 ### Timeout Tests
 
