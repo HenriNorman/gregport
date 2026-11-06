@@ -32,8 +32,11 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Structured logging | Complete — JSON to stdout; one line per request with request ID, route pattern, status, duration and principal IDs |
 | Error envelope | Complete — one `{"error":{...}}` shape with `code`, `message`, `details` and `request_id` |
 | Production basics | Complete — logging, error envelope, timeouts, health checks, graceful shutdown, config validation, multi-stage image, compose stack, CI and twelve-factor summary |
-| Background worker | In progress — `cmd/worker` with config, logs, connections, health probes, graceful shutdown, asynq queue servers, the outbox dispatcher, queue statistics and the Asynqmon dead-letter view |
-| SLA, notifications, webhooks | SLA policies exposed; notifications and webhooks schema defined, not exposed |
+| Background worker | Complete — `cmd/worker` with config, logs, connections, health probes, graceful shutdown, separate I/O and CPU asynq servers, the outbox dispatcher, queue statistics and the Asynqmon dead-letter view |
+| Email notifications | Complete — ticket, comment, assignment and SLA-breach events fan out through the outbox and asynq; deliveries are idempotent, circuit-broken and sent over SMTP |
+| SLA automation | Complete — due dates are applied on create/priority change, breaches are recorded by a scheduler, and solved tickets auto-close |
+| Housekeeping | Complete — scheduled pruning of expired idempotency keys, dispatched events, audit logs and delivered email rows |
+| Webhooks | Schema defined, not exposed |
 
 ### Authentication
 
@@ -153,6 +156,10 @@ The SLA policy endpoints expose the `sla_policies` table:
 | Language | Go 1.27 |
 | Router | [chi](https://github.com/go-chi/chi) |
 | Database | PostgreSQL 16 |
+| Cache and queue backend | Redis 7 |
+| Queue | [hibiken/asynq](https://github.com/hibiken/asynq) |
+| Circuit breaker | [sony/gobreaker](https://github.com/sony/gobreaker) |
+| Email transport | Standard library `net/smtp` |
 | Database environment | Docker Compose |
 | Container image | Multi-stage Docker build on Alpine |
 | PostgreSQL driver | [pgx/v5](https://github.com/jackc/pgx) |
@@ -210,7 +217,7 @@ The service layer depends on repository interfaces rather than concrete implemen
 <details>
 <summary><code>cmd/worker/</code> — background worker entry point</summary>
 
-- `main.go` — worker initialization: config, logger, PostgreSQL, Redis, health server.
+- `main.go` — worker initialization: config, logger, PostgreSQL, Redis, health server, the I/O and CPU asynq servers, the outbox dispatcher, the breach/auto-close/housekeeping schedulers and the email handler.
 - `server.go` — health HTTP server with the same signal-driven graceful shutdown as the API.
 
 </details>
@@ -601,9 +608,9 @@ The application reads its configuration from environment variables.
 | `LOGIN_RATE_LIMIT_WINDOW` | No | `15m` | Login rate-limit window |
 | `TRUST_PROXY_HEADERS` | No | `false` | Honour `X-Forwarded-For` only when explicitly enabled |
 | `TRUSTED_PROXY_CIDRS` | No | — | Comma-separated trusted proxy CIDRs |
-| `IDEMPOTENCY_TTL` | No | `24h` | How long an idempotency key is retained |
+| `IDEMPOTENCY_TTL` | No | `24h` | How long an idempotency key is retained; used by the API middleware and housekeeping |
 | `WORKER_PORT` | No | `8081` | Worker health/metrics port |
-| `WORKER_CONCURRENCY` | No | `20` | Worker jobs processed concurrently per queue |
+| `WORKER_CONCURRENCY` | No | `20` | I/O worker concurrency, shared by the `critical`/`default`/`low` queues |
 | `WORKER_CPU_CONCURRENCY` | No | number of CPUs | Concurrency of the CPU-bound queue server |
 | `WORKER_SHUTDOWN_TIMEOUT` | No | `30s` | Time allowed to drain in-flight jobs |
 | `WORKER_READ_HEADER_TIMEOUT` | No | `5s` | Worker health server timeout |
@@ -629,7 +636,6 @@ The application reads its configuration from environment variables.
 | `TICKET_EVENT_RETENTION` | No | `720h` | How long dispatched ticket events are retained; `0` disables the purge |
 | `AUDIT_LOG_RETENTION` | No | `2160h` | How long audit log rows are retained; `0` disables the purge |
 | `EMAIL_DELIVERY_RETENTION` | No | `720h` | How long sent or dead email deliveries are retained; `0` disables the purge |
-| `IDEMPOTENCY_TTL` | No | `24h` | How long idempotency keys are retained before housekeeping purges them |
 
 Configuration is validated at startup, before the database is opened. Missing
 or invalid values make the process exit non-zero, and every problem found is
@@ -639,7 +645,7 @@ reported together. In particular:
 - `JWT_SECRET` must be at least 32 bytes.
 - `LOG_LEVEL` must be `debug`, `info`, `warn`, or `error`.
 - Ports must be between `1` and `65535`.
-- Durations must be positive; `REQUEST_TIMEOUT=0` disables the deadline.
+- Durations must be positive unless the variable is documented as `0`-disablable; `REQUEST_TIMEOUT=0` disables the deadline.
 - `REQUEST_TIMEOUT` must be below `SERVER_WRITE_TIMEOUT`.
 - `SHUTDOWN_TIMEOUT` must be at least `REQUEST_TIMEOUT`.
 - Redis timeouts and cache TTLs must be positive; `REDIS_DB` must be zero or greater.
@@ -1351,27 +1357,26 @@ is listed below it, not a hidden requirement.
 
 | Factor | How Gregport applies it | Status |
 |:--|:--|:--:|
-| **1. Codebase** | One Git repository. `cmd/api` is the current deployable and `cmd/worker` is a placeholder for future background jobs; there are no copy-pasted services. | Yes |
+| **1. Codebase** | One Git repository with two deployables: `cmd/api` serves HTTP and `cmd/worker` runs background jobs. They share internal packages rather than copy-pasted services. | Yes |
 | **2. Dependencies** | Every Go dependency is pinned in `go.mod`/`go.sum`. The runtime image contains only the compiled binary on Alpine; nothing is installed at runtime. | Yes |
-| **3. Config** | All settings come from environment variables. `config.Load` validates them before startup, secrets have no defaults, `.env` is local-only, and Compose injects values at start. | Yes |
-| **4. Backing services** | PostgreSQL is attached through `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` and `DB_NAME`. The DSN is built at runtime, so the database endpoint can change without code changes. | Yes |
+| **3. Config** | All settings come from environment variables. `config.Load` and `config.LoadWorker` validate them before startup, secrets have no defaults, `.env` is local-only, and Compose injects values at start. | Yes |
+| **4. Backing services** | PostgreSQL is attached through `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` and `DB_NAME`. Redis is attached through `REDIS_ADDR`, `REDIS_PASSWORD` and `REDIS_DB` for caching, rate limiting, idempotency and the asynq queue. Both endpoints are built at runtime, so they can change without code changes. | Yes |
 | **5. Build, release, run** | A multi-stage `Dockerfile` builds a static binary. The image is the immutable release artifact and configuration is supplied when the container starts. CI builds the image; registry publishing is not automated yet. | Yes |
-| **6. Processes** | The API is stateless. Access tokens are JWTs, refresh tokens are stored hashed in PostgreSQL, and no sessions live in process memory. Any replica can serve any request. | Yes |
-| **7. Port binding** | The server binds `:APP_PORT` (`8080` by default) and serves HTTP directly. Compose publishes the same port; no external web server is required. | Yes |
-| **8. Concurrency** | Scale horizontally by running more API containers. Each process has its own pgx pool and shared work is coordinated through PostgreSQL, with no sticky sessions. | Yes |
-| **9. Disposability** | Configuration fails fast, startup is quick, `SIGTERM`/`SIGINT` drain in-flight requests, requests have deadlines, and Compose allows `20s` for shutdown. | Yes |
-| **10. Dev/prod parity** | Local Compose and CI use the same image, Go version, `postgres:16-alpine` and migration SQL. A production environment and automated release are not set up yet. | Partial |
-| **11. Logs** | JSON goes to stdout with request IDs and route patterns; the process writes no log files. Docker captures the stream, and secrets and raw paths are never logged. | Yes |
-| **12. Admin processes** | Migrations are one-off SQL executed by the PostgreSQL init step, and admin queries use `psql`; they do not run inside the API process. A dedicated migration command and durable worker are not implemented. | Partial |
+| **6. Processes** | The API is stateless: access tokens are JWTs, refresh tokens are stored hashed in PostgreSQL, and no sessions live in process memory. The worker keeps no durable state either; `ticket_events` is the outbox and Redis holds only queue/cache state. | Yes |
+| **7. Port binding** | The API binds `:APP_PORT` (`8080` by default) and the worker binds `:WORKER_PORT` (`8081`) for health probes. Compose publishes the ports; no external web server is required. | Yes |
+| **8. Concurrency** | Scale horizontally by running more API or worker containers. Each process has its own pgx pool; workers coordinate claims through PostgreSQL (`FOR UPDATE SKIP LOCKED`) and asynq, with no sticky sessions. The worker also splits I/O and CPU queues across two servers. | Yes |
+| **9. Disposability** | Configuration fails fast, startup is quick, `SIGTERM`/`SIGINT` drain in-flight requests and jobs, requests have deadlines, and Compose allows `20s` for the API and `40s` for the worker. Unfinished events stay in the outbox and are reclaimed. | Yes |
+| **10. Dev/prod parity** | Local Compose and CI use the same images, Go version, `postgres:16-alpine`, `redis:7-alpine` and migration SQL. A production environment and automated release are not set up yet. | Partial |
+| **11. Logs** | Both binaries write JSON to stdout with request IDs and route patterns; neither writes log files. Docker captures the stream, and secrets and raw paths are never logged. | Yes |
+| **12. Admin processes** | Migrations are one-off SQL executed by the PostgreSQL init step, and admin queries use `psql`; they do not run inside the API process. The worker is a separate deployable process. A standalone migration command is still not implemented. | Partial |
 
 **Remaining gaps**
 
 - No production environment or automated registry/release pipeline yet.
 - Migrations run only when the Compose database volume is first initialized;
   there is no standalone migration command for existing databases.
-- `cmd/worker` is a placeholder, so there are no background jobs to run as a
-  separate process.
 - Logs are stdout-only; there is no bundled aggregation or retention layer.
+- Webhooks are schema-defined but have no producer or consumer yet.
 
 ---
 
@@ -1606,6 +1611,29 @@ The dispatcher tests are PostgreSQL integration tests.
   then drives the breach and auto-close checkers and verifies their events use
   the same path (`sla.breached` emails; `ticket.closed` has no consumer).
 
+### SLA, Email and Housekeeping Tests
+
+These tests mix pure unit checks with PostgreSQL integration tests.
+
+- The SLA calculator is pure and measured against wall-clock targets: first
+  response and resolution deadlines, priority policy selection, and due-date
+  recomputation from the original `created_at` when priority changes.
+- The breach checker marks first-response and resolution breaches once, records
+  one `sla.breached` event per breach, skips responded/resolved and soft-deleted
+  tickets, and stays idempotent with concurrent runners.
+- Auto-close only touches solved tickets past the configured window, stamps
+  `closed_at`, records one `ticket.closed` event, and is idempotent under
+  concurrent runners.
+- Email planning covers every event type and recipient rule (requester, agent,
+  support inbox, internal-comment suppression). Delivery tests cover the
+  unique-index idempotency, success/failed/dead transitions, retry scheduling,
+  the attempt cap, circuit-breaker tripping and reset, SMTP failure handling and
+  permanent validation failures.
+- Housekeeping purges each retained row type independently, honours batch
+  limits, skips disabled windows, and continues other purges when one fails.
+  Foreign-key safety is covered by the ticket-event purge, which skips events
+  still referenced by an email delivery.
+
 ### Timeout Tests
 
 These tests do not require a database.
@@ -1713,24 +1741,24 @@ The same checks can be run locally with the commands in
 
 ## Current Development Direction
 
-Feat 5 is complete. The identity model is done: people join by invitation,
-machines authenticate with `gp_live_` API keys, member roles are managed
-with last-owner protection, and every state-changing action writes an audit
-row atomically with the change.
+The worker, queue, SLA engine and email block is complete. The API writes
+domain events to the `ticket_events` outbox in the same transaction as the
+change; `cmd/worker` claims them, enqueues deterministic asynq jobs and runs
+the consumers. Email is the first consumer: ticket creation, comments,
+assignment and SLA breaches produce idempotent deliveries with retries, a
+circuit breaker and SMTP transport.
 
-Future domain work: SLA policies, notifications, and webhooks — the three
-remaining schema-defined domains.
+SLA automation is complete as well: policies set first-response and
+resolution deadlines on ticket create and priority change, a scheduler records
+breaches, and another scheduler auto-closes solved tickets after the configured
+window. Housekeeping prunes expired idempotency keys, dispatched events, old
+audit rows and delivered email rows.
 
-Production basics is complete. Structured JSON logging with request IDs, the
-unified error envelope, server/request timeouts, liveness/readiness checks,
-graceful shutdown, fail-fast configuration validation, the multi-stage
-container image, the Compose stack, CI and the twelve-factor alignment table
-are all in place. The remaining gaps are documented with that table.
+Production basics remains complete: structured JSON logging with request IDs,
+the unified error envelope, server/request timeouts, liveness/readiness checks,
+graceful shutdown, fail-fast configuration validation, multi-stage images for
+both binaries, the Compose stack, CI and the twelve-factor alignment table.
 
-Idempotency key persistence, HTTP middleware, and POST-endpoint wiring are now
-in place.
-
-Redis-backed API-key `last_used_at` throttling is now in place.
-
-Next: notifications, webhooks, plus production deployment, standalone migration
-tooling and a real background worker.
+Remaining work: webhook delivery (schema-defined, no producer or consumer yet),
+production deployment and release automation, and standalone migration tooling
+for existing databases.
