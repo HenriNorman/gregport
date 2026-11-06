@@ -872,6 +872,45 @@ of truth; the queue is the delivery mechanism.
   with `WORKER_CPU_CONCURRENCY` workers, near the core count, so they cannot
   occupy the I/O pool.
 
+### Worker sizing: I/O vs CPU
+
+The two servers are sized for different bottlenecks:
+
+| Pool | Queues | Default concurrency | Sizing rule |
+|:--|:--|--:|:--|
+| I/O | `critical`, `default`, `low` | `20` | Can exceed the core count, because handlers mostly wait on PostgreSQL, Redis or SMTP |
+| CPU | `cpu` | `runtime.NumCPU()` | Keep near the usable core count; more workers only add scheduling and cache pressure |
+
+The isolation is structural, not a convention: the I/O server only consumes
+`critical`/`default`/`low`, and the CPU server only consumes `cpu`. Queue
+weights cannot route work across that boundary. A burst of CPU-bound tasks can
+therefore fill every CPU worker without delaying email delivery or breach
+checks. That property is pinned by two integration tests:
+
+- `TestCPUSaturationDoesNotStarveIOQueue` fills the CPU pool with blocking
+  tasks and asserts that I/O tasks still complete before the CPU work is
+  released.
+- `TestCPUServerEnforcesItsOwnConcurrency` asserts that a CPU burst never runs
+  more handlers than `WORKER_CPU_CONCURRENCY`.
+
+Measure queue overhead before sizing around it:
+
+```bash
+go test ./internal/queue -run '^$' -bench BenchmarkQueueRoundTrip -benchtime=200x
+```
+
+`BenchmarkQueueRoundTrip` reports enqueue-to-completion latency for a no-op
+task on the I/O and CPU queues. In the in-process Redis used by the tests a
+round trip is well under a millisecond, so handler work dominates; size the
+pools for the handler, not the queue hop. On a real deployment, compare that
+baseline with `WORKER_QUEUE_STATS_INTERVAL` snapshots (`pending`, `active`,
+`latency`, `archived`) to decide whether a backlog needs more concurrency or
+another worker host.
+
+The two servers share one process and one Go runtime. The split prevents queue
+starvation, not core contention: if CPU tasks would saturate every core, run
+the CPU server on its own worker deployment as well.
+
 ### Outbox dispatcher
 
 Ticket mutations write their `ticket_events` row in the same PostgreSQL
@@ -1533,6 +1572,12 @@ The dispatcher tests are PostgreSQL integration tests.
 
 - Queue weights are `critical: 6`, `default: 3`, `low: 1`, and the CPU queue is
   isolated on its own server.
+- A saturated CPU pool does not starve the I/O pool: with every CPU worker
+  blocked, I/O tasks still complete on the separate server. The CPU server
+  also enforces `WORKER_CPU_CONCURRENCY` during a burst.
+- `BenchmarkQueueRoundTrip` measures enqueue-to-completion latency for a no-op
+  task on each queue, giving the queue-overhead baseline used for worker
+  sizing.
 - Task marshaling, validation of incomplete jobs, and `queue.Permanent`
   wrapping `asynq.SkipRetry`.
 - Backoff is exactly 5s, 10s, 20s … capped at one hour, and two hundred samples
