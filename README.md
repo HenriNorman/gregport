@@ -34,6 +34,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Production basics | Complete — logging, error envelope, timeouts, health checks, graceful shutdown, config validation, multi-stage image, compose stack, CI and twelve-factor summary |
 | Background worker | Complete — `cmd/worker` with config, logs, connections, health probes, graceful shutdown, separate I/O and CPU asynq servers, the outbox dispatcher, queue statistics and the Asynqmon dead-letter view |
 | Email notifications | Complete — ticket, comment, assignment and SLA-breach events fan out through the outbox and asynq; deliveries are idempotent, circuit-broken and sent over SMTP |
+| In-app notifications | Complete — outbox fan-out to assignee and watchers, dedupe per event/user, preference matrix, unread listing with cursor pagination, idempotent mark-read |
 | SLA automation | Complete — due dates are applied on create/priority change, breaches are recorded by a scheduler, and solved tickets auto-close |
 | Housekeeping | Complete — scheduled pruning of expired idempotency keys, dispatched events, audit logs and delivered email rows |
 | Webhooks | Schema defined, not exposed |
@@ -146,6 +147,53 @@ The SLA policy endpoints expose the `sla_policies` table:
 - `overdue` counts unresolved tickets whose `resolution_due_at` has passed.
 - Soft-deleted tickets are excluded from every number.
 - Counts are computed with one aggregate query scoped to the caller's org.
+
+### Notifications
+
+In-app notifications are scoped to the authenticated user and the current org;
+there is no way to read or mark another user's notifications.
+
+| Method | Path | Purpose |
+|:--|:--|:--|
+| `GET` | `/v1/notifications` | List newest first; `unread=true` filters unread rows; `limit` and opaque `cursor` paginate |
+| `POST` | `/v1/notifications/{id}/read` | Mark one notification read (idempotent, 204) |
+| `POST` | `/v1/notifications/read-all` | Mark every unread notification read and return `{"updated": n}` |
+| `GET` | `/v1/notification-preferences` | Return the full event-type × channel matrix |
+| `PUT` | `/v1/notification-preferences` | Replace preferences; omitted entries revert to enabled |
+
+The list response mirrors the timeline cursor style:
+
+```json
+{
+  "notifications": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "type": "new_comment",
+      "ticket_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "comment_id": "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+      "payload": {"ticket_number": 1042, "ticket_subject": "Cannot log in"},
+      "created_at": "2026-01-15T10:00:00Z"
+    }
+  ],
+  "next_cursor": "eyJ0IjoiMjAyNi0wMS0xNVQxMDowMDowMFoiLCJpIjoiNTUwZTg0MDAtIn0"
+}
+```
+
+Preferences are default-on, so clients only need to send the entries they want
+to change. A `PUT` replaces the stored set and always returns the complete
+matrix:
+
+```json
+{
+  "preferences": [
+    {"event_type": "new_comment", "channel": "in_app", "enabled": false}
+  ]
+}
+```
+
+A notification in another org returns 404 even when the id exists, matching the
+tenant-isolation rule used elsewhere. Invalid cursors return `400
+invalid_cursor`; malformed notification ids return `400 invalid_id`.
 
 ---
 

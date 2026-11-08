@@ -16,6 +16,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/dashboard"
 	"github.com/HenriNorman/gregport/internal/idempotency"
 	"github.com/HenriNorman/gregport/internal/middleware"
+	"github.com/HenriNorman/gregport/internal/notifications"
 	"github.com/HenriNorman/gregport/internal/organizations"
 	"github.com/HenriNorman/gregport/internal/platform/cache"
 	"github.com/HenriNorman/gregport/internal/platform/clientip"
@@ -153,6 +154,11 @@ func main() {
 	dashboardHandler := dashboard.NewHandler(dashboardSvc)
 	ticketsSvc.SetCountsInvalidator(dashboard.NewInvalidator(observedCache))
 
+	// notifications wiring
+	notificationsRepo := notifications.NewRepository(pool)
+	notificationsSvc := notifications.NewService(notificationsRepo)
+	notificationsHandler := notifications.NewHandler(notificationsSvc)
+
 	// idempotency wiring (PostgreSQL-backed store, not Redis)
 	idempotencyRepo := idempotency.NewRepository(pool)
 	idempotencyCfg := middleware.IdempotencyConfig{
@@ -209,6 +215,16 @@ func main() {
 			})
 
 			r.Get("/dashboard/counts", dashboardHandler.GetCounts)
+
+			r.Route("/notifications", func(r chi.Router) {
+				r.Get("/", notificationsHandler.List)
+				r.Post("/read-all", notificationsHandler.MarkAllRead)
+				r.Post("/{id}/read", notificationsHandler.MarkRead)
+			})
+			r.Route("/notification-preferences", func(r chi.Router) {
+				r.Get("/", notificationsHandler.GetPreferences)
+				r.Put("/", notificationsHandler.UpdatePreferences)
+			})
 
 			r.Route("/tickets", func(r chi.Router) {
 				r.Post("/", ticketsHandler.Create)

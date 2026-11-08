@@ -1,4 +1,4 @@
-// Package notify provides the asynq handler for notify:send tasks.
+// Asynq handler for notify:send tasks.
 package notifications
 
 import (
