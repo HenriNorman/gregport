@@ -26,6 +26,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/queue"
 	"github.com/HenriNorman/gregport/internal/ratings"
 	"github.com/HenriNorman/gregport/internal/tickets"
+	"github.com/HenriNorman/gregport/internal/webhooks"
 	"github.com/HenriNorman/gregport/internal/worker"
 )
 
@@ -110,6 +111,11 @@ func run() error {
 	notifySvc := notifications.NewService(notifyRepo)
 	notifyHandler := notifications.NewTaskHandler(notifySvc, notifyRepo, logger)
 
+	webhookSvc := webhooks.NewService(webhooks.NewRepository(pool))
+	webhookSvc.SetSender(webhooks.NewHTTPSender(webhooks.SenderOptions{Timeout: webhooks.DefaultTimeout}))
+	webhookSvc.SetEnqueuer(queueClient)
+	webhookHandler := webhooks.NewTaskHandler(webhookSvc, logger)
+
 	ticketsRepo := tickets.NewRepository(pool)
 	breachChecker := tickets.NewBreachChecker(ticketsRepo)
 	breachHandler := asynq.HandlerFunc(func(ctx context.Context, task *asynq.Task) error {
@@ -173,6 +179,8 @@ func run() error {
 	mux := worker.NewMux(
 		worker.HandlerRegistration{Type: queue.TaskEmailSend, Handler: emailHandler},
 		worker.HandlerRegistration{Type: queue.TaskNotify, Handler: notifyHandler},
+		worker.HandlerRegistration{Type: queue.TaskWebhookDispatch, Handler: asynq.HandlerFunc(webhookHandler.Dispatch)},
+		worker.HandlerRegistration{Type: queue.TaskWebhookDeliver, Handler: asynq.HandlerFunc(webhookHandler.Deliver)},
 		worker.HandlerRegistration{Type: queue.TaskSLABreachCheck, Handler: breachHandler},
 		worker.HandlerRegistration{Type: queue.TaskAutoClose, Handler: autoCloseHandler},
 		worker.HandlerRegistration{Type: queue.TaskHousekeeping, Handler: housekeepingHandler},

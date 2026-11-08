@@ -371,8 +371,8 @@ func TestTicketEventPipelineEndToEnd(t *testing.T) {
 	if pending.ID != pendingEventID {
 		t.Fatalf("pending event: %s, want %s", pending.ID, pendingEventID)
 	}
-	if consumers := ConsumersFor(pending); len(consumers) != 0 {
-		t.Fatalf("pending status change has consumers: %+v", consumers)
+	if consumers := ConsumersFor(pending); len(consumers) != 1 || consumers[0].Name != ConsumerWebhook {
+		t.Fatalf("pending status change consumers: %+v, want webhook only", consumers)
 	}
 	if got := sender.snapshot(); len(got) != 3 {
 		t.Fatalf("pending status change sent an email: %+v", got)
@@ -401,8 +401,8 @@ func TestTicketEventPipelineEndToEnd(t *testing.T) {
 		t.Fatalf("ticket status: %s, want closed", status)
 	}
 	loadPipelineEvent(t, pool, fixture.ticketID, "ticket.closed")
-	if consumers := ConsumersFor(Event{EventType: "ticket.closed"}); len(consumers) != 0 {
-		t.Fatalf("ticket.closed unexpectedly has consumers: %+v", consumers)
+	if consumers := ConsumersFor(Event{EventType: "ticket.closed"}); len(consumers) != 1 || consumers[0].Name != ConsumerWebhook {
+		t.Fatalf("ticket.closed consumers: %+v, want webhook only", consumers)
 	}
 	if got := sender.snapshot(); len(got) != 3 {
 		t.Fatalf("auto-close sent email: %+v", got)

@@ -24,12 +24,14 @@ const (
 
 // Task types.
 const (
-	TaskEmailSend      = "email:send"
-	TaskSLABreachCheck = "sla:breach_check"
-	TaskAutoClose      = "ticket:auto_close"
-	TaskHousekeeping   = "housekeeping:run"
-	TaskNotify         = "notify:send"
-	TaskNoop           = "system:noop"
+	TaskEmailSend       = "email:send"
+	TaskSLABreachCheck  = "sla:breach_check"
+	TaskAutoClose       = "ticket:auto_close"
+	TaskHousekeeping    = "housekeeping:run"
+	TaskNotify          = "notify:send"
+	TaskWebhookDispatch = "webhook:dispatch"
+	TaskWebhookDeliver  = "webhook:deliver"
+	TaskNoop            = "system:noop"
 )
 
 // IOQueues is the weighted priority map for I/O-bound work. Weights are
@@ -162,7 +164,7 @@ func NewIOServer(cfg Config) *asynq.Server {
 	return asynq.NewServer(redisOpt(cfg.Redis), asynq.Config{
 		Concurrency:     cfg.IOConcurrency,
 		Queues:          IOQueues(),
-		RetryDelayFunc:  RetryDelay,
+		RetryDelayFunc:  RetryDelayForTask,
 		ErrorHandler:    &errorHandler{logger: loggerOrDiscard(cfg.Logger)},
 		Logger:          slogAdapter{logger: loggerOrDiscard(cfg.Logger)},
 		LogLevel:        asynq.InfoLevel,
@@ -176,7 +178,7 @@ func NewCPUServer(cfg Config) *asynq.Server {
 	return asynq.NewServer(redisOpt(cfg.Redis), asynq.Config{
 		Concurrency:     cfg.CPUConcurrency,
 		Queues:          CPUQueues(),
-		RetryDelayFunc:  RetryDelay,
+		RetryDelayFunc:  RetryDelayForTask,
 		ErrorHandler:    &errorHandler{logger: loggerOrDiscard(cfg.Logger)},
 		Logger:          slogAdapter{logger: loggerOrDiscard(cfg.Logger)},
 		LogLevel:        asynq.InfoLevel,

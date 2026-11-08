@@ -23,8 +23,9 @@ import (
 
 // Consumer names are part of the deterministic task ID.
 const (
-	ConsumerEmail  = "email"
-	ConsumerNotify = "notify"
+	ConsumerEmail   = "email"
+	ConsumerNotify  = "notify"
+	ConsumerWebhook = "webhook"
 )
 
 // Consumer describes one downstream job for an event type.
@@ -37,46 +38,76 @@ type Consumer struct {
 
 // consumers maps an event type to its downstream consumers. Only implemented
 // consumers are listed: enqueueing a task without a handler would retry and
-// archive forever. Webhooks join this map when that handler lands.
+// archive forever.
 var consumers = map[string][]Consumer{
 	"ticket.created": {
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
 		{Name: ConsumerNotify, TaskType: queue.TaskNotify, Queue: queue.QueueCritical, MaxRetry: 5},
+		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
 	},
 	"comment.added": {
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
 		{Name: ConsumerNotify, TaskType: queue.TaskNotify, Queue: queue.QueueCritical, MaxRetry: 5},
+		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
 	},
 	"ticket.assigned": {
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
 		{Name: ConsumerNotify, TaskType: queue.TaskNotify, Queue: queue.QueueCritical, MaxRetry: 5},
+		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
 	},
 	"sla.breached": {
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
 		{Name: ConsumerNotify, TaskType: queue.TaskNotify, Queue: queue.QueueCritical, MaxRetry: 5},
+		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
 	},
 	// A status change is only interesting to the customer when it solved the
 	// ticket: that email carries the satisfaction-rating link. Every other
-	// transition is filtered out by eventDataAllows.
+	// transition is filtered out for the email consumer only; webhooks receive
+	// every status transition.
 	"ticket.status_changed": {
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
+		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
+	},
+	"ticket.closed": {
+		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
+	},
+	"ticket.deleted": {
+		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
+	},
+	"ticket.merged": {
+		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
+	},
+	"ticket.tagged": {
+		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
+	},
+	"ticket.untagged": {
+		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
 	},
 }
 
 // ConsumersFor returns the downstream jobs for an event. Unknown event types
 // have no consumers; their rows are still marked dispatched so they do not
-// pollute every poll. The event data is consulted where only some payloads
-// are actionable, so unsolved status changes enqueue nothing.
+// pollute every poll. Payload-level filtering is applied per consumer, so a
+// non-solved status change still reaches webhooks even though it produces no
+// customer email.
 func ConsumersFor(ev Event) []Consumer {
-	if !eventDataAllows(ev) {
+	all := consumers[ev.EventType]
+	if len(all) == 0 {
 		return nil
 	}
-	return consumers[ev.EventType]
+	out := make([]Consumer, 0, len(all))
+	for _, consumer := range all {
+		if consumer.Name == ConsumerEmail && !emailEventDataAllows(ev) {
+			continue
+		}
+		out = append(out, consumer)
+	}
+	return out
 }
 
-// eventDataAllows applies the payload-level filter for event types whose
-// consumers only handle a subset of transitions.
-func eventDataAllows(ev Event) bool {
+// emailEventDataAllows applies the payload-level filter for event types whose
+// email consumer only handles a subset of transitions.
+func emailEventDataAllows(ev Event) bool {
 	if ev.EventType != "ticket.status_changed" {
 		return true
 	}

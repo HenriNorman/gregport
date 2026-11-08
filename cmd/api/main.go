@@ -29,6 +29,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/ratings"
 	"github.com/HenriNorman/gregport/internal/sla"
 	"github.com/HenriNorman/gregport/internal/tickets"
+	"github.com/HenriNorman/gregport/internal/webhooks"
 )
 
 // @title			gregport API
@@ -177,6 +178,11 @@ func main() {
 	ratingsSvc.SetCountsInvalidator(dashboard.NewInvalidator(observedCache))
 	ratingsHandler := ratings.NewHandler(ratingsSvc)
 
+	// webhook wiring
+	webhookSvc := webhooks.NewService(webhooks.NewRepository(pool))
+	webhookSvc.SetSender(webhooks.NewHTTPSender(webhooks.SenderOptions{Timeout: webhooks.DefaultTimeout}))
+	webhooksHandler := webhooks.NewHandler(webhookSvc)
+
 	// idempotency wiring (PostgreSQL-backed store, not Redis)
 	idempotencyRepo := idempotency.NewRepository(pool)
 	idempotencyCfg := middleware.IdempotencyConfig{
@@ -247,6 +253,18 @@ func main() {
 			r.Route("/notification-preferences", func(r chi.Router) {
 				r.Get("/", notificationsHandler.GetPreferences)
 				r.Put("/", notificationsHandler.UpdatePreferences)
+			})
+
+			r.Route("/webhooks", func(r chi.Router) {
+				r.Get("/", webhooksHandler.List)
+				r.With(auth.RequireRole("owner", "admin")).Post("/", webhooksHandler.Create)
+				r.Get("/{id}", webhooksHandler.Get)
+				r.With(auth.RequireRole("owner", "admin")).Patch("/{id}", webhooksHandler.Update)
+				r.With(auth.RequireRole("owner", "admin")).Delete("/{id}", webhooksHandler.Delete)
+				r.With(auth.RequireRole("owner", "admin")).Post("/{id}/test", webhooksHandler.Test)
+				r.Get("/{id}/deliveries", webhooksHandler.ListDeliveries)
+				r.With(auth.RequireRole("owner", "admin")).
+					Post("/{id}/deliveries/{deliveryId}/redeliver", webhooksHandler.Redeliver)
 			})
 
 			r.Route("/tickets", func(r chi.Router) {

@@ -882,6 +882,128 @@ definitions:
         example: Updated subject
         type: string
     type: object
+  webhooks.CreateSubscriptionRequest:
+    properties:
+      events:
+        example:
+        - ticket.created
+        - comment.added
+        items:
+          type: string
+        type: array
+      url:
+        example: https://example.com/gregport/hooks
+        type: string
+    type: object
+  webhooks.DeliveryDTO:
+    properties:
+      attempts:
+        example: 3
+        type: integer
+      created_at:
+        example: "2026-01-15T10:00:00Z"
+        type: string
+      delivered_at:
+        example: "2026-01-15T10:30:00Z"
+        type: string
+      duration_ms:
+        example: 184
+        type: integer
+      event_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      event_type:
+        example: ticket.created
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      last_error:
+        example: HTTP 500
+        type: string
+      next_retry_at:
+        example: "2026-01-15T10:31:00Z"
+        type: string
+      response_body:
+        example: internal error
+        type: string
+      response_status:
+        example: 500
+        type: integer
+      status:
+        enum:
+        - pending
+        - sent
+        - failed
+        - dead
+        example: failed
+        type: string
+    type: object
+  webhooks.DeliveryListResponse:
+    properties:
+      deliveries:
+        items:
+          $ref: '#/definitions/webhooks.DeliveryDTO'
+        type: array
+      next_cursor:
+        example: eyJ0IjoiMjAyNi0wMS0xNVQxMDowMDowMFoiLCJpIjoiNTUwZTg0MDAtIn0
+        type: string
+    type: object
+  webhooks.SubscriptionDTO:
+    properties:
+      consecutive_failures:
+        example: 0
+        type: integer
+      created_at:
+        example: "2026-01-15T10:00:00Z"
+        type: string
+      disabled_at:
+        example: "2026-01-15T10:30:00Z"
+        type: string
+      events:
+        example:
+        - ticket.created
+        items:
+          type: string
+        type: array
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      secret:
+        example: whsec_...
+        type: string
+      updated_at:
+        example: "2026-01-15T10:00:00Z"
+        type: string
+      url:
+        example: https://example.com/gregport/hooks
+        type: string
+    type: object
+  webhooks.SubscriptionListResponse:
+    properties:
+      webhooks:
+        items:
+          $ref: '#/definitions/webhooks.SubscriptionDTO'
+        type: array
+    type: object
+  webhooks.UpdateSubscriptionRequest:
+    properties:
+      events:
+        example:
+        - ticket.created
+        items:
+          type: string
+        type: array
+      is_active:
+        example: true
+        type: boolean
+      url:
+        example: https://example.com/gregport/hooks
+        type: string
+    type: object
 host: localhost:8080
 info:
   contact: {}
@@ -3044,6 +3166,318 @@ paths:
       summary: Add a watcher to a ticket
       tags:
       - watchers
+  /v1/webhooks:
+    get:
+      description: Any authenticated member may list subscriptions. The HMAC secret
+        is never returned by this endpoint.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/webhooks.SubscriptionListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: List webhook subscriptions
+      tags:
+      - webhooks
+    post:
+      consumes:
+      - application/json
+      description: Requires role `owner` or `admin`. The URL must be an absolute http(s)
+        URL whose host resolves only to public addresses; loopback, private, link-local
+        and metadata addresses are rejected. The response contains the HMAC secret
+        exactly once.
+      parameters:
+      - description: Subscription payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/webhooks.CreateSubscriptionRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/webhooks.SubscriptionDTO'
+        "400":
+          description: Malformed JSON or unknown field
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Invalid URL or events
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Create a webhook subscription
+      tags:
+      - webhooks
+  /v1/webhooks/{id}:
+    delete:
+      description: Requires role `owner` or `admin`. Delivery-log rows for the subscription
+        are removed with it.
+      parameters:
+      - description: Webhook UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Delete a webhook subscription
+      tags:
+      - webhooks
+    get:
+      description: Any authenticated member may read a subscription. A subscription
+        in another org returns 404.
+      parameters:
+      - description: Webhook UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/webhooks.SubscriptionDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Get a webhook subscription
+      tags:
+      - webhooks
+    patch:
+      consumes:
+      - application/json
+      description: Requires role `owner` or `admin`. Omitted fields keep their value.
+        Setting `is_active` to true re-enables a subscription disabled after repeated
+        failures and resets its failure counter.
+      parameters:
+      - description: Webhook UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to change
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/webhooks.UpdateSubscriptionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/webhooks.SubscriptionDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Update a webhook subscription
+      tags:
+      - webhooks
+  /v1/webhooks/{id}/deliveries:
+    get:
+      description: Any authenticated member may read the delivery log. Results are
+        newest first and keyset-paginated with `limit` (default 50, maximum 200) and
+        `cursor`.
+      parameters:
+      - description: Webhook UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Page size (1-200)
+        in: query
+        name: limit
+        type: integer
+      - description: Opaque next_cursor from a previous page
+        in: query
+        name: cursor
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/webhooks.DeliveryListResponse'
+        "400":
+          description: Invalid id, limit or cursor
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: List webhook deliveries
+      tags:
+      - webhooks
+  /v1/webhooks/{id}/deliveries/{deliveryId}/redeliver:
+    post:
+      description: Requires role `owner` or `admin`. Resets the delivery-log row and
+        attempts it once immediately. Manual redelivery does not count toward the
+        subscription circuit breaker and does not schedule an automatic retry.
+      parameters:
+      - description: Webhook UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Delivery UUID
+        in: path
+        name: deliveryId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/webhooks.DeliveryDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Redeliver a webhook delivery
+      tags:
+      - webhooks
+  /v1/webhooks/{id}/test:
+    post:
+      description: Requires role `owner` or `admin`. Sends one `webhook.ping` envelope
+        immediately and records it in the delivery log. A failed receiver is reported
+        in the delivery status rather than as an HTTP error. Disabled subscriptions
+        return 409.
+      parameters:
+      - description: Webhook UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/webhooks.DeliveryDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "409":
+          description: Subscription is disabled
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Test a webhook subscription
+      tags:
+      - webhooks
 schemes:
 - http
 securityDefinitions:

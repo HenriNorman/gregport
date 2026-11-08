@@ -38,7 +38,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | In-app notifications | Complete — outbox fan-out to assignee and watchers, dedupe per event/user, preference matrix, unread listing with cursor pagination, idempotent mark-read |
 | SLA automation | Complete — due dates are applied on create/priority change, breaches are recorded by a scheduler, and solved tickets auto-close |
 | Housekeeping | Complete — scheduled pruning of expired idempotency keys, dispatched events, audit logs and delivered email rows |
-| Webhooks | Schema defined, not exposed |
+| Webhooks | Complete — tenant-scoped subscriptions, HMAC-signed delivery, SSRF-hardened HTTP client, retry schedule, delivery log with cursor pagination and redelivery, auto-disable with admin notifications |
 
 ### Authentication
 
@@ -232,6 +232,96 @@ credential:
 
 Tokens default to a 30-day lifetime (`RATING_TOKEN_TTL`). The ticket's org is
 always resolved from PostgreSQL, never trusted from the token.
+
+### Webhooks
+
+Webhooks let an org subscribe to ticket and comment events and receive
+signed HTTP callbacks. The outbox is the durable source of truth: each
+outbox event plans one delivery per active matching subscription, stores a
+`webhook_deliveries` row, and enqueues a `webhook:deliver` task. The unique
+`(subscription_id, event_id)` index makes replay converge on the existing
+row instead of delivering twice.
+
+| Method | Path | Purpose |
+|:--|:--|:--|
+| `GET` | `/v1/webhooks` | List the org's subscriptions (secret never returned) |
+| `POST` | `/v1/webhooks` | Create a subscription (owner/admin only; returns the secret once) |
+| `GET` | `/v1/webhooks/{id}` | Get one subscription (org-scoped, 404 for foreign orgs) |
+| `PATCH` | `/v1/webhooks/{id}` | Partial update (owner/admin only); re-enabling resets the failure counter |
+| `DELETE` | `/v1/webhooks/{id}` | Delete a subscription and its delivery log (owner/admin only) |
+| `POST` | `/v1/webhooks/{id}/test` | Send one `webhook.ping` envelope synchronously (owner/admin only) |
+| `GET` | `/v1/webhooks/{id}/deliveries` | Cursor-paginated delivery log, newest first |
+| `POST` | `/v1/webhooks/{id}/deliveries/{deliveryId}/redeliver` | Manually reset and retry one delivery (owner/admin only) |
+
+A subscription's URL must be an absolute `http` or `https` URL whose host
+resolves only to public addresses. Loopback (`127.0.0.0/8`, `::1`), private
+(`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local, CGNAT,
+documentation, benchmarking, multicast, reserved and cloud-metadata ranges
+(`169.254.0.0/16`) are rejected at creation. The HTTP client repeats the
+address check at dial time through a custom `net.Dialer.Control`, so DNS
+rebinding cannot slip past, never uses a proxy (`Proxy: nil`), does not
+follow redirects, and enforces a 10-second timeout per attempt.
+
+Supported event types:
+`ticket.created`, `ticket.assigned`, `ticket.status_changed`,
+`ticket.closed`, `ticket.deleted`, `ticket.merged`, `ticket.tagged`,
+`ticket.untagged`, `comment.added`, `sla.breached`.
+`webhook.ping` exists only for the test endpoint and cannot be subscribed to.
+
+Every delivery is an envelope:
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "type": "ticket.created",
+  "created_at": "2026-01-15T10:00:00Z",
+  "data": {
+    "ticket": {"id":"...","number":1042,"subject":"Cannot log in","status":"open","priority":"normal","requester_id":"...","assignee_id":null},
+    "event": {"number":1042,"subject":"Cannot log in"}
+  }
+}
+```
+
+The HTTP request carries:
+
+- `X-Gregport-Event`: the event type (`ticket.created`, `webhook.ping`, …)
+- `X-Gregport-Delivery`: the delivery UUID
+- `X-Gregport-Timestamp`: Unix seconds
+- `X-Gregport-Signature`: `hex(HMAC-SHA256(secret, timestamp + "." + body))`
+- `X-Gregport-Attempt`: attempt number, starting at 1
+
+Receivers should verify the signature with constant-time comparison and
+reject timestamps older than five minutes. The delivery body is the exact
+bytes that were signed.
+
+Each subscription has a server-generated `whsec_` + 32-byte-hex secret, returned
+only on `POST /v1/webhooks`. List/get responses never include it.
+
+Delivery reliability:
+
+- Any 2xx is a success; anything else (non-2xx, transport error, redirect,
+  timeout) is a failure.
+- Failed deliveries are retried on the schedule `1m, 5m, 30m, 2h, 6h, 12h`,
+  seven total attempts over roughly one day, then marked `dead`.
+- After 10 consecutive failures the subscription is disabled and each org
+  owner/admin receives one in-app `webhook_disabled` notification. Manual
+  re-enable (`PATCH` with `is_active: true`) resets the counter.
+- Test pings and manual redeliveries do not count toward the circuit breaker.
+- Disabled subscriptions return `409 webhook_inactive` on test.
+
+The delivery log records `status`, `attempts`, `response_status`, a
+truncated `response_body`, `last_error`, `next_retry_at`, `delivered_at` and
+`duration_ms`, paginated with `limit` (default 50, max 200) and an opaque
+`cursor`.
+
+Migration `0007_webhooks` adds `consecutive_failures`, `last_failure_at` and
+`disabled_at` to `webhook_subscriptions`, plus `response_body` and
+`duration_ms` to `webhook_deliveries`, the partial unique index on
+`(subscription_id, event_id)`, the subscription-created index, and `ON DELETE
+CASCADE` on deliveries.
+
+Worker configuration shares the webhook queue with other I/O work, and the
+webhook delivery tasks use the slower `webhook:deliver` retry schedule.
 
 ---
 

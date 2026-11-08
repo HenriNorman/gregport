@@ -144,9 +144,9 @@ func TestDispatchOnceEnqueuesOneJobAndMarksDispatched(t *testing.T) {
 	}
 
 	jobs := enqueuer.snapshot()
-	// Each event now produces two consumer jobs (email + notify).
-	if len(jobs) != 2 {
-		t.Fatalf("jobs: %d, want 2", len(jobs))
+	// ticket.created produces three consumer jobs (email + notify + webhook).
+	if len(jobs) != 3 {
+		t.Fatalf("jobs: %d, want 3", len(jobs))
 	}
 	job := jobs[0]
 	if job.ID != eventID.String()+":email" {
@@ -187,7 +187,7 @@ func TestDispatchOnceEnqueuesOneJobAndMarksDispatched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second dispatch: %v", err)
 	}
-	if n != 0 || len(enqueuer.snapshot()) != 2 {
+	if n != 0 || len(enqueuer.snapshot()) != 3 {
 		t.Fatalf("second dispatch re-enqueued: events=%d jobs=%d", n, len(enqueuer.snapshot()))
 	}
 }
@@ -227,9 +227,9 @@ func TestTwoDispatchersDispatchEachEventExactlyOnce(t *testing.T) {
 	}
 
 	jobs := enqueuer.snapshot()
-	// Each event now produces two consumer jobs (email + notify).
-	if len(jobs) != eventCount*2 {
-		t.Fatalf("jobs: %d, want %d", len(jobs), eventCount*2)
+	// ticket.created produces three consumer jobs (email + notify + webhook).
+	if len(jobs) != eventCount*3 {
+		t.Fatalf("jobs: %d, want %d", len(jobs), eventCount*3)
 	}
 
 	seen := make(map[string]bool, len(jobs))
@@ -362,8 +362,8 @@ func TestUnknownEventTypeIsMarkedDispatchedWithoutJobs(t *testing.T) {
 func TestConsumersFor(t *testing.T) {
 	for _, eventType := range []string{"ticket.created", "comment.added", "ticket.assigned", "sla.breached"} {
 		cs := ConsumersFor(Event{EventType: eventType})
-		if len(cs) != 2 {
-			t.Fatalf("%s consumers: %+v, want 2", eventType, cs)
+		if len(cs) != 3 {
+			t.Fatalf("%s consumers: %+v, want 3", eventType, cs)
 		}
 		if cs[0].Name != ConsumerEmail || cs[0].TaskType != queue.TaskEmailSend {
 			t.Fatalf("%s first consumer: %+v, want email", eventType, cs[0])
@@ -371,33 +371,44 @@ func TestConsumersFor(t *testing.T) {
 		if cs[1].Name != ConsumerNotify || cs[1].TaskType != queue.TaskNotify {
 			t.Fatalf("%s second consumer: %+v, want notify", eventType, cs[1])
 		}
+		if cs[2].Name != ConsumerWebhook || cs[2].TaskType != queue.TaskWebhookDispatch {
+			t.Fatalf("%s third consumer: %+v, want webhook", eventType, cs[2])
+		}
 	}
 	if cs := ConsumersFor(Event{EventType: "ticket.updated"}); len(cs) != 0 {
 		t.Fatalf("unexpected consumers: %+v", cs)
 	}
+	for _, eventType := range []string{"ticket.closed", "ticket.deleted", "ticket.merged", "ticket.tagged", "ticket.untagged"} {
+		cs := ConsumersFor(Event{EventType: eventType})
+		if len(cs) != 1 || cs[0].Name != ConsumerWebhook {
+			t.Fatalf("%s consumers: %+v, want webhook only", eventType, cs)
+		}
+	}
 }
 
-func TestConsumersForStatusChangedOnlyWhenSolved(t *testing.T) {
+func TestConsumersForStatusChangedOnlyFilteredForEmail(t *testing.T) {
 	tests := []struct {
 		name string
 		data string
-		want int
+		want []string
 	}{
-		{name: "solved", data: `{"old":"open","new":"solved"}`, want: 1},
-		{name: "reopened", data: `{"old":"solved","new":"open"}`},
-		{name: "pending", data: `{"old":"open","new":"pending"}`},
-		{name: "missing data"},
-		{name: "invalid data", data: `{`},
+		{name: "solved", data: `{"old":"open","new":"solved"}`, want: []string{ConsumerEmail, ConsumerWebhook}},
+		{name: "reopened", data: `{"old":"solved","new":"open"}`, want: []string{ConsumerWebhook}},
+		{name: "pending", data: `{"old":"open","new":"pending"}`, want: []string{ConsumerWebhook}},
+		{name: "missing data", want: []string{ConsumerWebhook}},
+		{name: "invalid data", data: `{`, want: []string{ConsumerWebhook}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cs := ConsumersFor(Event{EventType: "ticket.status_changed", Data: []byte(tt.data)})
-			if len(cs) != tt.want {
-				t.Fatalf("consumers: %+v, want %d", cs, tt.want)
+			if len(cs) != len(tt.want) {
+				t.Fatalf("consumers: %+v, want %v", cs, tt.want)
 			}
-			if tt.want == 1 && (cs[0].Name != ConsumerEmail || cs[0].TaskType != queue.TaskEmailSend) {
-				t.Fatalf("consumer: %+v, want email", cs[0])
+			for i, name := range tt.want {
+				if cs[i].Name != name {
+					t.Fatalf("consumer %d: %+v, want %s", i, cs[i], name)
+				}
 			}
 		})
 	}
