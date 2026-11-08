@@ -63,6 +63,10 @@ type Config struct {
 	RatingTokenSecret string
 	RatingTokenTTL    time.Duration
 	PublicAppURL      string
+
+	// InboundEmailSecret verifies provider signatures on inbound email
+	// webhooks (HMAC-SHA256 over timestamp + "." + body).
+	InboundEmailSecret string
 }
 
 func Load() (Config, error) {
@@ -108,9 +112,10 @@ func Load() (Config, error) {
 		TrustProxyHeaders:       false,
 		IdempotencyTTL:          24 * time.Hour,
 
-		RatingTokenSecret: os.Getenv("RATING_TOKEN_SECRET"),
-		RatingTokenTTL:    30 * 24 * time.Hour,
-		PublicAppURL:      getEnv("PUBLIC_APP_URL", "http://localhost:8080"),
+		RatingTokenSecret:  os.Getenv("RATING_TOKEN_SECRET"),
+		RatingTokenTTL:     30 * 24 * time.Hour,
+		PublicAppURL:       getEnv("PUBLIC_APP_URL", "http://localhost:8080"),
+		InboundEmailSecret: os.Getenv("INBOUND_EMAIL_SECRET"),
 	}
 
 	var errs []error
@@ -123,6 +128,9 @@ func Load() (Config, error) {
 	}
 	if len(cfg.RatingTokenSecret) < 32 {
 		errs = append(errs, errors.New("RATING_TOKEN_SECRET must be at least 32 bytes"))
+	}
+	if cfg.InboundEmailSecret != "" && len(cfg.InboundEmailSecret) < 32 {
+		errs = append(errs, errors.New("INBOUND_EMAIL_SECRET must be at least 32 bytes"))
 	}
 	if err := validateAppURL(cfg.PublicAppURL); err != nil {
 		errs = append(errs, err)

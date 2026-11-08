@@ -1307,6 +1307,50 @@ paths:
       summary: Get dashboard ticket counts
       tags:
       - dashboard
+  /v1/inbound/email:
+    post:
+      description: Provider webhook for inbound email. The raw body is the signed
+        payload; authenticity is proven via X-Inbound-Email-Timestamp and X-Inbound-Email-Signature
+        (HMAC-SHA256). A duplicate Message-ID is idempotent.
+      parameters:
+      - description: Unix seconds when the provider signed the message
+        in: header
+        name: X-Inbound-Email-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 signature hex encoded
+        in: header
+        name: X-Inbound-Email-Signature
+        required: true
+        type: string
+      produces:
+      - text/plain
+      responses:
+        "202":
+          description: Accepted
+        "400":
+          description: Malformed or unverifiable message
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Invalid or expired signature
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Invalid input
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "429":
+          description: Rate limited
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "500":
+          description: Internal error
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      summary: Receive an inbound email
+      tags:
+      - inbound-email
   /v1/invitations:
     get:
       description: Requires role owner or admin. Returns only pending, unexpired invitations.

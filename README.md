@@ -39,6 +39,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | SLA automation | Complete — due dates are applied on create/priority change, breaches are recorded by a scheduler, and solved tickets auto-close |
 | Housekeeping | Complete — scheduled pruning of expired idempotency keys, dispatched events, audit logs and delivered email rows |
 | Webhooks | Complete — tenant-scoped subscriptions, HMAC-signed delivery, SSRF-hardened HTTP client, retry schedule, delivery log with cursor pagination and redelivery, auto-disable with admin notifications |
+| Inbound email | Complete — provider-signed inbound webhook, Message-ID dedupe, `[#1042]` and `In-Reply-To` routing to comment or new ticket, raw email recorded |
 
 ### Authentication
 
@@ -322,6 +323,28 @@ CASCADE` on deliveries.
 
 Worker configuration shares the webhook queue with other I/O work, and the
 webhook delivery tasks use the slower `webhook:deliver` retry schedule.
+
+### Inbound Email
+
+Inbound email lets customers create tickets and reply to existing tickets by
+sending email to the organization's support address. The provider posts the
+raw message to `POST /v1/inbound/email`, which is unauthenticated by session
+but protected by an HMAC signature:
+
+- `X-Inbound-Email-Timestamp`: Unix seconds when the provider signed.
+- `X-Inbound-Email-Signature`: `hex(HMAC-SHA256(INBOUND_EMAIL_SECRET, timestamp + "." + body))`, verified in constant time with a five-minute timestamp tolerance.
+
+Each message is parsed (MIME headers and `text/plain` body), then routed:
+
+- Subject containing `[#1042]` → appends a public customer comment to ticket 1042.
+- `In-Reply-To` referencing a previously received message → appends a comment to that message's ticket.
+- Otherwise → creates a new ticket (`channel: "email"`) with the message as the first comment.
+
+The sender is upserted as a customer of the org (`customers.org_id, email`), so a reply from a known address threads correctly. Every received message is recorded in `inbound_emails` with a unique `message_id`, so replaying the same message is idempotent (a duplicate returns `202` without creating a second ticket or comment). The raw email is stored for replay and audit.
+
+The recipient address local part carries the org UUID (e.g. `support+{orgID}@inbound.example.com` or `{orgID}@inbound.example.com`), which resolves the tenant.
+
+Migration `0008_inbound_email` creates the `inbound_emails` table (`message_id` unique, `org_id`, `ticket_id`, `comment_id`, `raw`, `received_at`) with indexes on `(org_id, received_at DESC)` and `message_id`.
 
 ---
 

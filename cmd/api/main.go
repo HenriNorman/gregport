@@ -15,6 +15,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/auth"
 	"github.com/HenriNorman/gregport/internal/dashboard"
 	"github.com/HenriNorman/gregport/internal/idempotency"
+	"github.com/HenriNorman/gregport/internal/inboundemail"
 	"github.com/HenriNorman/gregport/internal/middleware"
 	"github.com/HenriNorman/gregport/internal/notifications"
 	"github.com/HenriNorman/gregport/internal/organizations"
@@ -220,6 +221,15 @@ func main() {
 		// tighter per-IP limit; it must not share the signup bucket.
 		r.With(middleware.ScopedPublicRateLimit(ratingLimit, "ratings")).
 			Post("/public/ratings", ratingsHandler.Submit)
+
+		// Inbound email is a provider webhook authenticated by HMAC signature
+		// rather than a session; it shares the public rate-limit bucket.
+		inboundSvc := inboundemail.NewService(
+			inboundemail.NewRepository(pool),
+			cfg.InboundEmailSecret,
+		)
+		inboundHandler := inboundemail.NewHandler(inboundSvc)
+		r.Post("/inbound/email", inboundHandler.Submit)
 
 		// protected
 		r.Group(func(r chi.Router) {
