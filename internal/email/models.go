@@ -20,6 +20,7 @@ const (
 	TemplateCommentAdded   = "comment_added"
 	TemplateTicketAssigned = "ticket_assigned"
 	TemplateSLABreached    = "sla_breached"
+	TemplateTicketSolved   = "ticket_solved"
 )
 
 // Errors returned by the service. Missing tickets and comments are permanent
@@ -68,6 +69,7 @@ type TicketContext struct {
 	TicketID       uuid.UUID
 	Number         int64
 	Subject        string
+	RequesterID    uuid.UUID
 	RequesterEmail string
 	RequesterName  string
 	AssigneeEmail  string
@@ -95,7 +97,10 @@ type DeliveryPayload struct {
 	CommentBody   string `json:"comment_body,omitempty"`
 	// ReplyTo is set on customer-facing emails so a customer reply goes to the
 	// organization's support inbox rather than the shared From address.
-	ReplyTo   string          `json:"reply_to,omitempty"`
+	ReplyTo string `json:"reply_to,omitempty"`
+	// RatingURL is the signed, expiring satisfaction-rating link included in
+	// the solved-ticket email.
+	RatingURL string          `json:"rating_url,omitempty"`
 	EventData json.RawMessage `json:"event_data,omitempty"`
 }
 

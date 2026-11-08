@@ -51,9 +51,18 @@ type Config struct {
 	PublicRateLimitWindow   time.Duration
 	LoginRateLimitRequests  int
 	LoginRateLimitWindow    time.Duration
+	RatingRateLimitRequests int
+	RatingRateLimitWindow   time.Duration
 	TrustProxyHeaders       bool
 	TrustedProxyCIDRs       []netip.Prefix
 	IdempotencyTTL          time.Duration
+
+	// RatingTokenSecret signs the public satisfaction-rating links embedded in
+	// solved-ticket email. It is separate from JWT_SECRET so rotating one does
+	// not invalidate the other.
+	RatingTokenSecret string
+	RatingTokenTTL    time.Duration
+	PublicAppURL      string
 }
 
 func Load() (Config, error) {
@@ -94,8 +103,14 @@ func Load() (Config, error) {
 		PublicRateLimitWindow:   time.Minute,
 		LoginRateLimitRequests:  5,
 		LoginRateLimitWindow:    15 * time.Minute,
+		RatingRateLimitRequests: 5,
+		RatingRateLimitWindow:   15 * time.Minute,
 		TrustProxyHeaders:       false,
 		IdempotencyTTL:          24 * time.Hour,
+
+		RatingTokenSecret: os.Getenv("RATING_TOKEN_SECRET"),
+		RatingTokenTTL:    30 * 24 * time.Hour,
+		PublicAppURL:      getEnv("PUBLIC_APP_URL", "http://localhost:8080"),
 	}
 
 	var errs []error
@@ -105,6 +120,12 @@ func Load() (Config, error) {
 	}
 	if len(cfg.JWTSecret) < 32 {
 		errs = append(errs, errors.New("JWT_SECRET must be at least 32 bytes"))
+	}
+	if len(cfg.RatingTokenSecret) < 32 {
+		errs = append(errs, errors.New("RATING_TOKEN_SECRET must be at least 32 bytes"))
+	}
+	if err := validateAppURL(cfg.PublicAppURL); err != nil {
+		errs = append(errs, err)
 	}
 	if _, err := logging.ParseLevel(cfg.LogLevel); err != nil {
 		errs = append(errs, err)
@@ -158,6 +179,8 @@ func Load() (Config, error) {
 		{"RATE_LIMIT_WINDOW", &cfg.RateLimitWindow},
 		{"PUBLIC_RATE_LIMIT_WINDOW", &cfg.PublicRateLimitWindow},
 		{"LOGIN_RATE_LIMIT_WINDOW", &cfg.LoginRateLimitWindow},
+		{"RATING_RATE_LIMIT_WINDOW", &cfg.RatingRateLimitWindow},
+		{"RATING_TOKEN_TTL", &cfg.RatingTokenTTL},
 		{"IDEMPOTENCY_TTL", &cfg.IdempotencyTTL},
 	}
 	for _, d := range redisDurations {
@@ -178,6 +201,7 @@ func Load() (Config, error) {
 		{"RATE_LIMIT_REQUESTS", &cfg.RateLimitRequests, 1},
 		{"PUBLIC_RATE_LIMIT_REQUESTS", &cfg.PublicRateLimitRequests, 1},
 		{"LOGIN_RATE_LIMIT_REQUESTS", &cfg.LoginRateLimitRequests, 1},
+		{"RATING_RATE_LIMIT_REQUESTS", &cfg.RatingRateLimitRequests, 1},
 	}
 	for _, n := range ints {
 		value, err := envInt(n.name, *n.dst, n.min)
@@ -315,4 +339,20 @@ func envCIDRs(name string) ([]netip.Prefix, error) {
 		prefixes = append(prefixes, prefix)
 	}
 	return prefixes, nil
+}
+
+// validateAppURL requires an absolute http(s) URL so a malformed PUBLIC_APP_URL
+// cannot produce broken rating links in outgoing email.
+func validateAppURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("PUBLIC_APP_URL: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("PUBLIC_APP_URL must use http or https, got %q", raw)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("PUBLIC_APP_URL must include a host, got %q", raw)
+	}
+	return nil
 }

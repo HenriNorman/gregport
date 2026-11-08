@@ -36,6 +36,12 @@ There is a new reply on ticket [#{{.TicketNumber}}] {{.Subject}}.
 {{.CommentBody}}
 {{- else if eq .Template "ticket_assigned" -}}
 Ticket [#{{.TicketNumber}}] {{.Subject}} has been assigned to you.
+{{- else if eq .Template "ticket_solved" -}}
+Your ticket [#{{.TicketNumber}}] {{.Subject}} has been solved.
+{{- if .RatingURL}}
+We would love to know how we did. Rate this ticket:
+{{.RatingURL}}
+{{- end }}
 {{- else if eq .Template "sla_breached" -}}
 Ticket [#{{.TicketNumber}}] {{.Subject}} has breached its SLA target. Please review it.
 {{- else -}}
@@ -62,6 +68,12 @@ var htmlTemplates = htmltemplate.Must(htmltemplate.New("email").Parse(`<!doctype
 <blockquote style="margin: 0; padding: 8px 16px; border-left: 3px solid #cbd2d9; white-space: pre-wrap;">{{.CommentBody}}</blockquote>
 {{- else if eq .Template "ticket_assigned" -}}
 <p>Ticket <strong>[#{{.TicketNumber}}] {{.Subject}}</strong> has been assigned to you.</p>
+{{- else if eq .Template "ticket_solved" -}}
+<p>Your ticket <strong>[#{{.TicketNumber}}] {{.Subject}}</strong> has been solved.</p>
+{{- if .RatingURL}}
+<p>We would love to know how we did.</p>
+<p><a href="{{.RatingURL}}" style="display: inline-block; padding: 10px 18px; background: #2563eb; color: #ffffff; text-decoration: none; border-radius: 6px;">Rate this ticket</a></p>
+{{- end }}
 {{- else if eq .Template "sla_breached" -}}
 <p>Ticket <strong>[#{{.TicketNumber}}] {{.Subject}}</strong> has breached its SLA target. Please review it.</p>
 {{- else -}}

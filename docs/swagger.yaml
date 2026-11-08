@@ -120,6 +120,10 @@ definitions:
     type: object
   dashboard.Counts:
     properties:
+      average_rating:
+        description: 0 when the org has no ratings
+        example: 4.6
+        type: number
       by_priority:
         $ref: '#/definitions/dashboard.PriorityCounts'
       by_status:
@@ -131,6 +135,9 @@ definitions:
       overdue:
         description: unresolved tickets past resolution_due_at
         example: 3
+        type: integer
+      rating_count:
+        example: 18
         type: integer
       total:
         example: 102
@@ -306,6 +313,39 @@ definitions:
       timezone:
         example: Europe/Nairobi
         type: string
+    type: object
+  ratings.CreateRequest:
+    properties:
+      comment:
+        example: Fast and helpful
+        type: string
+      score:
+        enum:
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+        example: 5
+        type: integer
+      token:
+        example: VGVzdFRva2Vu.c2lnbmF0dXJl
+        type: string
+    type: object
+  ratings.RatingResponse:
+    properties:
+      comment:
+        example: Fast and helpful
+        type: string
+      created_at:
+        example: "2026-01-15T10:30:00Z"
+        type: string
+      score:
+        example: 5
+        type: integer
+      ticket_number:
+        example: 1042
+        type: integer
     type: object
   sla.CreatePolicyRequest:
     properties:
@@ -849,7 +889,7 @@ info:
     Multi-tenant support ticketing SaaS.
 
     ## Authentication
-    All endpoints except `/v1/auth/*`, `/healthz` and `/readyz` require `Authorization: Bearer <access_token>`.
+    All endpoints except `/v1/auth/*`, `POST /v1/public/ratings`, `/healthz` and `/readyz` require `Authorization: Bearer <access_token>`.
     The access token is a JWT containing `sub` (user id), `org` (org id), and `role`.
     Missing, expired, or invalid tokens return 401.
 
@@ -1786,6 +1826,47 @@ paths:
       summary: Update organization settings
       tags:
       - organizations
+  /v1/public/ratings:
+    post:
+      consumes:
+      - application/json
+      description: Public endpoint used by the solved-ticket email link. The token
+        is an HMAC-signed, expiring token tied to one ticket and customer, so no session
+        is required. Each ticket accepts exactly one rating. The endpoint is tightly
+        rate limited per client IP.
+      parameters:
+      - description: Signed rating token and score
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/ratings.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/ratings.RatingResponse'
+        "400":
+          description: Malformed JSON
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "409":
+          description: Ticket has already been rated
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Invalid or expired token, or invalid score
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "429":
+          description: Rate limited
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      summary: Submit a satisfaction rating
+      tags:
+      - ratings
   /v1/sla-policies:
     get:
       description: Any authenticated member may list policies. Results are scoped

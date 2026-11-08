@@ -64,6 +64,11 @@ type WorkerConfig struct {
 	SMTPPassword string
 	SMTPFrom     string
 	SMTPFromName string
+
+	// RatingTokenSecret signs the satisfaction link in solved-ticket email.
+	RatingTokenSecret string
+	RatingTokenTTL    time.Duration
+	PublicAppURL      string
 }
 
 // LoadWorker reads the worker configuration from the environment. Defaults
@@ -121,12 +126,22 @@ func LoadWorker() (WorkerConfig, error) {
 		SMTPPassword: os.Getenv("SMTP_PASSWORD"),
 		SMTPFrom:     getEnv("SMTP_FROM", "no-reply@localhost"),
 		SMTPFromName: getEnv("SMTP_FROM_NAME", "Gregport"),
+
+		RatingTokenSecret: os.Getenv("RATING_TOKEN_SECRET"),
+		RatingTokenTTL:    30 * 24 * time.Hour,
+		PublicAppURL:      getEnv("PUBLIC_APP_URL", "http://localhost:8080"),
 	}
 
 	var errs []error
 
 	if cfg.DBPassword == "" {
 		errs = append(errs, errors.New("DB_PASSWORD is required"))
+	}
+	if len(cfg.RatingTokenSecret) < 32 {
+		errs = append(errs, errors.New("RATING_TOKEN_SECRET must be at least 32 bytes"))
+	}
+	if err := validateAppURL(cfg.PublicAppURL); err != nil {
+		errs = append(errs, err)
 	}
 	if _, err := logging.ParseLevel(cfg.LogLevel); err != nil {
 		errs = append(errs, err)
@@ -165,6 +180,7 @@ func LoadWorker() (WorkerConfig, error) {
 		{"TICKET_EVENT_RETENTION", &cfg.TicketEventRetention, true},
 		{"AUDIT_LOG_RETENTION", &cfg.AuditLogRetention, true},
 		{"EMAIL_DELIVERY_RETENTION", &cfg.EmailDeliveryRetention, true},
+		{"RATING_TOKEN_TTL", &cfg.RatingTokenTTL, false},
 		{"IDEMPOTENCY_TTL", &cfg.IDempotencyTTL, true},
 	}
 	for _, d := range durations {

@@ -76,6 +76,13 @@ func PublicIPRateLimitKey(ip string) string {
 	return "ratelimit:ip:" + ip
 }
 
+// ScopedPublicIPRateLimitKey keeps a public endpoint's bucket separate from
+// the shared IP bucket. Scope is a short fixed label such as "ratings", never
+// user input, so a tighter limiter cannot be diluted by another endpoint.
+func ScopedPublicIPRateLimitKey(scope, ip string) string {
+	return "ratelimit:ip:" + scope + ":" + ip
+}
+
 // LoginRateLimitKey slows credential stuffing by combining the client IP with
 // a hash of the submitted email. The raw email is never part of a key.
 func LoginRateLimitKey(ip, emailHash string) string {

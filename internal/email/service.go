@@ -9,14 +9,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/HenriNorman/gregport/internal/ratings"
 )
 
 // Event types this consumer handles. They match the outbox consumer map.
 const (
-	EventTicketCreated  = "ticket.created"
-	EventCommentAdded   = "comment.added"
-	EventTicketAssigned = "ticket.assigned"
-	EventSLABreached    = "sla.breached"
+	EventTicketCreated       = "ticket.created"
+	EventCommentAdded        = "comment.added"
+	EventTicketAssigned      = "ticket.assigned"
+	EventSLABreached         = "sla.breached"
+	EventTicketStatusChanged = "ticket.status_changed"
 )
 
 // Repo is the data access the email service needs: loading ticket/comment
@@ -32,11 +35,21 @@ type Repo interface {
 
 // Service turns ticket events into pending email deliveries.
 type Service struct {
-	repo Repo
+	repo          Repo
+	ratingLinks   *ratings.TokenManager
+	publicBaseURL string
 }
 
 func NewService(repo Repo) *Service {
 	return &Service{repo: repo}
+}
+
+// SetRatingLinks configures the signer and customer-facing base URL used for
+// the satisfaction link in solved-ticket email. Without it, the solved email
+// is still planned but carries no link.
+func (s *Service) SetRatingLinks(tokens *ratings.TokenManager, publicBaseURL string) {
+	s.ratingLinks = tokens
+	s.publicBaseURL = publicBaseURL
 }
 
 // Plan resolves the recipients for an event and persists one pending delivery
@@ -78,7 +91,16 @@ func (s *Service) Plan(ctx context.Context, p TaskPayload) ([]Delivery, error) {
 		comment = &c
 	}
 
-	planned := planDeliveries(tc, comment, p)
+	ratingURL := ""
+	if p.EventType == EventTicketStatusChanged && isSolvedEvent(p.Data) && s.ratingLinks != nil {
+		link, err := s.ratingLinks.Link(s.publicBaseURL, tc.TicketID, tc.RequesterID)
+		if err != nil {
+			return nil, fmt.Errorf("sign rating link: %w", err)
+		}
+		ratingURL = link
+	}
+
+	planned := planDeliveries(tc, comment, p, ratingURL)
 	if len(planned) == 0 {
 		return nil, nil
 	}
@@ -96,11 +118,26 @@ func (s *Service) Plan(ctx context.Context, p TaskPayload) ([]Delivery, error) {
 
 func supportedEvent(eventType string) bool {
 	switch eventType {
-	case EventTicketCreated, EventCommentAdded, EventTicketAssigned, EventSLABreached:
+	case EventTicketCreated, EventCommentAdded, EventTicketAssigned, EventSLABreached, EventTicketStatusChanged:
 		return true
 	default:
 		return false
 	}
+}
+
+// isSolvedEvent reports whether a status-change event moved the ticket to
+// solved. Other transitions produce no customer email.
+func isSolvedEvent(data json.RawMessage) bool {
+	var body struct {
+		New string `json:"new"`
+	}
+	if len(data) == 0 {
+		return false
+	}
+	if err := json.Unmarshal(data, &body); err != nil {
+		return false
+	}
+	return body.New == "solved"
 }
 
 func commentIDFromData(data json.RawMessage) (uuid.UUID, error) {
@@ -119,7 +156,7 @@ func commentIDFromData(data json.RawMessage) (uuid.UUID, error) {
 // planDeliveries is pure: the same ticket context and comment always produce
 // the same recipients. Keeping it separate makes the notification rules
 // table-testable without a database.
-func planDeliveries(tc TicketContext, comment *CommentContext, p TaskPayload) []PlannedDelivery {
+func planDeliveries(tc TicketContext, comment *CommentContext, p TaskPayload, ratingURL string) []PlannedDelivery {
 	base := DeliveryPayload{
 		EventType:     p.EventType,
 		OrgName:       tc.OrgName,
@@ -127,6 +164,7 @@ func planDeliveries(tc TicketContext, comment *CommentContext, p TaskPayload) []
 		Subject:       tc.Subject,
 		RequesterName: tc.RequesterName,
 		AssigneeName:  tc.AssigneeName,
+		RatingURL:     ratingURL,
 		EventData:     p.Data,
 	}
 
@@ -165,6 +203,15 @@ func planDeliveries(tc TicketContext, comment *CommentContext, p TaskPayload) []
 			return one(tc.AssigneeEmail, TemplateSLABreached, base)
 		}
 		return one(tc.SupportEmail, TemplateSLABreached, base)
+
+	case EventTicketStatusChanged:
+		// Only the transition into solved produces a customer email; it is
+		// the one that carries the satisfaction rating link.
+		if !isSolvedEvent(p.Data) {
+			return nil
+		}
+		base.ReplyTo = tc.SupportEmail
+		return one(tc.RequesterEmail, TemplateTicketSolved, base)
 	}
 
 	return nil

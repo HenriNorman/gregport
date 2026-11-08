@@ -361,7 +361,7 @@ func TestUnknownEventTypeIsMarkedDispatchedWithoutJobs(t *testing.T) {
 
 func TestConsumersFor(t *testing.T) {
 	for _, eventType := range []string{"ticket.created", "comment.added", "ticket.assigned", "sla.breached"} {
-		cs := ConsumersFor(eventType)
+		cs := ConsumersFor(Event{EventType: eventType})
 		if len(cs) != 2 {
 			t.Fatalf("%s consumers: %+v, want 2", eventType, cs)
 		}
@@ -372,8 +372,34 @@ func TestConsumersFor(t *testing.T) {
 			t.Fatalf("%s second consumer: %+v, want notify", eventType, cs[1])
 		}
 	}
-	if cs := ConsumersFor("ticket.updated"); len(cs) != 0 {
+	if cs := ConsumersFor(Event{EventType: "ticket.updated"}); len(cs) != 0 {
 		t.Fatalf("unexpected consumers: %+v", cs)
+	}
+}
+
+func TestConsumersForStatusChangedOnlyWhenSolved(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want int
+	}{
+		{name: "solved", data: `{"old":"open","new":"solved"}`, want: 1},
+		{name: "reopened", data: `{"old":"solved","new":"open"}`},
+		{name: "pending", data: `{"old":"open","new":"pending"}`},
+		{name: "missing data"},
+		{name: "invalid data", data: `{`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cs := ConsumersFor(Event{EventType: "ticket.status_changed", Data: []byte(tt.data)})
+			if len(cs) != tt.want {
+				t.Fatalf("consumers: %+v, want %d", cs, tt.want)
+			}
+			if tt.want == 1 && (cs[0].Name != ConsumerEmail || cs[0].TaskType != queue.TaskEmailSend) {
+				t.Fatalf("consumer: %+v, want email", cs[0])
+			}
+		})
 	}
 }
 

@@ -24,6 +24,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/database"
 	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/queue"
+	"github.com/HenriNorman/gregport/internal/ratings"
 	"github.com/HenriNorman/gregport/internal/tickets"
 	"github.com/HenriNorman/gregport/internal/worker"
 )
@@ -89,6 +90,10 @@ func run() error {
 
 	emailRepo := email.NewRepository(pool)
 	emailSvc := email.NewService(emailRepo)
+	emailSvc.SetRatingLinks(
+		ratings.NewTokenManager(cfg.RatingTokenSecret, cfg.RatingTokenTTL),
+		cfg.PublicAppURL,
+	)
 
 	smtpSender := email.NewSMTPSender(
 		cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword,

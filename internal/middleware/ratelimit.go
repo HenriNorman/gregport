@@ -50,6 +50,16 @@ func PublicRateLimit(cfg RateLimitConfig) func(http.Handler) http.Handler {
 	})
 }
 
+// ScopedPublicRateLimit is PublicRateLimit with a dedicated bucket. Use it when
+// one public endpoint needs a much tighter budget than the rest, so its window
+// does not share the generic per-IP log.
+func ScopedPublicRateLimit(cfg RateLimitConfig, scope string) func(http.Handler) http.Handler {
+	return limitRequests(cfg, func(r *http.Request) (string, error) {
+		ip := clientip.FromRequest(r, cfg.Proxy)
+		return cache.ScopedPublicIPRateLimitKey(scope, ip), nil
+	})
+}
+
 type keyFunc func(*http.Request) (string, error)
 
 type noPrincipalError struct{}

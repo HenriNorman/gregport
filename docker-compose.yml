@@ -16,6 +16,7 @@ services:
       - ./migrations/0003_audit_logs.up.sql:/docker-entrypoint-initdb.d/0003_audit_logs.sql:ro
       - ./migrations/0004_worker_sla_email.up.sql:/docker-entrypoint-initdb.d/0004_worker_sla_email.sql:ro
       - ./migrations/0005_notifications_dedupe.up.sql:/docker-entrypoint-initdb.d/0005_notifications_dedupe.sql:ro
+      - ./migrations/0006_ticket_ratings.up.sql:/docker-entrypoint-initdb.d/0006_ticket_ratings.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -50,6 +51,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
       DB_NAME: ${DB_NAME:-gregport}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      RATING_TOKEN_SECRET: ${RATING_TOKEN_SECRET:?set RATING_TOKEN_SECRET in .env}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:8080}
       APP_PORT: ${APP_PORT:-8080}
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
@@ -86,6 +89,8 @@ services:
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_DB: ${REDIS_DB:-0}
+      RATING_TOKEN_SECRET: ${RATING_TOKEN_SECRET:?set RATING_TOKEN_SECRET in .env}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:8080}
       WORKER_PORT: ${WORKER_PORT:-8081}
     ports:
       - "${WORKER_PORT:-8081}:${WORKER_PORT:-8081}"

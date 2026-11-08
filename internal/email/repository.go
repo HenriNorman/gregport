@@ -27,7 +27,7 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 func (r *Repository) LoadTicketContext(ctx context.Context, orgID, ticketID uuid.UUID) (TicketContext, error) {
 	var tc TicketContext
 	err := r.pool.QueryRow(ctx,
-		`SELECT t.org_id, t.id, t.number, t.subject,
+		`SELECT t.org_id, t.id, t.number, t.subject, t.requester_id,
 		        c.email, COALESCE(c.name, ''),
 		        COALESCE(u.email, ''), COALESCE(u.name, ''),
 		        o.name, COALESCE(o.settings->>'support_email', '')
@@ -38,7 +38,7 @@ func (r *Repository) LoadTicketContext(ctx context.Context, orgID, ticketID uuid
 		 WHERE t.id = $1 AND t.org_id = $2 AND t.deleted_at IS NULL`,
 		ticketID, orgID,
 	).Scan(
-		&tc.OrgID, &tc.TicketID, &tc.Number, &tc.Subject,
+		&tc.OrgID, &tc.TicketID, &tc.Number, &tc.Subject, &tc.RequesterID,
 		&tc.RequesterEmail, &tc.RequesterName,
 		&tc.AssigneeEmail, &tc.AssigneeName,
 		&tc.OrgName, &tc.SupportEmail,

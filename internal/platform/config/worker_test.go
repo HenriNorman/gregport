@@ -25,10 +25,14 @@ func clearWorkerEnv(t *testing.T) {
 		"IDEMPOTENCY_TTL",
 		"SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD",
 		"SMTP_FROM", "SMTP_FROM_NAME",
+		"RATING_TOKEN_SECRET", "RATING_TOKEN_TTL", "PUBLIC_APP_URL",
 		"JWT_SECRET",
 	} {
 		t.Setenv(key, "")
 	}
+	// A valid baseline secret keeps the many non-rating tests focused on their
+	// own knob; tests that exercise the secret set it explicitly.
+	t.Setenv("RATING_TOKEN_SECRET", strings.Repeat("r", 32))
 }
 
 func TestLoadWorkerDefaults(t *testing.T) {
@@ -103,6 +107,9 @@ func TestLoadWorkerDefaults(t *testing.T) {
 	if cfg.IDempotencyTTL != 24*time.Hour {
 		t.Fatalf("idempotency TTL: %s", cfg.IDempotencyTTL)
 	}
+	if cfg.RatingTokenTTL != 30*24*time.Hour || cfg.PublicAppURL != "http://localhost:8080" {
+		t.Fatalf("rating defaults: ttl=%s url=%s", cfg.RatingTokenTTL, cfg.PublicAppURL)
+	}
 }
 
 func TestLoadWorkerDoesNotRequireJWTSecret(t *testing.T) {
@@ -151,6 +158,8 @@ func TestLoadWorkerOverrides(t *testing.T) {
 	t.Setenv("AUDIT_LOG_RETENTION", "100h")
 	t.Setenv("EMAIL_DELIVERY_RETENTION", "200h")
 	t.Setenv("IDEMPOTENCY_TTL", "6h")
+	t.Setenv("RATING_TOKEN_TTL", "48h")
+	t.Setenv("PUBLIC_APP_URL", "https://support.example.com")
 
 	cfg, err := LoadWorker()
 	if err != nil {
@@ -223,6 +232,9 @@ func TestLoadWorkerOverrides(t *testing.T) {
 	}
 	if cfg.IDempotencyTTL != 6*time.Hour {
 		t.Fatalf("idempotency TTL override: %s", cfg.IDempotencyTTL)
+	}
+	if cfg.RatingTokenTTL != 48*time.Hour || cfg.PublicAppURL != "https://support.example.com" {
+		t.Fatalf("rating overrides: ttl=%s url=%s", cfg.RatingTokenTTL, cfg.PublicAppURL)
 	}
 }
 
@@ -341,6 +353,26 @@ func TestLoadWorkerValidation(t *testing.T) {
 			name: "invalid idempotency TTL",
 			env:  map[string]string{"DB_PASSWORD": "secret", "IDEMPOTENCY_TTL": "soon"},
 			want: "IDEMPOTENCY_TTL",
+		},
+		{
+			name: "missing rating token secret",
+			env:  map[string]string{"DB_PASSWORD": "secret", "RATING_TOKEN_SECRET": ""},
+			want: "RATING_TOKEN_SECRET",
+		},
+		{
+			name: "short rating token secret",
+			env:  map[string]string{"DB_PASSWORD": "secret", "RATING_TOKEN_SECRET": "short"},
+			want: "RATING_TOKEN_SECRET",
+		},
+		{
+			name: "invalid public app url",
+			env:  map[string]string{"DB_PASSWORD": "secret", "PUBLIC_APP_URL": "ftp://example.com"},
+			want: "PUBLIC_APP_URL",
+		},
+		{
+			name: "invalid rating token ttl",
+			env:  map[string]string{"DB_PASSWORD": "secret", "RATING_TOKEN_TTL": "soon"},
+			want: "RATING_TOKEN_TTL",
 		},
 	}
 

@@ -26,6 +26,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/platform/metrics"
 	"github.com/HenriNorman/gregport/internal/platform/ratelimit"
+	"github.com/HenriNorman/gregport/internal/ratings"
 	"github.com/HenriNorman/gregport/internal/sla"
 	"github.com/HenriNorman/gregport/internal/tickets"
 )
@@ -35,7 +36,7 @@ import (
 // @description	Multi-tenant support ticketing SaaS.
 // @description
 // @description	## Authentication
-// @description	All endpoints except `/v1/auth/*`, `/healthz` and `/readyz` require `Authorization: Bearer <access_token>`.
+// @description	All endpoints except `/v1/auth/*`, `POST /v1/public/ratings`, `/healthz` and `/readyz` require `Authorization: Bearer <access_token>`.
 // @description	The access token is a JWT containing `sub` (user id), `org` (org id), and `role`.
 // @description	Missing, expired, or invalid tokens return 401.
 // @description
@@ -122,6 +123,15 @@ func main() {
 		Counters: counters,
 		Proxy:    proxyConfig,
 	}
+	// The public rating endpoint is unauthenticated, so it gets its own much
+	// tighter per-IP budget rather than sharing the signup/login bucket.
+	ratingLimit := middleware.RateLimitConfig{
+		Limiter:  limiter,
+		Limit:    cfg.RatingRateLimitRequests,
+		Window:   cfg.RatingRateLimitWindow,
+		Counters: counters,
+		Proxy:    proxyConfig,
+	}
 
 	// auth wiring
 	tm := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
@@ -159,6 +169,14 @@ func main() {
 	notificationsSvc := notifications.NewService(notificationsRepo)
 	notificationsHandler := notifications.NewHandler(notificationsSvc)
 
+	// ratings wiring
+	ratingsSvc := ratings.NewService(
+		ratings.NewRepository(pool),
+		ratings.NewTokenManager(cfg.RatingTokenSecret, cfg.RatingTokenTTL),
+	)
+	ratingsSvc.SetCountsInvalidator(dashboard.NewInvalidator(observedCache))
+	ratingsHandler := ratings.NewHandler(ratingsSvc)
+
 	// idempotency wiring (PostgreSQL-backed store, not Redis)
 	idempotencyRepo := idempotency.NewRepository(pool)
 	idempotencyCfg := middleware.IdempotencyConfig{
@@ -191,6 +209,11 @@ func main() {
 			r.Post("/auth/logout", authHandler.Logout)
 			r.Post("/invitations/accept", ticketsHandler.AcceptInvitation)
 		})
+
+		// Public rating submission carries its own signed token and a much
+		// tighter per-IP limit; it must not share the signup bucket.
+		r.With(middleware.ScopedPublicRateLimit(ratingLimit, "ratings")).
+			Post("/public/ratings", ratingsHandler.Submit)
 
 		// protected
 		r.Group(func(r chi.Router) {

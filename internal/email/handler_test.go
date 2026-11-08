@@ -123,6 +123,7 @@ func ticketContext() TicketContext {
 		TicketID:       uuid.New(),
 		Number:         1042,
 		Subject:        "Cannot log in",
+		RequesterID:    uuid.New(),
 		RequesterEmail: "customer@acme.test",
 		RequesterName:  "Ada Customer",
 		AssigneeEmail:  "agent@acme.test",

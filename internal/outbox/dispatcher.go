@@ -38,7 +38,6 @@ type Consumer struct {
 // consumers maps an event type to its downstream consumers. Only implemented
 // consumers are listed: enqueueing a task without a handler would retry and
 // archive forever. Webhooks join this map when that handler lands.
-
 var consumers = map[string][]Consumer{
 	"ticket.created": {
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
@@ -56,13 +55,41 @@ var consumers = map[string][]Consumer{
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
 		{Name: ConsumerNotify, TaskType: queue.TaskNotify, Queue: queue.QueueCritical, MaxRetry: 5},
 	},
+	// A status change is only interesting to the customer when it solved the
+	// ticket: that email carries the satisfaction-rating link. Every other
+	// transition is filtered out by eventDataAllows.
+	"ticket.status_changed": {
+		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
+	},
 }
 
-// ConsumersFor returns the downstream jobs for an event type. Unknown event
-// types have no consumers; their rows are still marked dispatched so they do
-// not pollute every poll.
-func ConsumersFor(eventType string) []Consumer {
-	return consumers[eventType]
+// ConsumersFor returns the downstream jobs for an event. Unknown event types
+// have no consumers; their rows are still marked dispatched so they do not
+// pollute every poll. The event data is consulted where only some payloads
+// are actionable, so unsolved status changes enqueue nothing.
+func ConsumersFor(ev Event) []Consumer {
+	if !eventDataAllows(ev) {
+		return nil
+	}
+	return consumers[ev.EventType]
+}
+
+// eventDataAllows applies the payload-level filter for event types whose
+// consumers only handle a subset of transitions.
+func eventDataAllows(ev Event) bool {
+	if ev.EventType != "ticket.status_changed" {
+		return true
+	}
+	var body struct {
+		New string `json:"new"`
+	}
+	if len(ev.Data) == 0 {
+		return false
+	}
+	if err := json.Unmarshal(ev.Data, &body); err != nil {
+		return false
+	}
+	return body.New == "solved"
 }
 
 // Event is one claimed outbox row.
@@ -204,7 +231,7 @@ func (d *Dispatcher) claimAndEnqueue(ctx context.Context) ([]Event, error) {
 		rows.Close()
 
 		for _, ev := range claimed {
-			for _, consumer := range ConsumersFor(ev.EventType) {
+			for _, consumer := range ConsumersFor(ev) {
 				job, err := jobFor(ev, consumer)
 				if err != nil {
 					return err

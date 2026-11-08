@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/cache"
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 	"github.com/HenriNorman/gregport/internal/queue"
+	"github.com/HenriNorman/gregport/internal/ratings"
 	"github.com/HenriNorman/gregport/internal/sla"
 	"github.com/HenriNorman/gregport/internal/tickets"
 	"github.com/HenriNorman/gregport/internal/worker"
@@ -25,6 +28,7 @@ import (
 type pipelineEmail struct {
 	to       string
 	template string
+	payload  email.DeliveryPayload
 }
 
 type pipelineSender struct {
@@ -32,10 +36,10 @@ type pipelineSender struct {
 	calls []pipelineEmail
 }
 
-func (s *pipelineSender) Send(_ context.Context, to, template string, _ email.DeliveryPayload) error {
+func (s *pipelineSender) Send(_ context.Context, to, template string, payload email.DeliveryPayload) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.calls = append(s.calls, pipelineEmail{to: to, template: template})
+	s.calls = append(s.calls, pipelineEmail{to: to, template: template, payload: payload})
 	return nil
 }
 
@@ -142,7 +146,7 @@ func loadPipelineEvent(t *testing.T, pool *pgxpool.Pool, ticketID uuid.UUID, eve
 
 func enqueuePipelineEvent(t *testing.T, pool *pgxpool.Pool, client *queue.Client, ev Event) queue.Job {
 	t.Helper()
-	consumers := ConsumersFor(ev.EventType)
+	consumers := ConsumersFor(ev)
 	if len(consumers) == 0 {
 		t.Fatalf("event %s has no consumers", ev.EventType)
 	}
@@ -212,6 +216,8 @@ func TestTicketEventPipelineEndToEnd(t *testing.T) {
 	sender := &pipelineSender{}
 	emailRepo := email.NewRepository(pool)
 	emailSvc := email.NewService(emailRepo)
+	ratingTokens := ratings.NewTokenManager(strings.Repeat("p", 32), time.Hour)
+	emailSvc.SetRatingLinks(ratingTokens, "https://support.pipeline.test")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	emailHandler := email.NewTaskHandler(emailSvc, sender, logger)
 
@@ -308,6 +314,70 @@ func TestTicketEventPipelineEndToEnd(t *testing.T) {
 		t.Fatalf("sends after breach: %+v", sent)
 	}
 
+	// A solved status change is the only status transition with an email
+	// consumer. Insert the outbox row directly, then run it through the queue.
+	var solvedEventID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO ticket_events (org_id, ticket_id, actor_type, event_type, data)
+		 VALUES ($1, $2, 'system', 'ticket.status_changed', '{"old":"open","new":"solved"}')
+		 RETURNING id`,
+		fixture.orgID, fixture.ticketID,
+	).Scan(&solvedEventID); err != nil {
+		t.Fatalf("insert solved event: %v", err)
+	}
+	solved := loadPipelineEvent(t, pool, fixture.ticketID, "ticket.status_changed")
+	if solved.ID != solvedEventID {
+		t.Fatalf("solved event: %s, want %s", solved.ID, solvedEventID)
+	}
+	solvedJob := enqueuePipelineEvent(t, pool, client, solved)
+	if solvedJob.ID != solvedEventID.String()+":email" {
+		t.Fatalf("solved job id: %q", solvedJob.ID)
+	}
+
+	waitForSentDelivery(t, pool, fixture.orgID, fixture.requesterEmail, email.TemplateTicketSolved)
+	sent = sender.snapshot()
+	if len(sent) != 3 {
+		t.Fatalf("sends after solved: %+v", sent)
+	}
+	solvedEmail := sent[2]
+	if solvedEmail.template != email.TemplateTicketSolved ||
+		solvedEmail.payload.RatingURL == "" {
+		t.Fatalf("solved email: %+v", solvedEmail)
+	}
+	link, err := url.Parse(solvedEmail.payload.RatingURL)
+	if err != nil {
+		t.Fatalf("parse rating url: %v", err)
+	}
+	claims, err := ratingTokens.Verify(link.Query().Get("token"))
+	if err != nil {
+		t.Fatalf("verify rating token: %v", err)
+	}
+	if claims.TicketID != fixture.ticketID {
+		t.Fatalf("rating token ticket: %s", claims.TicketID)
+	}
+
+	// A non-solved transition is filtered before enqueueing, so it creates no
+	// job and no customer email.
+	var pendingEventID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO ticket_events (org_id, ticket_id, actor_type, event_type, data)
+		 VALUES ($1, $2, 'system', 'ticket.status_changed', '{"old":"open","new":"pending"}')
+		 RETURNING id`,
+		fixture.orgID, fixture.ticketID,
+	).Scan(&pendingEventID); err != nil {
+		t.Fatalf("insert pending event: %v", err)
+	}
+	pending := loadPipelineEvent(t, pool, fixture.ticketID, "ticket.status_changed")
+	if pending.ID != pendingEventID {
+		t.Fatalf("pending event: %s, want %s", pending.ID, pendingEventID)
+	}
+	if consumers := ConsumersFor(pending); len(consumers) != 0 {
+		t.Fatalf("pending status change has consumers: %+v", consumers)
+	}
+	if got := sender.snapshot(); len(got) != 3 {
+		t.Fatalf("pending status change sent an email: %+v", got)
+	}
+
 	// Move the ticket through solved -> closed and verify the auto-close event.
 	if _, err := pool.Exec(ctx,
 		`UPDATE tickets
@@ -331,10 +401,10 @@ func TestTicketEventPipelineEndToEnd(t *testing.T) {
 		t.Fatalf("ticket status: %s, want closed", status)
 	}
 	loadPipelineEvent(t, pool, fixture.ticketID, "ticket.closed")
-	if consumers := ConsumersFor("ticket.closed"); len(consumers) != 0 {
+	if consumers := ConsumersFor(Event{EventType: "ticket.closed"}); len(consumers) != 0 {
 		t.Fatalf("ticket.closed unexpectedly has consumers: %+v", consumers)
 	}
-	if got := sender.snapshot(); len(got) != 2 {
+	if got := sender.snapshot(); len(got) != 3 {
 		t.Fatalf("auto-close sent email: %+v", got)
 	}
 }

@@ -39,6 +39,10 @@ var optionalKeys = []string{
 	"PUBLIC_RATE_LIMIT_WINDOW",
 	"LOGIN_RATE_LIMIT_REQUESTS",
 	"LOGIN_RATE_LIMIT_WINDOW",
+	"RATING_RATE_LIMIT_REQUESTS",
+	"RATING_RATE_LIMIT_WINDOW",
+	"RATING_TOKEN_TTL",
+	"PUBLIC_APP_URL",
 	"TRUST_PROXY_HEADERS",
 	"TRUSTED_PROXY_CIDRS",
 	"IDEMPOTENCY_TTL",
@@ -48,6 +52,7 @@ func setRequired(t *testing.T) {
 	t.Helper()
 	t.Setenv("DB_PASSWORD", "test-password")
 	t.Setenv("JWT_SECRET", strings.Repeat("x", 32))
+	t.Setenv("RATING_TOKEN_SECRET", strings.Repeat("r", 32))
 }
 
 func setDefaults(t *testing.T) {
@@ -101,6 +106,10 @@ func TestLoadDefaults(t *testing.T) {
 		{"PublicRateLimitWindow", cfg.PublicRateLimitWindow, time.Minute},
 		{"LoginRateLimitRequests", cfg.LoginRateLimitRequests, 5},
 		{"LoginRateLimitWindow", cfg.LoginRateLimitWindow, 15 * time.Minute},
+		{"RatingRateLimitRequests", cfg.RatingRateLimitRequests, 5},
+		{"RatingRateLimitWindow", cfg.RatingRateLimitWindow, 15 * time.Minute},
+		{"RatingTokenTTL", cfg.RatingTokenTTL, 30 * 24 * time.Hour},
+		{"PublicAppURL", cfg.PublicAppURL, "http://localhost:8080"},
 		{"TrustProxyHeaders", cfg.TrustProxyHeaders, false},
 		{"TrustedProxyCIDRs", len(cfg.TrustedProxyCIDRs), 0},
 		{"IdempotencyTTL", cfg.IdempotencyTTL, 24 * time.Hour},
@@ -145,6 +154,10 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("PUBLIC_RATE_LIMIT_WINDOW", "90s")
 	t.Setenv("LOGIN_RATE_LIMIT_REQUESTS", "7")
 	t.Setenv("LOGIN_RATE_LIMIT_WINDOW", "10m")
+	t.Setenv("RATING_RATE_LIMIT_REQUESTS", "3")
+	t.Setenv("RATING_RATE_LIMIT_WINDOW", "1m")
+	t.Setenv("RATING_TOKEN_TTL", "168h")
+	t.Setenv("PUBLIC_APP_URL", "https://support.example.com")
 	t.Setenv("TRUST_PROXY_HEADERS", "true")
 	t.Setenv("TRUSTED_PROXY_CIDRS", "10.0.0.0/8, 192.168.0.0/16")
 	t.Setenv("IDEMPOTENCY_TTL", "12h")
@@ -190,8 +203,12 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.RateLimitRequests != 200 || cfg.RateLimitWindow != 2*time.Minute ||
 		cfg.PublicRateLimitRequests != 40 || cfg.PublicRateLimitWindow != 90*time.Second ||
-		cfg.LoginRateLimitRequests != 7 || cfg.LoginRateLimitWindow != 10*time.Minute {
+		cfg.LoginRateLimitRequests != 7 || cfg.LoginRateLimitWindow != 10*time.Minute ||
+		cfg.RatingRateLimitRequests != 3 || cfg.RatingRateLimitWindow != time.Minute {
 		t.Errorf("rate limits: %+v", cfg)
+	}
+	if cfg.RatingTokenTTL != 168*time.Hour || cfg.PublicAppURL != "https://support.example.com" {
+		t.Errorf("rating settings: %+v", cfg)
 	}
 	if !cfg.TrustProxyHeaders {
 		t.Error("trust proxy headers was not enabled")
@@ -217,6 +234,7 @@ func TestLoadRejectsMissingRequiredValues(t *testing.T) {
 	setDefaults(t)
 	t.Setenv("DB_PASSWORD", "")
 	t.Setenv("JWT_SECRET", "")
+	t.Setenv("RATING_TOKEN_SECRET", "")
 
 	_, err := Load()
 	if err == nil {
@@ -224,6 +242,34 @@ func TestLoadRejectsMissingRequiredValues(t *testing.T) {
 	}
 	assertContains(t, err, "DB_PASSWORD is required")
 	assertContains(t, err, "JWT_SECRET must be at least 32 bytes")
+	assertContains(t, err, "RATING_TOKEN_SECRET must be at least 32 bytes")
+}
+
+func TestLoadRejectsShortRatingTokenSecret(t *testing.T) {
+	setDefaults(t)
+	t.Setenv("RATING_TOKEN_SECRET", "too-short")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	assertContains(t, err, "RATING_TOKEN_SECRET must be at least 32 bytes")
+}
+
+func TestLoadRejectsInvalidPublicAppURL(t *testing.T) {
+	tests := []string{"not a url", "ftp://support.example.com", "/relative"}
+	for _, raw := range tests {
+		t.Run(raw, func(t *testing.T) {
+			setDefaults(t)
+			t.Setenv("PUBLIC_APP_URL", raw)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			assertContains(t, err, "PUBLIC_APP_URL")
+		})
+	}
 }
 
 func TestLoadRejectsShortJWTSecret(t *testing.T) {

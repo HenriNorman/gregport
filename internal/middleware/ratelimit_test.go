@@ -161,6 +161,39 @@ func TestPublicRateLimitUsesForwardedAddressWhenTrusted(t *testing.T) {
 	}
 }
 
+func TestScopedPublicRateLimitUsesItsOwnBucket(t *testing.T) {
+	limiter := testRedisLimiter(t)
+	cfg := RateLimitConfig{Limiter: limiter, Limit: 1, Window: time.Minute}
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	generic := PublicRateLimit(cfg)(ok)
+	scoped := ScopedPublicRateLimit(cfg, "ratings")(ok)
+
+	request := func(h http.Handler) int {
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req.RemoteAddr = "203.0.113.9:4321"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// The same IP can use both buckets once; the tight rating bucket is not
+	// diluted by traffic to the shared public endpoints.
+	if code := request(generic); code != http.StatusNoContent {
+		t.Fatalf("generic first: %d", code)
+	}
+	if code := request(scoped); code != http.StatusNoContent {
+		t.Fatalf("scoped first: %d", code)
+	}
+	if code := request(generic); code != http.StatusTooManyRequests {
+		t.Fatalf("generic second: %d", code)
+	}
+	if code := request(scoped); code != http.StatusTooManyRequests {
+		t.Fatalf("scoped second: %d", code)
+	}
+}
+
 func TestLoginRateLimitByIPAndEmail(t *testing.T) {
 	limiter := testRedisLimiter(t)
 	cfg := LoginRateLimitConfig{Limiter: limiter, Limit: 2, Window: time.Minute}

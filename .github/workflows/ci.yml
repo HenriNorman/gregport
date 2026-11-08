@@ -80,6 +80,7 @@ jobs:
         env:
           DB_PASSWORD: ci-password
           JWT_SECRET: ci-secret-ci-secret-ci-secret-32
+          RATING_TOKEN_SECRET: ci-rating-ci-rating-ci-rating-32
         run: |
           cp .env.example .env
           docker compose config --quiet
@@ -100,6 +101,7 @@ jobs:
       - name: Smoke test container
         env:
           JWT_SECRET: ci-secret-ci-secret-ci-secret-32
+          RATING_TOKEN_SECRET: ci-rating-ci-rating-ci-rating-32
         run: |
           docker run -d --name gregport-api-ci --network host \
             -e DB_HOST=127.0.0.1 \
@@ -109,6 +111,7 @@ jobs:
             -e DB_NAME=gregport \
             -e APP_PORT=18080 \
             -e JWT_SECRET="$JWT_SECRET" \
+            -e RATING_TOKEN_SECRET="$RATING_TOKEN_SECRET" \
             gregport-api:ci
 
           trap 'docker rm -f gregport-api-ci >/dev/null 2>&1 || true' EXIT

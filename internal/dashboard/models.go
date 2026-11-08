@@ -19,10 +19,12 @@ type PriorityCounts struct {
 
 // Counts is the dashboard summary for one organization.
 type Counts struct {
-	Total      int64          `json:"total"      example:"102"`
-	Open       int64          `json:"open"       example:"13"` // new + open + pending
-	Unassigned int64          `json:"unassigned" example:"6"`  // open tickets with no assignee
-	Overdue    int64          `json:"overdue"    example:"3"`  // unresolved tickets past resolution_due_at
-	ByStatus   StatusCounts   `json:"by_status"`
-	ByPriority PriorityCounts `json:"by_priority"`
+	Total         int64          `json:"total"          example:"102"`
+	Open          int64          `json:"open"           example:"13"`  // new + open + pending
+	Unassigned    int64          `json:"unassigned"     example:"6"`   // open tickets with no assignee
+	Overdue       int64          `json:"overdue"        example:"3"`   // unresolved tickets past resolution_due_at
+	AverageRating float64        `json:"average_rating" example:"4.6"` // 0 when the org has no ratings
+	RatingCount   int64          `json:"rating_count"   example:"18"`
+	ByStatus      StatusCounts   `json:"by_status"`
+	ByPriority    PriorityCounts `json:"by_priority"`
 }

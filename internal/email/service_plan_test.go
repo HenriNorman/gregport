@@ -13,6 +13,7 @@ func planFixture() (TicketContext, TaskPayload) {
 		TicketID:       uuid.New(),
 		Number:         1042,
 		Subject:        "Cannot log in",
+		RequesterID:    uuid.New(),
 		RequesterEmail: "customer@acme.test",
 		RequesterName:  "Ada Customer",
 		AssigneeEmail:  "agent@acme.test",
@@ -37,6 +38,7 @@ func TestPlanDeliveriesRecipients(t *testing.T) {
 		name      string
 		mutateTC  func(*TicketContext)
 		eventType string
+		data      string
 		comment   *CommentContext
 		wantTo    string
 		wantTmpl  string
@@ -129,6 +131,22 @@ func TestPlanDeliveriesRecipients(t *testing.T) {
 			eventType: EventSLABreached,
 		},
 		{
+			name:      "solved status change goes to requester",
+			eventType: EventTicketStatusChanged,
+			data:      `{"old":"open","new":"solved"}`,
+			wantTo:    base.RequesterEmail,
+			wantTmpl:  TemplateTicketSolved,
+		},
+		{
+			name:      "reopened status change sends nothing",
+			eventType: EventTicketStatusChanged,
+			data:      `{"old":"solved","new":"open"}`,
+		},
+		{
+			name:      "status change without data sends nothing",
+			eventType: EventTicketStatusChanged,
+		},
+		{
 			name:      "unknown event sends nothing",
 			eventType: "ticket.updated",
 		},
@@ -139,11 +157,14 @@ func TestPlanDeliveriesRecipients(t *testing.T) {
 			tc := base
 			p := payload
 			p.EventType = tt.eventType
+			if tt.data != "" {
+				p.Data = json.RawMessage(tt.data)
+			}
 			if tt.mutateTC != nil {
 				tt.mutateTC(&tc)
 			}
 
-			got := planDeliveries(tc, tt.comment, p)
+			got := planDeliveries(tc, tt.comment, p, "")
 			if tt.wantTo == "" {
 				if len(got) != 0 {
 					t.Fatalf("expected no deliveries, got %+v", got)
@@ -219,6 +240,12 @@ func TestPlanDeliveriesReplyTo(t *testing.T) {
 			eventType: EventSLABreached,
 			wantTo:    base.AssigneeEmail,
 		},
+		{
+			name:      "solved status change replies to support",
+			eventType: EventTicketStatusChanged,
+			wantTo:    base.RequesterEmail,
+			wantReply: base.SupportEmail,
+		},
 	}
 
 	for _, tt := range tests {
@@ -226,11 +253,14 @@ func TestPlanDeliveriesReplyTo(t *testing.T) {
 			tc := base
 			p := payload
 			p.EventType = tt.eventType
+			if tt.eventType == EventTicketStatusChanged {
+				p.Data = json.RawMessage(`{"old":"open","new":"solved"}`)
+			}
 			if tt.mutateTC != nil {
 				tt.mutateTC(&tc)
 			}
 
-			got := planDeliveries(tc, tt.comment, p)
+			got := planDeliveries(tc, tt.comment, p, "")
 			if len(got) != 1 {
 				t.Fatalf("deliveries: %+v", got)
 			}

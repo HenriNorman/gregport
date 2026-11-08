@@ -24,8 +24,9 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Members | Complete — list (any member), role change and removal (admin/owner), last-owner protection |
 | Organization settings | Complete — read (any member) and partial update (admin/owner), timezone/priority/support-email validation |
 | SLA policies | Complete — CRUD per org, one policy per priority, reference-safe deletion |
-| Dashboard | Complete — org-scoped ticket counts by status and priority |
+| Dashboard | Complete — org-scoped ticket counts by status and priority, plus average satisfaction rating |
 | Caching | Complete — Redis cache for org settings, SLA policies, and dashboard counts with write invalidation |
+| Satisfaction ratings | Complete — signed expiring links in solved email, unique per ticket, tight public rate limit, dashboard average |
 | Idempotency | Complete — tenant-scoped PostgreSQL key store and HTTP middleware (pending, replay, conflict, expiry) |
 | API keys | Complete — create, list, revoke; `gp_live_` keys authenticate as agent-level principals; `last_used_at` throttled in Redis |
 | Audit log | Complete — every state-changing action in feat 5 writes an `audit_logs` row in the same transaction |
@@ -138,15 +139,20 @@ The SLA policy endpoints expose the `sla_policies` table:
   "unassigned": 2,
   "overdue": 1,
   "by_status": {"new": 1, "open": 1, "pending": 1, "solved": 1, "closed": 1},
-  "by_priority": {"low": 2, "normal": 1, "high": 1, "urgent": 1}
+  "by_priority": {"low": 2, "normal": 1, "high": 1, "urgent": 1},
+  "average_rating": 4.6,
+  "rating_count": 18
 }
 ```
 
 - `open` is `new + open + pending`.
 - `unassigned` counts open tickets with no assignee.
 - `overdue` counts unresolved tickets whose `resolution_due_at` has passed.
-- Soft-deleted tickets are excluded from every number.
-- Counts are computed with one aggregate query scoped to the caller's org.
+- `average_rating` is the mean satisfaction score, and `rating_count` the
+  number of ratings; both are `0` when the org has no ratings.
+- Soft-deleted tickets are excluded from every ticket number.
+- Counts and the rating aggregate are computed with one query scoped to the
+  caller's org.
 
 ### Notifications
 
@@ -194,6 +200,38 @@ matrix:
 A notification in another org returns 404 even when the id exists, matching the
 tenant-isolation rule used elsewhere. Invalid cursors return `400
 invalid_cursor`; malformed notification ids return `400 invalid_id`.
+
+### Satisfaction Ratings
+
+When a ticket transitions to `solved`, the outbox enqueues the email consumer
+only for that transition. The requester receives a `ticket_solved` email with a
+signed link to `${PUBLIC_APP_URL}/rate?token=...`. Other status transitions,
+including reopen and auto-close, send no customer email.
+
+`POST /v1/public/ratings` is unauthenticated because the signed token is the
+credential:
+
+```json
+{"token": "<signed token>", "score": 5, "comment": "Fast and helpful"}
+```
+
+- A token is `base64url(JSON{v,t,c,e}) + "." + hex(HMAC-SHA256(secret,
+  encoded))`. It carries the ticket id, requester id and expiry, is signed with
+  the dedicated `RATING_TOKEN_SECRET`, and is compared in constant time.
+- Expired tokens return `422 expired_token`; tampered tokens and tokens whose
+  ticket no longer exists both return `422 invalid_token`, so the endpoint
+  cannot be used to probe ticket ids.
+- `score` must be `1`–`5` and `comment` at most 2000 characters.
+- `UNIQUE (ticket_id)` makes each ticket rateable exactly once; a replay returns
+  `409 already_rated`.
+- The endpoint has its own per-IP budget
+  (`RATING_RATE_LIMIT_REQUESTS` / `RATING_RATE_LIMIT_WINDOW`) rather than
+  sharing the signup bucket.
+- A successful rating invalidates the org's dashboard cache, so the new
+  `average_rating` and `rating_count` appear immediately.
+
+Tokens default to a 30-day lifetime (`RATING_TOKEN_TTL`). The ticket's org is
+always resolved from PostgreSQL, never trusted from the token.
 
 ---
 
@@ -421,6 +459,17 @@ The service layer depends on repository interfaces rather than concrete implemen
 </details>
 
 <details>
+<summary><code>internal/ratings/</code> — satisfaction ratings</summary>
+
+- `token.go` — HMAC-signed, expiring rating tokens and link building.
+- `models.go` — rating, ratable ticket, request/response DTOs and errors.
+- `repository.go` — ticket ownership lookup, unique insert and org average.
+- `service.go` — score/comment validation, token verification and cache invalidation.
+- `handler.go` — public `POST /v1/public/ratings`.
+
+</details>
+
+<details>
 <summary><code>internal/worker/</code> — worker runtime</summary>
 
 - `health.go` — `/healthz` and `/readyz` (PostgreSQL, Redis cache and queue).
@@ -454,6 +503,13 @@ files in order when the database volume is first created.
   makes notification fan-out idempotent under replay.
 - `idx_webhook_deliveries_retry` supports polling pending webhook deliveries by
   `(status, next_retry_at)`.
+
+`0006_ticket_ratings` stores public satisfaction ratings:
+
+- `ticket_ratings` holds `org_id`, `ticket_id`, `customer_id`, a `1`–`5` score
+  and an optional comment.
+- `UNIQUE (ticket_id)` makes the rating link single-use per ticket.
+- `idx_ticket_ratings_org_created` supports the org-scoped average and count.
 
 ---
 
@@ -638,6 +694,9 @@ The application reads its configuration from environment variables.
 | `APP_PORT` | No | `8080` | HTTP server port |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, or `error` |
 | `JWT_SECRET` | Yes | — | Minimum 32 bytes |
+| `RATING_TOKEN_SECRET` | Yes | — | Minimum 32 bytes; signs public rating links, keep separate from `JWT_SECRET` |
+| `RATING_TOKEN_TTL` | No | `720h` | Rating-link lifetime |
+| `PUBLIC_APP_URL` | No | `http://localhost:8080` | Absolute http(s) base URL used in rating links |
 | `ACCESS_TOKEN_TTL` | No | `15m` | Go duration |
 | `REFRESH_TOKEN_TTL` | No | `720h` | Go duration (30 days) |
 | `SERVER_READ_HEADER_TIMEOUT` | No | `5s` | Go duration |
@@ -662,6 +721,8 @@ The application reads its configuration from environment variables.
 | `PUBLIC_RATE_LIMIT_WINDOW` | No | `1m` | Unauthenticated rate-limit window |
 | `LOGIN_RATE_LIMIT_REQUESTS` | No | `5` | Login attempts per window |
 | `LOGIN_RATE_LIMIT_WINDOW` | No | `15m` | Login rate-limit window |
+| `RATING_RATE_LIMIT_REQUESTS` | No | `5` | Public rating submissions per window |
+| `RATING_RATE_LIMIT_WINDOW` | No | `15m` | Public rating rate-limit window |
 | `TRUST_PROXY_HEADERS` | No | `false` | Honour `X-Forwarded-For` only when explicitly enabled |
 | `TRUSTED_PROXY_CIDRS` | No | — | Comma-separated trusted proxy CIDRs |
 | `IDEMPOTENCY_TTL` | No | `24h` | How long an idempotency key is retained; used by the API middleware and housekeeping |
@@ -699,6 +760,8 @@ reported together. In particular:
 
 - `DB_PASSWORD` is required and has no default.
 - `JWT_SECRET` must be at least 32 bytes.
+- `RATING_TOKEN_SECRET` must be at least 32 bytes; `PUBLIC_APP_URL` must be an
+  absolute `http` or `https` URL.
 - `LOG_LEVEL` must be `debug`, `info`, `warn`, or `error`.
 - Ports must be between `1` and `65535`.
 - Durations must be positive unless the variable is documented as `0`-disablable; `REQUEST_TIMEOUT=0` disables the deadline.
@@ -709,7 +772,9 @@ reported together. In particular:
 - `TRUST_PROXY_HEADERS=true` requires at least one valid `TRUSTED_PROXY_CIDRS` entry.
 - `IDEMPOTENCY_TTL` must be positive.
 - The worker reads the shared database/Redis variables plus the `WORKER_*`
-  knobs. It does not require `JWT_SECRET`, because it never authenticates users.
+  knobs. It does not require `JWT_SECRET`, because it never authenticates users,
+  but it does require `RATING_TOKEN_SECRET` so solved-ticket email can sign
+  rating links.
 - The database DSN is built with `url.URL`, so characters such as `@`, `:`,
   `/`, `?`, `#` and `%` in credentials are escaped automatically.
 
@@ -1112,7 +1177,8 @@ window to `0` to disable that individual purge.
 
 Email is delivered from the worker via the `email:send` queue task, which the
 outbox dispatcher enqueues for `ticket.created`, `comment.added`,
-`ticket.assigned` and `sla.breached` events. Delivery is idempotent:
+`ticket.assigned`, `sla.breached` and solved-only `ticket.status_changed`
+events. Delivery is idempotent:
 
 - Planning persists one `email_deliveries` row per `(event_id, to_email,
   template)` before sending. The partial unique index on that triple means a
@@ -1131,7 +1197,9 @@ Customer-facing email is deliberately narrow: `ticket.created` notifies the
 requester, and only an agent-authored **public** comment (`author_type = user`,
 `is_internal = false`) is emailed back to the requester. Internal notes and
 system notes never produce a customer email, and a customer reply is routed to
-the assignee (or the org support inbox when unassigned).
+the assignee (or the org support inbox when unassigned). A transition to
+`solved` sends the requester a `ticket_solved` email containing the signed
+satisfaction-rating link; other status transitions produce nothing.
 
 Every message is `multipart/alternative` with both a plain-text body rendered
 from `text/template` and an HTML body rendered from `html/template`, so
@@ -1710,7 +1778,9 @@ The dispatcher tests are PostgreSQL integration tests.
   queue routing reaches the email handler, and the delivery is persisted as
   `sent`. The test replays the task twice and proves only one email is sent,
   then drives the breach and auto-close checkers and verifies their events use
-  the same path (`sla.breached` emails; `ticket.closed` has no consumer).
+  the same path (`sla.breached` emails; `ticket.closed` has no consumer). It
+  also proves a solved status change emits a `ticket_solved` email with a
+  verifiable rating token, while a non-solved transition emits nothing.
 
 ### SLA, Email and Housekeeping Tests
 
@@ -1758,6 +1828,28 @@ PostgreSQL integration tests.
   `org_id` and `user_id`.
 - Mark-read is idempotent; another user's or another org's notification is a
   permanent 404 rather than a silent success.
+
+### Satisfaction Rating Tests
+
+The rating tests combine token unit tests with PostgreSQL integration tests.
+
+- Signing and verification round-trips the ticket and customer ids; tampered
+  payloads, signatures, extra segments and tokens signed with another secret
+  are all rejected, and an expired token returns `ErrExpiredToken`.
+- The service rejects scores outside `1`–`5`, oversized comments and tampered or
+  expired tokens before any write, and maps a foreign or missing ticket to
+  `ErrRatingNotAvailable` so ticket ids cannot be probed.
+- `UNIQUE (ticket_id)` is verified against PostgreSQL: the second submission
+  returns `ErrAlreadyRated` and leaves the original score unchanged.
+- The handler returns `201` with no identifiers beyond the ticket number, `409
+  already_rated`, `422 invalid_token` / `expired_token` / `invalid_score` /
+  `invalid_comment`, and a malformed body returns `400`.
+- Dashboard and repository tests verify the org-scoped average and count,
+  including two tenants with separate ratings and a second tenant seeing `0`
+  until it has its own.
+- The outbox pipeline test shows a solved status change enqueues exactly one
+  email consumer, the sent `ticket_solved` delivery carries a verifiable token,
+  and a non-solved transition enqueues nothing.
 
 ### Timeout Tests
 
@@ -1866,12 +1958,13 @@ The same checks can be run locally with the commands in
 
 ## Current Development Direction
 
-The worker, queue, SLA engine and email block is complete. The API writes
-domain events to the `ticket_events` outbox in the same transaction as the
-change; `cmd/worker` claims them, enqueues deterministic asynq jobs and runs
-the consumers. Email is the first consumer: ticket creation, comments,
-assignment and SLA breaches produce idempotent deliveries with retries, a
-circuit breaker and SMTP transport.
+The worker, queue, SLA engine, notifications, email and rating blocks are
+complete. The API writes domain events to the `ticket_events` outbox in the
+same transaction as the change; `cmd/worker` claims them, enqueues
+deterministic asynq jobs and runs the consumers. Email is the first consumer:
+ticket creation, comments, assignment, SLA breaches and solved transitions
+produce idempotent deliveries with retries, a circuit breaker and SMTP
+transport; solved email carries the signed rating link.
 
 SLA automation is complete as well: policies set first-response and
 resolution deadlines on ticket create and priority change, a scheduler records

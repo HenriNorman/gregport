@@ -38,7 +38,9 @@ SELECT
   count(*) FILTER (WHERE priority = 'low'),
   count(*) FILTER (WHERE priority = 'normal'),
   count(*) FILTER (WHERE priority = 'high'),
-  count(*) FILTER (WHERE priority = 'urgent')
+  count(*) FILTER (WHERE priority = 'urgent'),
+  COALESCE((SELECT avg(score) FROM ticket_ratings WHERE org_id = $1), 0)::float8,
+  (SELECT count(*) FROM ticket_ratings WHERE org_id = $1)
 FROM tickets
 WHERE org_id = $1 AND deleted_at IS NULL`
 
@@ -60,6 +62,8 @@ func (r *Repository) Counts(ctx context.Context, orgID uuid.UUID) (Counts, error
 		&c.ByPriority.Normal,
 		&c.ByPriority.High,
 		&c.ByPriority.Urgent,
+		&c.AverageRating,
+		&c.RatingCount,
 	)
 	if err != nil {
 		return Counts{}, err
