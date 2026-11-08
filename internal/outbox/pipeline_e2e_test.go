@@ -143,9 +143,11 @@ func loadPipelineEvent(t *testing.T, pool *pgxpool.Pool, ticketID uuid.UUID, eve
 func enqueuePipelineEvent(t *testing.T, pool *pgxpool.Pool, client *queue.Client, ev Event) queue.Job {
 	t.Helper()
 	consumers := ConsumersFor(ev.EventType)
-	if len(consumers) != 1 {
-		t.Fatalf("event %s has %d consumers, want 1", ev.EventType, len(consumers))
+	if len(consumers) == 0 {
+		t.Fatalf("event %s has no consumers", ev.EventType)
 	}
+	// Enqueue the email consumer (index 0). The notify consumer is exercised
+	// by the dedicated notify package tests.
 	job, err := jobFor(ev, consumers[0])
 	if err != nil {
 		t.Fatalf("job for %s: %v", ev.EventType, err)

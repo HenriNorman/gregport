@@ -74,7 +74,7 @@ jobs:
         run: go vet ./...
 
       - name: Test
-        run: go test ./... -race -count=1
+        run: go test -p 1 ./... -race -count=1
 
       - name: Validate compose file
         env:

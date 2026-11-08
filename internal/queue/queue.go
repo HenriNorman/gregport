@@ -28,6 +28,7 @@ const (
 	TaskSLABreachCheck = "sla:breach_check"
 	TaskAutoClose      = "ticket:auto_close"
 	TaskHousekeeping   = "housekeeping:run"
+	TaskNotify         = "notify:send"
 	TaskNoop           = "system:noop"
 )
 

@@ -15,6 +15,7 @@ services:
       - ./migrations/0002_init_schema.up.sql:/docker-entrypoint-initdb.d/0002_init_schema.sql:ro
       - ./migrations/0003_audit_logs.up.sql:/docker-entrypoint-initdb.d/0003_audit_logs.sql:ro
       - ./migrations/0004_worker_sla_email.up.sql:/docker-entrypoint-initdb.d/0004_worker_sla_email.sql:ro
+      - ./migrations/0005_notifications_dedupe.up.sql:/docker-entrypoint-initdb.d/0005_notifications_dedupe.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s

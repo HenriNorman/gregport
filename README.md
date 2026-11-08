@@ -399,6 +399,14 @@ files in order when the database volume is first created.
 - `email_deliveries.event_id` plus a unique index over
   `(event_id, to_email, template)` makes email delivery idempotent.
 
+`0005_notifications_dedupe` links notifications to their source event:
+
+- `notifications.event_id` references `ticket_events(id)`.
+- A partial unique index over `(event_id, user_id) WHERE event_id IS NOT NULL`
+  makes notification fan-out idempotent under replay.
+- `idx_webhook_deliveries_retry` supports polling pending webhook deliveries by
+  `(status, next_retry_at)`.
+
 ---
 
 ## API Reference
@@ -930,7 +938,8 @@ The worker drains the outbox every `WORKER_OUTBOX_INTERVAL`:
    FOR UPDATE SKIP LOCKED`. Two workers can poll concurrently without claiming
    the same row.
 2. Map each event type to its consumers (`ticket.created`, `comment.added`,
-   `ticket.assigned` and `sla.breached` currently fan out to email).
+   `ticket.assigned` and `sla.breached` fan out to both email and in-app
+   notifications).
 3. Enqueue each consumer with a deterministic task ID, `eventID:consumer`, so a
    repeated enqueue cannot create a second job. asynq reports that duplicate as
    `ErrTaskIDConflict`, which the client treats as success.
@@ -942,7 +951,8 @@ The result is **at-least-once** delivery. Redis and PostgreSQL cannot be
 updated atomically, so a crash after enqueueing but before committing can leave
 a job in Redis while the event is dispatched again later. Consumers therefore
 check whether their effect already exists and treat a duplicate as success;
-email uses the unique `(event_id, to_email, template)` index for this.
+email uses the unique `(event_id, to_email, template)` index for this, and
+notifications use the unique `(event_id, user_id)` index.
 `DispatchOnce` keeps draining full batches so a backlog is cleared without
 waiting one interval per batch. Unknown event types are marked dispatched
 without producing a job, so they cannot pollute every poll.
@@ -1072,6 +1082,31 @@ outbox dispatcher enqueues for `ticket.created`, `comment.added`,
 SMTP is configured with `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
 `SMTP_PASSWORD`, `SMTP_FROM` and `SMTP_FROM_NAME`. Empty credentials mean no
 SMTP AUTH.
+
+---
+
+## Notification Fan-out
+
+In-app notifications are delivered by the `notify:send` queue task, enqueued by
+the outbox dispatcher alongside the email job for the same event. Recipients
+are resolved from the database, never trusted from the task payload:
+
+- the ticket's current assignee;
+- every user watching the ticket.
+
+The acting user is always excluded, so an agent does not get a notification for
+their own comment or assignment. The ticket requester is a customer, not a
+user, so they do not receive an in-app notification; customer updates continue
+to use the email path.
+
+Each notification row stores the source `ticket_events.id`. A partial unique
+index on `(event_id, user_id) WHERE event_id IS NOT NULL` plus
+`ON CONFLICT DO NOTHING` makes replaying a notify job a no-op: a redelivered
+event produces the same notification set, not duplicates.
+
+Preferences default to **enabled** for every event type and channel. The
+`notification_preferences` table stores only exceptions (disabled rows), which
+keeps the common case read-free and makes new event types enabled by default.
 
 ---
 
@@ -1395,11 +1430,14 @@ go test ./internal/auth/ -v
 Run the entire test suite:
 
 ```bash
-go test ./... -race -count=1
+go test -p 1 ./... -race -count=1
 ```
 
 Ticket tests are integration tests and require PostgreSQL. CI runs the same
-command against a fresh, migrated PostgreSQL 16 service.
+command against a fresh, migrated PostgreSQL 16 service. `-p 1` is deliberate:
+every integration package shares one database, and the outbox dispatcher claims
+rows globally, so running packages in parallel would let one package consume
+another's pending events.
 
 ### Integration Tests
 
@@ -1634,6 +1672,25 @@ These tests mix pure unit checks with PostgreSQL integration tests.
   Foreign-key safety is covered by the ticket-event purge, which skips events
   still referenced by an email delivery.
 
+### Notification Tests
+
+The notification tests mix unit-style recipient/preference checks with
+PostgreSQL integration tests.
+
+- Recipients are the assignee plus watchers, de-duplicated and excluding the
+  acting user; the customer requester never appears as an in-app recipient.
+- A notification persists its ticket, comment and event ids plus a stable
+  payload, and replaying the same event inserts zero rows thanks to the
+  `(event_id, user_id)` dedupe index.
+- Preferences default to enabled for the full event-type × channel matrix,
+  unknown types/channels and duplicates are rejected, and only disabled
+  exceptions are stored.
+- Listing is newest-first with keyset cursor pagination, the `unread` filter
+  excludes read rows, and every read/mark operation is scoped to the caller's
+  `org_id` and `user_id`.
+- Mark-read is idempotent; another user's or another org's notification is a
+  permanent 404 rather than a silent success.
+
 ### Timeout Tests
 
 These tests do not require a database.
@@ -1705,7 +1762,7 @@ The ticket transition logic is implemented through `CanTransition(from, to)` and
 
 ### Test Summary
 
-Run `go test ./... -race -count=1` and read the output to see the current test results.
+Run `go test -p 1 ./... -race -count=1` and read the output to see the current test results.
 
 The authentication cycle has also been verified end to end using `curl`:
 
@@ -1726,7 +1783,7 @@ dispatch. Every run:
 1. Starts PostgreSQL 16 as a service container and applies all
    `migrations/*.up.sql` files in order.
 2. Checks that `go.mod` and `go.sum` are tidy, then runs `go vet ./...` and
-   `go test ./... -race -count=1` against that real database.
+   `go test -p 1 ./... -race -count=1` against that real database.
 3. Validates the rendered Compose stack with `docker compose config --quiet`.
 4. Builds the production image.
 5. Checks that the image runs as UID/GID `10001`.

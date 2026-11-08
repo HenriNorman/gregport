@@ -16,6 +16,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/email"
 	"github.com/HenriNorman/gregport/internal/housekeeping"
 	"github.com/HenriNorman/gregport/internal/idempotency"
+	"github.com/HenriNorman/gregport/internal/notifications"
 	"github.com/HenriNorman/gregport/internal/outbox"
 	"github.com/HenriNorman/gregport/internal/platform/audit"
 	"github.com/HenriNorman/gregport/internal/platform/cache"
@@ -100,6 +101,10 @@ func run() error {
 	)
 	emailHandler := email.NewTaskHandler(emailSvc, breaker, logger)
 
+	notifyRepo := notifications.NewRepository(pool)
+	notifySvc := notifications.NewService(notifyRepo)
+	notifyHandler := notifications.NewTaskHandler(notifySvc, notifyRepo, logger)
+
 	ticketsRepo := tickets.NewRepository(pool)
 	breachChecker := tickets.NewBreachChecker(ticketsRepo)
 	breachHandler := asynq.HandlerFunc(func(ctx context.Context, task *asynq.Task) error {
@@ -162,6 +167,7 @@ func run() error {
 
 	mux := worker.NewMux(
 		worker.HandlerRegistration{Type: queue.TaskEmailSend, Handler: emailHandler},
+		worker.HandlerRegistration{Type: queue.TaskNotify, Handler: notifyHandler},
 		worker.HandlerRegistration{Type: queue.TaskSLABreachCheck, Handler: breachHandler},
 		worker.HandlerRegistration{Type: queue.TaskAutoClose, Handler: autoCloseHandler},
 		worker.HandlerRegistration{Type: queue.TaskHousekeeping, Handler: housekeepingHandler},

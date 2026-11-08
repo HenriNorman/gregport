@@ -23,7 +23,8 @@ import (
 
 // Consumer names are part of the deterministic task ID.
 const (
-	ConsumerEmail = "email"
+	ConsumerEmail  = "email"
+	ConsumerNotify = "notify"
 )
 
 // Consumer describes one downstream job for an event type.
@@ -37,18 +38,23 @@ type Consumer struct {
 // consumers maps an event type to its downstream consumers. Only implemented
 // consumers are listed: enqueueing a task without a handler would retry and
 // archive forever. Webhooks join this map when that handler lands.
+
 var consumers = map[string][]Consumer{
 	"ticket.created": {
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
+		{Name: ConsumerNotify, TaskType: queue.TaskNotify, Queue: queue.QueueCritical, MaxRetry: 5},
 	},
 	"comment.added": {
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
+		{Name: ConsumerNotify, TaskType: queue.TaskNotify, Queue: queue.QueueCritical, MaxRetry: 5},
 	},
 	"ticket.assigned": {
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
+		{Name: ConsumerNotify, TaskType: queue.TaskNotify, Queue: queue.QueueCritical, MaxRetry: 5},
 	},
 	"sla.breached": {
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
+		{Name: ConsumerNotify, TaskType: queue.TaskNotify, Queue: queue.QueueCritical, MaxRetry: 5},
 	},
 }
 
@@ -65,6 +71,7 @@ type Event struct {
 	OrgID     uuid.UUID
 	TicketID  uuid.UUID
 	EventType string
+	ActorID   uuid.UUID
 	Data      []byte
 	CreatedAt time.Time
 }
@@ -75,6 +82,7 @@ type EventJob struct {
 	OrgID     uuid.UUID       `json:"org_id"`
 	TicketID  uuid.UUID       `json:"ticket_id"`
 	EventType string          `json:"event_type"`
+	ActorID   uuid.UUID       `json:"actor_id"`
 	Data      json.RawMessage `json:"data"`
 }
 
@@ -168,7 +176,7 @@ func (d *Dispatcher) claimAndEnqueue(ctx context.Context) ([]Event, error) {
 
 	err := database.WithTx(ctx, d.pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
-			`SELECT id, org_id, ticket_id, event_type, data, created_at
+			`SELECT id, org_id, ticket_id, event_type, actor_id, data, created_at
 			 FROM ticket_events
 			 WHERE dispatched_at IS NULL
 			 ORDER BY created_at, id
@@ -183,7 +191,7 @@ func (d *Dispatcher) claimAndEnqueue(ctx context.Context) ([]Event, error) {
 		claimed = claimed[:0]
 		for rows.Next() {
 			var ev Event
-			if err := rows.Scan(&ev.ID, &ev.OrgID, &ev.TicketID, &ev.EventType, &ev.Data, &ev.CreatedAt); err != nil {
+			if err := rows.Scan(&ev.ID, &ev.OrgID, &ev.TicketID, &ev.EventType, &ev.ActorID, &ev.Data, &ev.CreatedAt); err != nil {
 				rows.Close()
 				return fmt.Errorf("scan outbox row: %w", err)
 			}
@@ -228,6 +236,7 @@ func jobFor(ev Event, consumer Consumer) (queue.Job, error) {
 		OrgID:     ev.OrgID,
 		TicketID:  ev.TicketID,
 		EventType: ev.EventType,
+		ActorID:   ev.ActorID,
 		Data:      json.RawMessage(ev.Data),
 	})
 	if err != nil {

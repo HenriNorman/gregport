@@ -144,8 +144,9 @@ func TestDispatchOnceEnqueuesOneJobAndMarksDispatched(t *testing.T) {
 	}
 
 	jobs := enqueuer.snapshot()
-	if len(jobs) != 1 {
-		t.Fatalf("jobs: %d, want 1", len(jobs))
+	// Each event now produces two consumer jobs (email + notify).
+	if len(jobs) != 2 {
+		t.Fatalf("jobs: %d, want 2", len(jobs))
 	}
 	job := jobs[0]
 	if job.ID != eventID.String()+":email" {
@@ -186,7 +187,7 @@ func TestDispatchOnceEnqueuesOneJobAndMarksDispatched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second dispatch: %v", err)
 	}
-	if n != 0 || len(enqueuer.snapshot()) != 1 {
+	if n != 0 || len(enqueuer.snapshot()) != 2 {
 		t.Fatalf("second dispatch re-enqueued: events=%d jobs=%d", n, len(enqueuer.snapshot()))
 	}
 }
@@ -226,8 +227,9 @@ func TestTwoDispatchersDispatchEachEventExactlyOnce(t *testing.T) {
 	}
 
 	jobs := enqueuer.snapshot()
-	if len(jobs) != eventCount {
-		t.Fatalf("jobs: %d, want %d", len(jobs), eventCount)
+	// Each event now produces two consumer jobs (email + notify).
+	if len(jobs) != eventCount*2 {
+		t.Fatalf("jobs: %d, want %d", len(jobs), eventCount*2)
 	}
 
 	seen := make(map[string]bool, len(jobs))
@@ -307,7 +309,11 @@ func TestRunDispatchesPendingEvents(t *testing.T) {
 	}()
 
 	deadline := time.Now().Add(2 * time.Second)
-	for len(enqueuer.snapshot()) == 0 {
+	for {
+		_, undispatched := countUnscopedEvents(t, pool, orgID)
+		if len(enqueuer.snapshot()) > 0 && undispatched == 0 {
+			break
+		}
 		if time.Now().After(deadline) {
 			cancel()
 			<-done
@@ -356,8 +362,14 @@ func TestUnknownEventTypeIsMarkedDispatchedWithoutJobs(t *testing.T) {
 func TestConsumersFor(t *testing.T) {
 	for _, eventType := range []string{"ticket.created", "comment.added", "ticket.assigned", "sla.breached"} {
 		cs := ConsumersFor(eventType)
-		if len(cs) != 1 || cs[0].Name != ConsumerEmail || cs[0].TaskType != queue.TaskEmailSend {
-			t.Fatalf("%s consumers: %+v", eventType, cs)
+		if len(cs) != 2 {
+			t.Fatalf("%s consumers: %+v, want 2", eventType, cs)
+		}
+		if cs[0].Name != ConsumerEmail || cs[0].TaskType != queue.TaskEmailSend {
+			t.Fatalf("%s first consumer: %+v, want email", eventType, cs[0])
+		}
+		if cs[1].Name != ConsumerNotify || cs[1].TaskType != queue.TaskNotify {
+			t.Fatalf("%s second consumer: %+v, want notify", eventType, cs[1])
 		}
 	}
 	if cs := ConsumersFor("ticket.updated"); len(cs) != 0 {
