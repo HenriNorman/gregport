@@ -1,12 +1,19 @@
 package email
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"mime/multipart"
+	"mime/quotedprintable"
 	"net"
 	"net/smtp"
+	"net/textproto"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // SMTPSender delivers email over SMTP using the standard library. It is safe
@@ -51,37 +58,76 @@ func (s *SMTPSender) Send(ctx context.Context, to, template string, payload Deli
 	return nil
 }
 
+// buildMessage renders the template into a multipart/alternative message with
+// a plain-text and an HTML part. Headers are sanitized so ticket subjects and
+// org settings cannot inject extra headers.
 func (s *SMTPSender) buildMessage(to, template string, payload DeliveryPayload) string {
-	var b strings.Builder
+	rendered, err := renderEmail(template, payload)
+	if err != nil {
+		// Rendering our own static templates should never fail, but fall back
+		// to a plain-text message rather than dropping the delivery.
+		rendered = renderedEmail{
+			Subject: emailSubject(payload),
+			Text:    payload.Subject,
+		}
+	}
 
-	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString("Content-Type: text/plain; charset=\"utf-8\"\r\n")
-	b.WriteString("Content-Transfer-Encoding: 7bit\r\n")
+	body, boundary := buildMultipartBody(rendered)
 
-	from := s.from
+	from := sanitizeHeader(s.from)
 	if s.fromName != "" {
-		from = fmt.Sprintf("%s <%s>", s.fromName, s.from)
+		from = fmt.Sprintf("%s <%s>", sanitizeHeader(s.fromName), from)
 	}
+
+	var b strings.Builder
+	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("From: " + from + "\r\n")
-	b.WriteString("To: " + to + "\r\n")
-	b.WriteString("Subject: [" + template + "] " + payload.Subject + "\r\n")
-	b.WriteString("\r\n")
-
-	b.WriteString("Event: " + payload.EventType + "\r\n")
-	b.WriteString("Org: " + payload.OrgName + "\r\n")
-	b.WriteString("Ticket #" + fmt.Sprint(payload.TicketNumber) + ": " + payload.Subject + "\r\n")
-	if payload.RequesterName != "" {
-		b.WriteString("Requester: " + payload.RequesterName + "\r\n")
+	b.WriteString("To: " + sanitizeHeader(to) + "\r\n")
+	if payload.ReplyTo != "" {
+		b.WriteString("Reply-To: " + sanitizeHeader(payload.ReplyTo) + "\r\n")
 	}
-	if payload.AssigneeName != "" {
-		b.WriteString("Assignee: " + payload.AssigneeName + "\r\n")
-	}
-	if payload.CommentBody != "" {
-		b.WriteString("Comment: " + payload.CommentBody + "\r\n")
-	}
+	b.WriteString("Subject: " + sanitizeHeader(rendered.Subject) + "\r\n")
+	b.WriteString("Date: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\n")
+	b.WriteString("Message-ID: <" + uuid.NewString() + "@" + s.messageIDDomain() + ">\r\n")
+	b.WriteString("Content-Type: multipart/alternative; boundary=" + boundary + "\r\n")
 	b.WriteString("\r\n")
-	b.WriteString(string(payload.EventData))
-	b.WriteString("\r\n")
-
+	b.Write(body)
 	return b.String()
+}
+
+// buildMultipartBody writes the plain-text and HTML parts and returns the
+// serialized body together with the boundary used in the top-level header.
+func buildMultipartBody(rendered renderedEmail) ([]byte, string) {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	boundary := mw.Boundary()
+
+	writePart := func(contentType, content string) {
+		header := textproto.MIMEHeader{}
+		header.Set("Content-Type", contentType+`; charset="utf-8"`)
+		header.Set("Content-Transfer-Encoding", "quoted-printable")
+		part, err := mw.CreatePart(header)
+		if err != nil {
+			return
+		}
+		qp := quotedprintable.NewWriter(part)
+		_, _ = qp.Write([]byte(content))
+		_ = qp.Close()
+	}
+
+	writePart("text/plain", rendered.Text)
+	writePart("text/html", rendered.HTML)
+	_ = mw.Close()
+
+	return body.Bytes(), boundary
+}
+
+// messageIDDomain derives a syntactically valid domain for the Message-ID
+// header from the configured sending host.
+func (s *SMTPSender) messageIDDomain() string {
+	host := sanitizeHeader(s.host)
+	if host == "" {
+		return "localhost"
+	}
+	return host
 }

@@ -86,14 +86,17 @@ type CommentContext struct {
 // DeliveryPayload is the data a template renders. It intentionally contains
 // no secrets, only ticket metadata already visible to the recipient.
 type DeliveryPayload struct {
-	EventType     string          `json:"event_type"`
-	OrgName       string          `json:"org_name"`
-	TicketNumber  int64           `json:"ticket_number"`
-	Subject       string          `json:"subject"`
-	RequesterName string          `json:"requester_name,omitempty"`
-	AssigneeName  string          `json:"assignee_name,omitempty"`
-	CommentBody   string          `json:"comment_body,omitempty"`
-	EventData     json.RawMessage `json:"event_data,omitempty"`
+	EventType     string `json:"event_type"`
+	OrgName       string `json:"org_name"`
+	TicketNumber  int64  `json:"ticket_number"`
+	Subject       string `json:"subject"`
+	RequesterName string `json:"requester_name,omitempty"`
+	AssigneeName  string `json:"assignee_name,omitempty"`
+	CommentBody   string `json:"comment_body,omitempty"`
+	// ReplyTo is set on customer-facing emails so a customer reply goes to the
+	// organization's support inbox rather than the shared From address.
+	ReplyTo   string          `json:"reply_to,omitempty"`
+	EventData json.RawMessage `json:"event_data,omitempty"`
 }
 
 // PlannedDelivery is one recipient/template pair before it is persisted.

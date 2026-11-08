@@ -60,11 +60,9 @@ func TestPlanDeliveriesRecipients(t *testing.T) {
 			wantTmpl:  TemplateCommentAdded,
 		},
 		{
-			name:      "system comment goes to requester",
+			name:      "system comment sends nothing to the customer",
 			eventType: EventCommentAdded,
 			comment:   &CommentContext{AuthorType: "system", Body: "Status changed"},
-			wantTo:    base.RequesterEmail,
-			wantTmpl:  TemplateCommentAdded,
 		},
 		{
 			name:      "internal comment sends nothing",
@@ -169,6 +167,78 @@ func TestPlanDeliveriesRecipients(t *testing.T) {
 			}
 			if string(got[0].Payload.EventData) != string(p.Data) {
 				t.Fatalf("event data: %s", got[0].Payload.EventData)
+			}
+		})
+	}
+}
+
+func TestPlanDeliveriesReplyTo(t *testing.T) {
+	base, payload := planFixture()
+
+	tests := []struct {
+		name      string
+		mutateTC  func(*TicketContext)
+		eventType string
+		comment   *CommentContext
+		wantTo    string
+		wantReply string
+	}{
+		{
+			name:      "ticket created replies to support",
+			eventType: EventTicketCreated,
+			wantTo:    base.RequesterEmail,
+			wantReply: base.SupportEmail,
+		},
+		{
+			name:      "agent comment replies to support",
+			eventType: EventCommentAdded,
+			comment:   &CommentContext{AuthorType: "user", Body: "We are on it"},
+			wantTo:    base.RequesterEmail,
+			wantReply: base.SupportEmail,
+		},
+		{
+			name:      "agent comment without support email has no reply-to",
+			mutateTC:  func(tc *TicketContext) { tc.SupportEmail = "" },
+			eventType: EventCommentAdded,
+			comment:   &CommentContext{AuthorType: "user", Body: "We are on it"},
+			wantTo:    base.RequesterEmail,
+		},
+		{
+			name:      "customer comment has no reply-to",
+			eventType: EventCommentAdded,
+			comment:   &CommentContext{AuthorType: "customer", Body: "Still broken"},
+			wantTo:    base.AssigneeEmail,
+		},
+		{
+			name:      "assignment has no reply-to",
+			eventType: EventTicketAssigned,
+			wantTo:    base.AssigneeEmail,
+		},
+		{
+			name:      "sla breach has no reply-to",
+			eventType: EventSLABreached,
+			wantTo:    base.AssigneeEmail,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := base
+			p := payload
+			p.EventType = tt.eventType
+			if tt.mutateTC != nil {
+				tt.mutateTC(&tc)
+			}
+
+			got := planDeliveries(tc, tt.comment, p)
+			if len(got) != 1 {
+				t.Fatalf("deliveries: %+v", got)
+			}
+			if got[0].ToEmail != tt.wantTo {
+				t.Fatalf("to=%q, want %q", got[0].ToEmail, tt.wantTo)
+			}
+			if got[0].Payload.ReplyTo != tt.wantReply {
+				t.Fatalf("reply-to=%q, want %q", got[0].Payload.ReplyTo, tt.wantReply)
 			}
 		})
 	}

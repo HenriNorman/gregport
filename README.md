@@ -1127,6 +1127,21 @@ outbox dispatcher enqueues for `ticket.created`, `comment.added`,
 - Missing tickets or comments are terminal: the handler logs a warning and
   stops retrying instead of failing the task.
 
+Customer-facing email is deliberately narrow: `ticket.created` notifies the
+requester, and only an agent-authored **public** comment (`author_type = user`,
+`is_internal = false`) is emailed back to the requester. Internal notes and
+system notes never produce a customer email, and a customer reply is routed to
+the assignee (or the org support inbox when unassigned).
+
+Every message is `multipart/alternative` with both a plain-text body rendered
+from `text/template` and an HTML body rendered from `html/template`, so
+customer-supplied subjects and comment bodies are escaped in the HTML part. The
+subject always contains the ticket reference, for example `[#1042] Cannot log
+in`, and customer-facing messages set `Reply-To` to the organization's
+`settings.support_email` so replies land in the shared inbox. Header values are
+stripped of CR/LF before they are written, preventing header injection through
+a subject.
+
 SMTP is configured with `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
 `SMTP_PASSWORD`, `SMTP_FROM` and `SMTP_FROM_NAME`. Empty credentials mean no
 SMTP AUTH.
@@ -1715,6 +1730,11 @@ These tests mix pure unit checks with PostgreSQL integration tests.
   unique-index idempotency, success/failed/dead transitions, retry scheduling,
   the attempt cap, circuit-breaker tripping and reset, SMTP failure handling and
   permanent validation failures.
+- Customer email tests cover the `[#1042]` subject, `Reply-To` from
+  `settings.support_email`, multipart plain-text + HTML bodies, HTML escaping of
+  comment bodies and subjects, CR/LF header-injection sanitization, the
+  agent-public-comment-only rule, and replay producing neither a second
+  delivery nor a second send.
 - Housekeeping purges each retained row type independently, honours batch
   limits, skips disabled windows, and continues other purges when one fails.
   Foreign-key safety is covered by the ticket-event purge, which skips events

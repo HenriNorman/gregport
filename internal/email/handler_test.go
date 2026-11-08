@@ -67,6 +67,11 @@ func (f *fakeRepo) InsertDelivery(ctx context.Context, orgID, eventID uuid.UUID,
 
 func (f *fakeRepo) MarkSent(ctx context.Context, id uuid.UUID) error {
 	f.markSentCalls = append(f.markSentCalls, id)
+	for i := range f.deliveries {
+		if f.deliveries[i].ID == id {
+			f.deliveries[i].Status = StatusSent
+		}
+	}
 	return nil
 }
 
@@ -201,8 +206,8 @@ func TestHandlerCreatesAndSendsDelivery(t *testing.T) {
 	if d.ToEmail != tk.RequesterEmail || d.Template != TemplateTicketCreated {
 		t.Fatalf("delivery: %+v", d)
 	}
-	if d.Status != StatusPending {
-		t.Fatalf("expected pending, got %s", d.Status)
+	if d.Status != StatusSent {
+		t.Fatalf("expected sent after a successful send, got %s", d.Status)
 	}
 
 	// The delivery is still pending after this task because sendOne calls
@@ -419,6 +424,131 @@ func TestHandlerCommentAddedRoutesToAssignee(t *testing.T) {
 	}
 	if len(sender.sent) != 1 || sender.sent[0].to != tk.AssigneeEmail {
 		t.Fatalf("expected email to assignee, got %+v", sender.sent)
+	}
+}
+
+func TestHandlerAgentCommentCreatesCustomerEmail(t *testing.T) {
+	repo := &fakeRepo{
+		tickets:  map[uuid.UUID]TicketContext{},
+		comments: map[uuid.UUID]CommentContext{},
+	}
+	sender := &fakeSender{}
+	h := newHandler(t, repo, sender)
+
+	tk := ticketContext()
+	repo.tickets[tk.TicketID] = tk
+
+	commentID := uuid.New()
+	repo.comments[commentID] = CommentContext{
+		AuthorType: "user",
+		Body:       "We are on it",
+		IsInternal: false,
+	}
+
+	p := payload("comment.added")
+	p.TicketID = tk.TicketID
+	p.OrgID = tk.OrgID
+	p.Data = mustMarshal(map[string]any{"comment_id": commentID, "is_internal": false})
+
+	if err := h.ProcessTask(context.Background(), asynqTask(p)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(repo.deliveries) != 1 {
+		t.Fatalf("expected 1 delivery, got %d", len(repo.deliveries))
+	}
+	d := repo.deliveries[0]
+	if d.ToEmail != tk.RequesterEmail || d.Template != TemplateCommentAdded {
+		t.Fatalf("delivery: %+v", d)
+	}
+	if d.Status != StatusSent {
+		t.Fatalf("delivery status=%s, want sent", d.Status)
+	}
+
+	var stored DeliveryPayload
+	if err := json.Unmarshal(d.Payload, &stored); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if stored.ReplyTo != tk.SupportEmail {
+		t.Fatalf("reply-to=%q, want %q", stored.ReplyTo, tk.SupportEmail)
+	}
+	if stored.CommentBody != "We are on it" {
+		t.Fatalf("comment body=%q", stored.CommentBody)
+	}
+
+	if len(sender.sent) != 1 || sender.sent[0].to != tk.RequesterEmail {
+		t.Fatalf("sender: %+v", sender.sent)
+	}
+
+	// Replaying the same job returns the already-sent delivery and sends
+	// nothing again.
+	if err := h.ProcessTask(context.Background(), asynqTask(p)); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if len(repo.deliveries) != 1 {
+		t.Fatalf("replay created a duplicate delivery: %+v", repo.deliveries)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("replay sent a duplicate email: %+v", sender.sent)
+	}
+}
+
+func TestHandlerInternalAgentCommentSendsNothing(t *testing.T) {
+	repo := &fakeRepo{
+		tickets:  map[uuid.UUID]TicketContext{},
+		comments: map[uuid.UUID]CommentContext{},
+	}
+	sender := &fakeSender{}
+	h := newHandler(t, repo, sender)
+
+	tk := ticketContext()
+	repo.tickets[tk.TicketID] = tk
+
+	commentID := uuid.New()
+	repo.comments[commentID] = CommentContext{
+		AuthorType: "user",
+		Body:       "internal note",
+		IsInternal: true,
+	}
+
+	p := payload("comment.added")
+	p.TicketID = tk.TicketID
+	p.Data = mustMarshal(map[string]any{"comment_id": commentID, "is_internal": true})
+
+	if err := h.ProcessTask(context.Background(), asynqTask(p)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repo.deliveries) != 0 || len(sender.sent) != 0 {
+		t.Fatalf("internal comment produced a delivery: %+v / %+v", repo.deliveries, sender.sent)
+	}
+}
+
+func TestHandlerSystemCommentSendsNothing(t *testing.T) {
+	repo := &fakeRepo{
+		tickets:  map[uuid.UUID]TicketContext{},
+		comments: map[uuid.UUID]CommentContext{},
+	}
+	sender := &fakeSender{}
+	h := newHandler(t, repo, sender)
+
+	tk := ticketContext()
+	repo.tickets[tk.TicketID] = tk
+
+	commentID := uuid.New()
+	repo.comments[commentID] = CommentContext{
+		AuthorType: "system",
+		Body:       "status changed",
+	}
+
+	p := payload("comment.added")
+	p.TicketID = tk.TicketID
+	p.Data = mustMarshal(map[string]any{"comment_id": commentID})
+
+	if err := h.ProcessTask(context.Background(), asynqTask(p)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repo.deliveries) != 0 || len(sender.sent) != 0 {
+		t.Fatalf("system comment produced a customer delivery: %+v / %+v", repo.deliveries, sender.sent)
 	}
 }
 

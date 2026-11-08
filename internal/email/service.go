@@ -132,6 +132,7 @@ func planDeliveries(tc TicketContext, comment *CommentContext, p TaskPayload) []
 
 	switch p.EventType {
 	case EventTicketCreated:
+		base.ReplyTo = tc.SupportEmail
 		return one(tc.RequesterEmail, TemplateTicketCreated, base)
 
 	case EventCommentAdded:
@@ -147,8 +148,10 @@ func planDeliveries(tc TicketContext, comment *CommentContext, p TaskPayload) []
 				return one(tc.AssigneeEmail, TemplateCommentAdded, base)
 			}
 			return one(tc.SupportEmail, TemplateCommentAdded, base)
-		case "user", "system":
-			// An agent reply (or system note) goes back to the requester.
+		case "user":
+			// Only agent-authored public comments go to the customer. System
+			// notes and internal comments never produce a customer email.
+			base.ReplyTo = tc.SupportEmail
 			return one(tc.RequesterEmail, TemplateCommentAdded, base)
 		default:
 			return nil
