@@ -1,5 +1,74 @@
 basePath: /
 definitions:
+  attachments.AttachmentDTO:
+    properties:
+      confirmed_at:
+        type: string
+      created_at:
+        type: string
+      filename:
+        example: receipt.pdf
+        type: string
+      has_thumbnail:
+        example: false
+        type: boolean
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      mime_type:
+        example: application/pdf
+        type: string
+      size:
+        example: 204800
+        type: integer
+      status:
+        enum:
+        - pending
+        - uploaded
+        - quarantined
+        - deleted
+        example: uploaded
+        type: string
+      ticket_id:
+        example: 550e8400-e29b-41d4-a716-446655440001
+        type: string
+    type: object
+  attachments.DownloadResponse:
+    properties:
+      content_disposition:
+        type: string
+      content_type:
+        type: string
+      download_url:
+        type: string
+      expires_at:
+        type: string
+      filename:
+        type: string
+    type: object
+  attachments.PresignRequest:
+    properties:
+      filename:
+        example: receipt.pdf
+        type: string
+      mime_type:
+        example: application/pdf
+        type: string
+      size:
+        example: 204800
+        type: integer
+    type: object
+  attachments.PresignResponse:
+    properties:
+      attachment_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      expires_at:
+        type: string
+      upload_url:
+        example: http://127.0.0.1:9000/gregport-attachments/...
+        type: string
+    type: object
   auth.LoginRequest:
     properties:
       email:
@@ -179,6 +248,54 @@ definitions:
       solved:
         example: 31
         type: integer
+    type: object
+  exports.CreateRequest:
+    properties:
+      assignee_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      created_from:
+        example: "2026-01-01T00:00:00Z"
+        type: string
+      created_to:
+        example: "2026-02-01T00:00:00Z"
+        type: string
+      priority:
+        example: high
+        type: string
+      requester_id:
+        example: 550e8400-e29b-41d4-a716-446655440001
+        type: string
+      status:
+        example: open
+        type: string
+    type: object
+  exports.DTO:
+    properties:
+      completed_at:
+        type: string
+      created_at:
+        type: string
+      download_url:
+        type: string
+      error:
+        type: string
+      expires_at:
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      row_count:
+        example: 1042
+        type: integer
+      status:
+        enum:
+        - pending
+        - running
+        - done
+        - failed
+        example: done
+        type: string
     type: object
   health.StatusResponse:
     properties:
@@ -1159,6 +1276,81 @@ paths:
       summary: Revoke an API key
       tags:
       - api-keys
+  /v1/attachments/{id}/confirm:
+    post:
+      description: Issues a HEAD request against the stored object, checks the size
+        matches the declared size and moves the attachment to uploaded. A missing
+        object or a size mismatch leaves the attachment pending. Confirming twice
+        is idempotent.
+      parameters:
+      - description: Attachment UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/attachments.AttachmentDTO'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "409":
+          description: Uploaded object missing or attachment quarantined
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Uploaded size does not match
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Confirm an attachment upload
+      tags:
+      - attachments
+  /v1/attachments/{id}/download:
+    get:
+      description: 'Authorizes the attachment against the caller''s org and returns
+        a presigned GET URL valid for one to two minutes. Non-image files are served
+        with Content-Disposition: attachment. Attachments in another org return 404.'
+      parameters:
+      - description: Attachment UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/attachments.DownloadResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "409":
+          description: Attachment not uploaded or quarantined
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Get an attachment download URL
+      tags:
+      - attachments
   /v1/auth/login:
     post:
       consumes:
@@ -1285,6 +1477,46 @@ paths:
       summary: Create an organization, user, and owner membership
       tags:
       - auth
+  /v1/customers/{id}/data:
+    delete:
+      description: 'Anonymizes one customer in the caller''s org: the email is replaced
+        with a deterministic, org-scoped SHA-256 pseudonym, and the name and external
+        id are cleared. Tickets, comments and events are retained so support history
+        stays intact. The operation is idempotent: erasing an already-erased customer
+        returns 204 without changing the pseudonym. A customer in another org returns
+        404.'
+      parameters:
+      - description: Customer UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Customer not found in this org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Erase customer data
+      tags:
+      - customers
   /v1/dashboard/counts:
     get:
       description: Any authenticated member may read counts. Soft-deleted tickets
@@ -1307,6 +1539,85 @@ paths:
       summary: Get dashboard ticket counts
       tags:
       - dashboard
+  /v1/exports:
+    post:
+      consumes:
+      - application/json
+      description: Starts an asynchronous CSV export of tickets in the caller's org.
+        Optional filters narrow the export by status, priority, assignee, requester
+        and creation time. The worker streams matching rows into private object storage
+        with a keyset cursor, so a 100,000-row export uses flat memory. A completion
+        email with a 24-hour signed link is sent to the requester.
+      parameters:
+      - description: Optional export filters
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/exports.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/exports.DTO'
+        "400":
+          description: Malformed JSON
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Invalid filter
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Create a ticket export
+      tags:
+      - exports
+  /v1/exports/{id}:
+    get:
+      description: Returns one export job scoped to the caller's org. While pending
+        or running there is no download URL. A finished export carries a presigned
+        URL valid for 24 hours. Another org's export returns 404.
+      parameters:
+      - description: Export UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/exports.DTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Get an export
+      tags:
+      - exports
   /v1/inbound/email:
     post:
       description: Provider webhook for inbound email. The raw body is the signed
@@ -2810,6 +3121,55 @@ paths:
       summary: Assign a ticket to a user, a team, or round-robin
       tags:
       - tickets
+  /v1/tickets/{number}/attachments/presign:
+    post:
+      consumes:
+      - application/json
+      description: Validates the declared filename, MIME type and size, creates a
+        pending attachment and returns a presigned PUT URL valid for a few minutes.
+        The client uploads directly to storage; the object key is server-generated
+        and tenant-prefixed. Files over the configured limit and disallowed types
+        are rejected before any URL is issued.
+      parameters:
+      - description: Ticket number
+        in: path
+        name: number
+        required: true
+        type: integer
+      - description: Declared file metadata
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/attachments.PresignRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/attachments.PresignResponse'
+        "400":
+          description: Malformed JSON
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Ticket not found in this org
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Oversize file, disallowed type or invalid filename
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Presign an attachment upload
+      tags:
+      - attachments
   /v1/tickets/{number}/comments:
     get:
       description: Any member of the org may read comments. A ticket in another org
