@@ -44,6 +44,13 @@ We would love to know how we did. Rate this ticket:
 {{- end }}
 {{- else if eq .Template "sla_breached" -}}
 Ticket [#{{.TicketNumber}}] {{.Subject}} has breached its SLA target. Please review it.
+{{- else if eq .Template "export_ready" -}}
+Your ticket export is ready.
+
+{{.ExportRows}} tickets were exported. Download the CSV here:
+{{.ExportURL}}
+
+This link expires in 24 hours.
 {{- else -}}
 Update for ticket [#{{.TicketNumber}}] {{.Subject}}.
 {{- end }}
@@ -76,6 +83,11 @@ var htmlTemplates = htmltemplate.Must(htmltemplate.New("email").Parse(`<!doctype
 {{- end }}
 {{- else if eq .Template "sla_breached" -}}
 <p>Ticket <strong>[#{{.TicketNumber}}] {{.Subject}}</strong> has breached its SLA target. Please review it.</p>
+{{- else if eq .Template "export_ready" -}}
+<p>Your ticket export is ready.</p>
+<p>{{.ExportRows}} tickets were exported.</p>
+<p><a href="{{.ExportURL}}" style="display: inline-block; padding: 10px 18px; background: #2563eb; color: #ffffff; text-decoration: none; border-radius: 6px;">Download CSV</a></p>
+<p style="color: #616e7c; font-size: 13px;">This link expires in 24 hours.</p>
 {{- else -}}
 <p>Update for ticket <strong>[#{{.TicketNumber}}] {{.Subject}}</strong>.</p>
 {{- end }}

@@ -21,6 +21,7 @@ const (
 	TemplateTicketAssigned = "ticket_assigned"
 	TemplateSLABreached    = "sla_breached"
 	TemplateTicketSolved   = "ticket_solved"
+	TemplateExportReady    = "export_ready"
 )
 
 // Errors returned by the service. Missing tickets and comments are permanent
@@ -102,6 +103,9 @@ type DeliveryPayload struct {
 	// the solved-ticket email.
 	RatingURL string          `json:"rating_url,omitempty"`
 	EventData json.RawMessage `json:"event_data,omitempty"`
+	// ExportURL is the 24-hour signed link sent when a CSV export finishes.
+	ExportURL  string `json:"export_url,omitempty"`
+	ExportRows int64  `json:"export_rows,omitempty"`
 }
 
 // PlannedDelivery is one recipient/template pair before it is persisted.

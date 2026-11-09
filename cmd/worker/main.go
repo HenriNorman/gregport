@@ -15,6 +15,7 @@ import (
 
 	"github.com/HenriNorman/gregport/internal/attachments"
 	"github.com/HenriNorman/gregport/internal/email"
+	"github.com/HenriNorman/gregport/internal/exports"
 	"github.com/HenriNorman/gregport/internal/housekeeping"
 	"github.com/HenriNorman/gregport/internal/idempotency"
 	"github.com/HenriNorman/gregport/internal/notifications"
@@ -138,6 +139,11 @@ func run() error {
 		attachmentRepo, objectStore, cfg.ThumbnailMaxDimension, logger,
 	)
 
+	exportHandler := exports.NewTaskHandler(
+		exports.NewRepository(pool), objectStore, breaker,
+		cfg.ExportBatchSize, cfg.ExportLinkTTL, logger,
+	)
+
 	ticketsRepo := tickets.NewRepository(pool)
 	breachChecker := tickets.NewBreachChecker(ticketsRepo)
 	breachHandler := asynq.HandlerFunc(func(ctx context.Context, task *asynq.Task) error {
@@ -205,6 +211,7 @@ func run() error {
 		worker.HandlerRegistration{Type: queue.TaskWebhookDeliver, Handler: asynq.HandlerFunc(webhookHandler.Deliver)},
 		worker.HandlerRegistration{Type: queue.TaskAttachmentValidate, Handler: asynq.HandlerFunc(attachmentHandler.Validate)},
 		worker.HandlerRegistration{Type: queue.TaskThumbnailGenerate, Handler: asynq.HandlerFunc(attachmentHandler.Thumbnail)},
+		worker.HandlerRegistration{Type: queue.TaskExportRun, Handler: asynq.HandlerFunc(exportHandler.Run)},
 		worker.HandlerRegistration{Type: queue.TaskSLABreachCheck, Handler: breachHandler},
 		worker.HandlerRegistration{Type: queue.TaskAutoClose, Handler: autoCloseHandler},
 		worker.HandlerRegistration{Type: queue.TaskHousekeeping, Handler: housekeepingHandler},

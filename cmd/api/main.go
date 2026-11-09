@@ -15,6 +15,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/attachments"
 	"github.com/HenriNorman/gregport/internal/auth"
 	"github.com/HenriNorman/gregport/internal/dashboard"
+	"github.com/HenriNorman/gregport/internal/exports"
 	"github.com/HenriNorman/gregport/internal/idempotency"
 	"github.com/HenriNorman/gregport/internal/inboundemail"
 	"github.com/HenriNorman/gregport/internal/middleware"
@@ -228,6 +229,15 @@ func main() {
 	attachmentSvc.SetEnqueuer(queueClient)
 	attachmentHandler := attachments.NewHandler(attachmentSvc)
 
+	// export wiring
+	exportSvc := exports.NewService(
+		exports.NewRepository(pool),
+		objectStore,
+		cfg.ExportLinkTTL,
+	)
+	exportSvc.SetEnqueuer(queueClient)
+	exportHandler := exports.NewHandler(exportSvc)
+
 	// idempotency wiring (PostgreSQL-backed store, not Redis)
 	idempotencyRepo := idempotency.NewRepository(pool)
 	idempotencyCfg := middleware.IdempotencyConfig{
@@ -345,6 +355,11 @@ func main() {
 			r.Route("/attachments", func(r chi.Router) {
 				r.Post("/{id}/confirm", attachmentHandler.Confirm)
 				r.Get("/{id}/download", attachmentHandler.Download)
+			})
+
+			r.Route("/exports", func(r chi.Router) {
+				r.With(auth.RequireRole("owner", "admin")).Post("/", exportHandler.Create)
+				r.Get("/{id}", exportHandler.Get)
 			})
 
 			r.Route("/teams", func(r chi.Router) {
