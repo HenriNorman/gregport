@@ -27,14 +27,18 @@ func TestCheckerRunsAllPurges(t *testing.T) {
 		fakePurge(10, nil),
 		fakePurge(3, nil),
 		fakePurge(7, nil),
+		fakePurge(4, nil),
+		fakePurge(2, nil),
 	)
 
 	cfg := Config{
-		IDempotencyTTL:         24 * time.Hour,
-		TicketEventRetention:   720 * time.Hour,
-		AuditLogRetention:      2160 * time.Hour,
-		EmailDeliveryRetention: 720 * time.Hour,
-		Batch:                  50,
+		IDempotencyTTL:             24 * time.Hour,
+		TicketEventRetention:       720 * time.Hour,
+		AuditLogRetention:          2160 * time.Hour,
+		EmailDeliveryRetention:     720 * time.Hour,
+		PendingAttachmentRetention: 24 * time.Hour,
+		DeletedTicketRetention:     720 * time.Hour,
+		Batch:                      50,
 	}
 
 	summary, err := c.Run(context.Background(), cfg)
@@ -44,19 +48,22 @@ func TestCheckerRunsAllPurges(t *testing.T) {
 	if summary.IDempotencyKeysPurged != 5 ||
 		summary.TicketEventsPurged != 10 ||
 		summary.AuditLogsPurged != 3 ||
-		summary.EmailDeliveriesPurged != 7 {
+		summary.EmailDeliveriesPurged != 7 ||
+		summary.PendingAttachmentsPurged != 4 ||
+		summary.DeletedTicketsPurged != 2 {
 		t.Fatalf("summary: %+v", summary)
 	}
 }
 
 func TestCheckerSkipsNilPurgeFuncs(t *testing.T) {
-	c := NewChecker(nil, nil, nil, nil)
+	c := NewChecker(nil, nil, nil, nil, nil, nil)
 	summary, err := c.Run(context.Background(), Config{})
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if summary.IDempotencyKeysPurged != 0 || summary.TicketEventsPurged != 0 ||
-		summary.AuditLogsPurged != 0 || summary.EmailDeliveriesPurged != 0 {
+		summary.AuditLogsPurged != 0 || summary.EmailDeliveriesPurged != 0 ||
+		summary.PendingAttachmentsPurged != 0 || summary.DeletedTicketsPurged != 0 {
 		t.Fatalf("expected empty summary, got %+v", summary)
 	}
 }
@@ -65,7 +72,7 @@ func TestCheckerSkipsZeroRetention(t *testing.T) {
 	idemCalls := int32(0)
 	c := NewChecker(
 		countingPurge(&idemCalls, 1),
-		nil, nil, nil,
+		nil, nil, nil, nil, nil,
 	)
 
 	cfg := Config{
@@ -88,7 +95,7 @@ func TestCheckerContinuesOnPurgeError(t *testing.T) {
 	c := NewChecker(
 		fakePurge(0, errors.New("idempotency down")),
 		fakePurge(10, nil),
-		nil, nil,
+		nil, nil, nil, nil,
 	)
 
 	cfg := Config{
@@ -114,7 +121,7 @@ func TestCheckerBatchDefault(t *testing.T) {
 	c := NewChecker(func(ctx context.Context, before time.Time, b int) (int64, error) {
 		batch = b
 		return 0, nil
-	}, nil, nil, nil)
+	}, nil, nil, nil, nil, nil)
 
 	if _, err := c.Run(context.Background(), Config{IDempotencyTTL: time.Hour}); err != nil {
 		t.Fatalf("run: %v", err)

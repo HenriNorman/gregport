@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	
-	"github.com/HenriNorman/gregport/internal/platform/requestctx"	
+
 	"github.com/HenriNorman/gregport/internal/auth"
+	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -107,5 +107,3 @@ func principalCtxRole(orgID, userID uuid.UUID, role string) context.Context {
 func requireRoleForTest(roles ...string) func(http.Handler) http.Handler {
 	return auth.RequireRole(roles...)
 }
-
-

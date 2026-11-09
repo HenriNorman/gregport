@@ -183,14 +183,22 @@ func run() error {
 		func(ctx context.Context, before time.Time, batch int) (int64, error) {
 			return emailRepo.PurgeOldDeliveries(ctx, before, batch)
 		},
+		func(ctx context.Context, before time.Time, batch int) (int64, error) {
+			return attachments.PurgeExpired(ctx, attachmentRepo, objectStore, before, batch)
+		},
+		func(ctx context.Context, before time.Time, batch int) (int64, error) {
+			return ticketsRepo.PurgeDeletedTickets(ctx, before, batch, objectStore)
+		},
 	)
 	housekeepingHandler := asynq.HandlerFunc(func(ctx context.Context, task *asynq.Task) error {
 		summary, err := housekeepingChecker.Run(ctx, housekeeping.Config{
-			IDempotencyTTL:         cfg.IDempotencyTTL,
-			TicketEventRetention:   cfg.TicketEventRetention,
-			AuditLogRetention:      cfg.AuditLogRetention,
-			EmailDeliveryRetention: cfg.EmailDeliveryRetention,
-			Batch:                  cfg.HousekeepingBatch,
+			IDempotencyTTL:             cfg.IDempotencyTTL,
+			TicketEventRetention:       cfg.TicketEventRetention,
+			AuditLogRetention:          cfg.AuditLogRetention,
+			EmailDeliveryRetention:     cfg.EmailDeliveryRetention,
+			PendingAttachmentRetention: cfg.PendingAttachmentRetention,
+			DeletedTicketRetention:     cfg.DeletedTicketRetention,
+			Batch:                      cfg.HousekeepingBatch,
 		})
 		if err != nil {
 			return err
@@ -200,6 +208,8 @@ func run() error {
 			"ticket_events_purged", summary.TicketEventsPurged,
 			"audit_logs_purged", summary.AuditLogsPurged,
 			"email_deliveries_purged", summary.EmailDeliveriesPurged,
+			"pending_attachments_purged", summary.PendingAttachmentsPurged,
+			"deleted_tickets_purged", summary.DeletedTicketsPurged,
 		)
 		return nil
 	})

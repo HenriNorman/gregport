@@ -52,9 +52,11 @@ type WorkerConfig struct {
 	HousekeepingInterval time.Duration
 	HousekeepingBatch    int
 
-	TicketEventRetention   time.Duration
-	AuditLogRetention      time.Duration
-	EmailDeliveryRetention time.Duration
+	TicketEventRetention       time.Duration
+	AuditLogRetention          time.Duration
+	EmailDeliveryRetention     time.Duration
+	PendingAttachmentRetention time.Duration
+	DeletedTicketRetention     time.Duration
 
 	IDempotencyTTL time.Duration
 
@@ -128,9 +130,11 @@ func LoadWorker() (WorkerConfig, error) {
 		HousekeepingInterval: time.Hour,
 		HousekeepingBatch:    100,
 
-		TicketEventRetention:   720 * time.Hour,
-		AuditLogRetention:      2160 * time.Hour,
-		EmailDeliveryRetention: 720 * time.Hour,
+		TicketEventRetention:       720 * time.Hour,
+		AuditLogRetention:          2160 * time.Hour,
+		EmailDeliveryRetention:     720 * time.Hour,
+		PendingAttachmentRetention: 24 * time.Hour,
+		DeletedTicketRetention:     720 * time.Hour,
 
 		IDempotencyTTL: 24 * time.Hour,
 
@@ -221,6 +225,8 @@ func LoadWorker() (WorkerConfig, error) {
 		{"TICKET_EVENT_RETENTION", &cfg.TicketEventRetention, true},
 		{"AUDIT_LOG_RETENTION", &cfg.AuditLogRetention, true},
 		{"EMAIL_DELIVERY_RETENTION", &cfg.EmailDeliveryRetention, true},
+		{"PENDING_ATTACHMENT_RETENTION", &cfg.PendingAttachmentRetention, true},
+		{"DELETED_TICKET_RETENTION", &cfg.DeletedTicketRetention, true},
 		{"RATING_TOKEN_TTL", &cfg.RatingTokenTTL, false},
 		{"IDEMPOTENCY_TTL", &cfg.IDempotencyTTL, true},
 		{"PRESIGN_DOWNLOAD_TTL", &cfg.PresignDownloadTTL, false},

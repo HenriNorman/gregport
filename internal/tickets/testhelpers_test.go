@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 	"time"
-	
+
+	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 )
 
 func testPool(t *testing.T) *pgxpool.Pool {

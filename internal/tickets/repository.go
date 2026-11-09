@@ -476,6 +476,154 @@ func (r *Repository) PurgeDispatchedEvents(ctx context.Context, before time.Time
 	return tag.RowsAffected(), nil
 }
 
+// ObjectDeleter removes one object-storage key. *storage.S3 satisfies it.
+type ObjectDeleter interface {
+	Delete(ctx context.Context, key string) error
+}
+
+// PurgeDeletedTickets hard-deletes tickets soft-deleted before before, along
+// with their comments, events, tags, watchers, ratings, notifications and
+// attachments. Attachment objects (originals and thumbnails) are removed from
+// storage before any rows are deleted; the deletes are idempotent, so a
+// retried run safely repeats them.
+func (r *Repository) PurgeDeletedTickets(ctx context.Context, before time.Time, batch int, objects ObjectDeleter) (int64, error) {
+	if before.IsZero() {
+		return 0, fmt.Errorf("purge time is required")
+	}
+	if batch <= 0 {
+		batch = 100
+	}
+
+	rows, err := r.pool.Query(ctx,
+		`SELECT id FROM tickets
+		 WHERE deleted_at IS NOT NULL AND deleted_at < $1
+		 ORDER BY deleted_at
+		 LIMIT $2`,
+		before, batch,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("list deleted tickets: %w", err)
+	}
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("scan deleted ticket: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("deleted ticket rows: %w", err)
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	if objects != nil {
+		keys, err := r.attachmentKeysForTickets(ctx, ids)
+		if err != nil {
+			return 0, err
+		}
+		for _, key := range keys {
+			if err := objects.Delete(ctx, key); err != nil {
+				return 0, fmt.Errorf("delete attachment object %q: %w", key, err)
+			}
+		}
+	}
+
+	var deleted int64
+	err = database.WithTx(ctx, r.pool, func(tx pgx.Tx) error {
+		// Break the self-reference before deleting rows.
+		if _, err := tx.Exec(ctx,
+			`UPDATE tickets SET merged_into_id = NULL WHERE merged_into_id = ANY($1)`, ids,
+		); err != nil {
+			return fmt.Errorf("clear merged tickets: %w", err)
+		}
+
+		// Rows that reference a comment on one of these tickets must go (or
+		// be detached) before the comments themselves.
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM inbound_emails
+			 WHERE ticket_id = ANY($1)
+			    OR comment_id IN (SELECT id FROM comments WHERE ticket_id = ANY($1))`,
+			ids,
+		); err != nil {
+			return fmt.Errorf("delete inbound emails: %w", err)
+		}
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM notifications
+			 WHERE ticket_id = ANY($1)
+			    OR comment_id IN (SELECT id FROM comments WHERE ticket_id = ANY($1))`,
+			ids,
+		); err != nil {
+			return fmt.Errorf("delete notifications: %w", err)
+		}
+
+		childTables := []struct {
+			query string
+			name  string
+		}{
+			{`DELETE FROM attachments WHERE ticket_id = ANY($1)`, "attachments"},
+			{`DELETE FROM satisfaction_ratings WHERE ticket_id = ANY($1)`, "satisfaction ratings"},
+			{`DELETE FROM ticket_ratings WHERE ticket_id = ANY($1)`, "ticket ratings"},
+			{`DELETE FROM ticket_tags WHERE ticket_id = ANY($1)`, "ticket tags"},
+			{`DELETE FROM ticket_watchers WHERE ticket_id = ANY($1)`, "ticket watchers"},
+			{`DELETE FROM ticket_events WHERE ticket_id = ANY($1)`, "ticket events"},
+			{`DELETE FROM comments WHERE ticket_id = ANY($1)`, "comments"},
+		}
+		for _, child := range childTables {
+			if _, err := tx.Exec(ctx, child.query, ids); err != nil {
+				return fmt.Errorf("delete %s: %w", child.name, err)
+			}
+		}
+
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM tickets WHERE id = ANY($1) AND deleted_at IS NOT NULL`, ids,
+		)
+		if err != nil {
+			return fmt.Errorf("delete tickets: %w", err)
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
+// attachmentKeysForTickets returns every storage key (original and thumbnail)
+// belonging to the given tickets.
+func (r *Repository) attachmentKeysForTickets(ctx context.Context, ticketIDs []uuid.UUID) ([]string, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT storage_key, COALESCE(thumbnail_key, '')
+		 FROM attachments WHERE ticket_id = ANY($1)`,
+		ticketIDs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list attachment keys: %w", err)
+	}
+	defer rows.Close()
+
+	var keys []string
+	for rows.Next() {
+		var key, thumb string
+		if err := rows.Scan(&key, &thumb); err != nil {
+			return nil, fmt.Errorf("scan attachment key: %w", err)
+		}
+		keys = append(keys, key)
+		if thumb != "" {
+			keys = append(keys, thumb)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("attachment key rows: %w", err)
+	}
+	return keys, nil
+}
+
 func (r *Repository) CreateComment(ctx context.Context, in CreateCommentInput) (Comment, error) {
 	var out Comment
 	var curMerged *uuid.UUID

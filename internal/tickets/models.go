@@ -28,8 +28,8 @@ type Ticket struct {
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	DeletedAt          *time.Time
-	RequesterEmail string
-	RequesterName  string
+	RequesterEmail     string
+	RequesterName      string
 }
 
 type Comment struct {
@@ -62,51 +62,51 @@ type TicketEvent struct {
 	ActorType string
 	ActorID   *uuid.UUID
 	EventType string
-	Data      []byte   // jsonb
+	Data      []byte // jsonb
 	CreatedAt time.Time
 }
 
 // Actor is who performed an action, for ticket_events.
 type Actor struct {
-	Type string     // "user", "customer", "api_key", "system"
+	Type string // "user", "customer", "api_key", "system"
 	ID   *uuid.UUID
 }
 
-type Team struct{
-	ID uuid.UUID
-	OrgID uuid.UUID
-	Name string
+type Team struct {
+	ID        uuid.UUID
+	OrgID     uuid.UUID
+	Name      string
 	CreatedAt time.Time
 }
 
 type TeamMember struct {
-	TeamID 		uuid.UUID 
-	UserID 		uuid.UUID
-	LastAssignedAt 	*time.Time
+	TeamID         uuid.UUID
+	UserID         uuid.UUID
+	LastAssignedAt *time.Time
 }
 
-type Tag struct{
-	ID 		uuid.UUID
-	OrgID 		uuid.UUID
-	Name 		string 
-	CreatedAt 	time.Time 
+type Tag struct {
+	ID        uuid.UUID
+	OrgID     uuid.UUID
+	Name      string
+	CreatedAt time.Time
 }
 
-type Macro struct{
-	ID 		uuid.UUID
-	OrgID 		uuid.UUID
-	Name 		string 
-	Actions 	[]byte 
-	CreatedBy 	uuid.UUID
-	CreatedAT 	time.Time
-	UpdatedAt 	time.Time
+type Macro struct {
+	ID        uuid.UUID
+	OrgID     uuid.UUID
+	Name      string
+	Actions   []byte
+	CreatedBy uuid.UUID
+	CreatedAT time.Time
+	UpdatedAt time.Time
 }
 
 type MacroActions struct {
-	SetStatus string   `json:"set_status,omitempty"`
-	SetPriority string `json:"set_priority,omitempty"`
-	AddTags   []string `json:"add_tags,omitempty"`
-	Comment   string   `json:"comment,omitempty"`
+	SetStatus   string   `json:"set_status,omitempty"`
+	SetPriority string   `json:"set_priority,omitempty"`
+	AddTags     []string `json:"add_tags,omitempty"`
+	Comment     string   `json:"comment,omitempty"`
 }
 
 type Invitation struct {
@@ -130,15 +130,15 @@ type Member struct {
 }
 
 type APIKey struct {
-	ID             uuid.UUID
-	OrgID          uuid.UUID
-	Name           string
-	Prefix         string
-	KeyHash        string
-	CreatedBy      uuid.UUID
+	ID              uuid.UUID
+	OrgID           uuid.UUID
+	Name            string
+	Prefix          string
+	KeyHash         string
+	CreatedBy       uuid.UUID
 	RateLimitPerMin int
-	LastUsedAt     *time.Time
-	ExpiresAt      *time.Time
-	RevokedAt      *time.Time
-	CreatedAt      time.Time
+	LastUsedAt      *time.Time
+	ExpiresAt       *time.Time
+	RevokedAt       *time.Time
+	CreatedAt       time.Time
 }

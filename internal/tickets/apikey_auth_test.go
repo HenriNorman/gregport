@@ -36,7 +36,7 @@ func seedValidKey(t *testing.T, repo *Repository, orgID, userID uuid.UUID, raw s
 }
 
 func TestAuthenticateAPIKey_Valid(t *testing.T) {
-	
+
 	_, repo := newTestHandler(t)
 	orgA, _, _ := setupTwoOrgs(t, repo)
 	ownerID := seedMembership(t, repo, orgA)
@@ -116,7 +116,6 @@ func TestAuthenticateAPIKey_WrongSecret_401(t *testing.T) {
 
 	// same prefix, wrong secret
 	bad := "gp_live_" + idPart + "_wrongsecret"
-
 
 	svc := NewService(repo, NewInvitationTokenManager(7*24*time.Hour))
 	_, err := svc.AuthenticateAPIKey(context.Background(), bad)

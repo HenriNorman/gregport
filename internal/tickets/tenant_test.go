@@ -61,10 +61,10 @@ func setupTwoOrgs(t *testing.T, repo *Repository) (orgA, orgB uuid.UUID, number 
 
 func principalCtx(orgID, userID uuid.UUID) context.Context {
 	return requestctx.WithPrincipal(context.Background(), requestctx.Principal{
-		Kind: requestctx.KindUser,
+		Kind:    requestctx.KindUser,
 		ActorID: userID,
-		OrgID:  orgID,
-		Role:   "owner",
+		OrgID:   orgID,
+		Role:    "owner",
 	})
 }
 
@@ -72,7 +72,8 @@ func newTestHandler(t *testing.T) (*Handler, *Repository) {
 	t.Helper()
 	pool := testPool(t)
 	repo := NewRepository(pool)
-	return NewHandler(NewService(repo, NewInvitationTokenManager(7*24*time.Hour))), repo}
+	return NewHandler(NewService(repo, NewInvitationTokenManager(7*24*time.Hour))), repo
+}
 
 func TestTenant_GetTicket_OtherOrg_404(t *testing.T) {
 	h, repo := newTestHandler(t)

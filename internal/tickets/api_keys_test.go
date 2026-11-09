@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	
-	"github.com/google/uuid"
+
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 func TestCreateAPIKey_ReturnsRawOnce_StoresHash(t *testing.T) {

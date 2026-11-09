@@ -172,7 +172,7 @@ func TestAcceptInvitation_NewUser(t *testing.T) {
 	}
 	_ = repo.pool.QueryRow(ctx,
 		`SELECT count(*) FROM memberships m JOIN users u ON u.id = m.user_id
-		 WHERE u.email = $1 AND m.org_id = $2`,email, orgA).Scan(&memCount)
+		 WHERE u.email = $1 AND m.org_id = $2`, email, orgA).Scan(&memCount)
 	if memCount != 1 {
 		t.Fatalf("expected 1 membership, got %d", memCount)
 	}
@@ -306,7 +306,7 @@ func TestAcceptInvitation_DuplicateMembership_409(t *testing.T) {
 	orgA, _, _ := setupTwoOrgs(t, repo)
 	existingID := seedMembership(t, repo, orgA)
 	ctx := context.Background()
-	
+
 	var existingEmail string
 	if err := repo.pool.QueryRow(ctx,
 		`SELECT email FROM users WHERE id = $1`, existingID,

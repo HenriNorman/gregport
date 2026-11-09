@@ -2,8 +2,9 @@
 //
 // Housekeeping is executed as a recurring `housekeeping:run` task on the
 // `low` queue. It purges rows that have outlived their retention window:
-// expired idempotency keys, dispatched ticket events, old audit logs, and
-// sent or dead email deliveries.
+// expired idempotency keys, dispatched ticket events, old audit logs, sent or
+// dead email deliveries, orphaned pending attachment uploads, and tickets
+// that were soft-deleted long enough ago to be erased for good.
 //
 // Every purge is bounded by a batch size and run inside its own statement, so
 // a long retention window never blocks the worker. Purges are independent: a
@@ -35,34 +36,56 @@ type Config struct {
 	// retained. Pending and failed deliveries are never purged.
 	EmailDeliveryRetention time.Duration
 
+	// PendingAttachmentRetention is how long an unconfirmed upload is kept
+	// after its presigned window expired. The row is then deleted and any
+	// partially uploaded object is removed.
+	PendingAttachmentRetention time.Duration
+
+	// DeletedTicketRetention is how long a soft-deleted ticket is retained
+	// before it and its child rows and stored attachments are hard-deleted.
+	DeletedTicketRetention time.Duration
+
 	// Batch is the maximum number of rows deleted per purge statement.
 	Batch int
 }
 
 // Summary is the result of a housekeeping run.
 type Summary struct {
-	IDempotencyKeysPurged int64
-	TicketEventsPurged    int64
-	AuditLogsPurged       int64
-	EmailDeliveriesPurged int64
+	IDempotencyKeysPurged    int64
+	TicketEventsPurged       int64
+	AuditLogsPurged          int64
+	EmailDeliveriesPurged    int64
+	PendingAttachmentsPurged int64
+	DeletedTicketsPurged     int64
 }
 
 // Checker runs the retention purges.
 type Checker struct {
-	purgeIDempotencyKeys PurgeFunc
-	purgeTicketEvents    PurgeFunc
-	purgeAuditLogs       PurgeFunc
-	purgeEmailDeliveries PurgeFunc
+	purgeIDempotencyKeys    PurgeFunc
+	purgeTicketEvents       PurgeFunc
+	purgeAuditLogs          PurgeFunc
+	purgeEmailDeliveries    PurgeFunc
+	purgePendingAttachments PurgeFunc
+	purgeDeletedTickets     PurgeFunc
 }
 
 // NewChecker builds a checker. Any purge func may be nil, in which case that
 // purge is skipped.
-func NewChecker(purgeIDempotencyKeys, purgeTicketEvents, purgeAuditLogs, purgeEmailDeliveries PurgeFunc) *Checker {
+func NewChecker(
+	purgeIDempotencyKeys,
+	purgeTicketEvents,
+	purgeAuditLogs,
+	purgeEmailDeliveries,
+	purgePendingAttachments,
+	purgeDeletedTickets PurgeFunc,
+) *Checker {
 	return &Checker{
-		purgeIDempotencyKeys: purgeIDempotencyKeys,
-		purgeTicketEvents:    purgeTicketEvents,
-		purgeAuditLogs:       purgeAuditLogs,
-		purgeEmailDeliveries: purgeEmailDeliveries,
+		purgeIDempotencyKeys:    purgeIDempotencyKeys,
+		purgeTicketEvents:       purgeTicketEvents,
+		purgeAuditLogs:          purgeAuditLogs,
+		purgeEmailDeliveries:    purgeEmailDeliveries,
+		purgePendingAttachments: purgePendingAttachments,
+		purgeDeletedTickets:     purgeDeletedTickets,
 	}
 }
 
@@ -108,6 +131,22 @@ func (c *Checker) Run(ctx context.Context, cfg Config) (Summary, error) {
 			firstErr = err
 		}
 		summary.EmailDeliveriesPurged = n
+	}
+
+	if c.purgePendingAttachments != nil && cfg.PendingAttachmentRetention > 0 {
+		n, err := c.purgePendingAttachments(ctx, now.Add(-cfg.PendingAttachmentRetention), cfg.Batch)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		summary.PendingAttachmentsPurged = n
+	}
+
+	if c.purgeDeletedTickets != nil && cfg.DeletedTicketRetention > 0 {
+		n, err := c.purgeDeletedTickets(ctx, now.Add(-cfg.DeletedTicketRetention), cfg.Batch)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		summary.DeletedTicketsPurged = n
 	}
 
 	if firstErr != nil {

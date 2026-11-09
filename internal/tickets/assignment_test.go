@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"testing"
 	"strconv"
+	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -117,6 +117,5 @@ func TestAssign_OtherOrgTeam_404(t *testing.T) {
 		t.Fatalf("expected 404, got %d", rec.Code)
 	}
 }
-
 
 func numStr(n int64) string { return strconv.FormatInt(n, 10) }
