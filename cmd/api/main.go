@@ -29,6 +29,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/ratelimit"
 	"github.com/HenriNorman/gregport/internal/ratings"
 	"github.com/HenriNorman/gregport/internal/sla"
+	"github.com/HenriNorman/gregport/internal/storage"
 	"github.com/HenriNorman/gregport/internal/tickets"
 	"github.com/HenriNorman/gregport/internal/webhooks"
 )
@@ -82,6 +83,23 @@ func main() {
 	}
 	defer pool.Close()
 	logger.Info("connected to postgres")
+
+	objectStore, err := storage.New(storage.Config{
+		Endpoint:  cfg.S3Endpoint,
+		AccessKey: cfg.S3AccessKey,
+		SecretKey: cfg.S3SecretKey,
+		Bucket:    cfg.S3Bucket,
+		Region:    cfg.S3Region,
+		UseSSL:    cfg.S3UseSSL,
+	})
+	if err != nil {
+		logger.Error("object storage configuration invalid", "error", err)
+		os.Exit(1)
+	}
+	if err := objectStore.EnsureBucket(ctx); err != nil {
+		logger.Warn("object storage unavailable at startup", "error", err)
+	}
+	_ = objectStore
 
 	counters := metrics.New()
 	defer counters.Log(logger)

@@ -25,6 +25,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/queue"
 	"github.com/HenriNorman/gregport/internal/ratings"
+	"github.com/HenriNorman/gregport/internal/storage"
 	"github.com/HenriNorman/gregport/internal/tickets"
 	"github.com/HenriNorman/gregport/internal/webhooks"
 	"github.com/HenriNorman/gregport/internal/worker"
@@ -60,6 +61,22 @@ func run() error {
 	}
 	defer pool.Close()
 	logger.Info("connected to postgres")
+
+	objectStore, err := storage.New(storage.Config{
+		Endpoint:  cfg.S3Endpoint,
+		AccessKey: cfg.S3AccessKey,
+		SecretKey: cfg.S3SecretKey,
+		Bucket:    cfg.S3Bucket,
+		Region:    cfg.S3Region,
+		UseSSL:    cfg.S3UseSSL,
+	})
+	if err != nil {
+		return fmt.Errorf("object storage: %w", err)
+	}
+	if err := objectStore.EnsureBucket(signalCtx); err != nil {
+		logger.Warn("object storage unavailable at startup", "error", err)
+	}
+	_ = objectStore
 
 	redisCache := cache.NewRedis(cache.RedisOptions{
 		Addr:         cfg.RedisAddr,

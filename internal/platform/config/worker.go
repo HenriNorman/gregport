@@ -69,6 +69,20 @@ type WorkerConfig struct {
 	RatingTokenSecret string
 	RatingTokenTTL    time.Duration
 	PublicAppURL      string
+
+	// Object storage for attachments, thumbnails and exports.
+	S3Endpoint            string
+	S3AccessKey           string
+	S3SecretKey           string
+	S3Bucket              string
+	S3Region              string
+	S3UseSSL              bool
+	PresignDownloadTTL    time.Duration
+	ExportLinkTTL         time.Duration
+	AttachmentPendingTTL  time.Duration
+	MaxAttachmentBytes    int
+	ExportBatchSize       int
+	ThumbnailMaxDimension int
 }
 
 // LoadWorker reads the worker configuration from the environment. Defaults
@@ -130,6 +144,19 @@ func LoadWorker() (WorkerConfig, error) {
 		RatingTokenSecret: os.Getenv("RATING_TOKEN_SECRET"),
 		RatingTokenTTL:    30 * 24 * time.Hour,
 		PublicAppURL:      getEnv("PUBLIC_APP_URL", "http://localhost:8080"),
+
+		S3Endpoint:            getEnv("S3_ENDPOINT", "127.0.0.1:9000"),
+		S3AccessKey:           getEnv("S3_ACCESS_KEY", "minioadmin"),
+		S3SecretKey:           getEnv("S3_SECRET_KEY", "minioadmin"),
+		S3Bucket:              getEnv("S3_BUCKET", "gregport-attachments"),
+		S3Region:              getEnv("S3_REGION", "us-east-1"),
+		S3UseSSL:              false,
+		PresignDownloadTTL:    2 * time.Minute,
+		ExportLinkTTL:         24 * time.Hour,
+		AttachmentPendingTTL:  time.Hour,
+		MaxAttachmentBytes:    10 << 20,
+		ExportBatchSize:       1000,
+		ThumbnailMaxDimension: 512,
 	}
 
 	var errs []error
@@ -139,6 +166,20 @@ func LoadWorker() (WorkerConfig, error) {
 	}
 	if len(cfg.RatingTokenSecret) < 32 {
 		errs = append(errs, errors.New("RATING_TOKEN_SECRET must be at least 32 bytes"))
+	}
+	if value, err := envBool("S3_USE_SSL", cfg.S3UseSSL); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.S3UseSSL = value
+	}
+	if cfg.S3Endpoint == "" {
+		errs = append(errs, errors.New("S3_ENDPOINT is required"))
+	}
+	if cfg.S3Bucket == "" {
+		errs = append(errs, errors.New("S3_BUCKET is required"))
+	}
+	if cfg.S3AccessKey == "" || cfg.S3SecretKey == "" {
+		errs = append(errs, errors.New("S3_ACCESS_KEY and S3_SECRET_KEY are required"))
 	}
 	if err := validateAppURL(cfg.PublicAppURL); err != nil {
 		errs = append(errs, err)
@@ -182,6 +223,9 @@ func LoadWorker() (WorkerConfig, error) {
 		{"EMAIL_DELIVERY_RETENTION", &cfg.EmailDeliveryRetention, true},
 		{"RATING_TOKEN_TTL", &cfg.RatingTokenTTL, false},
 		{"IDEMPOTENCY_TTL", &cfg.IDempotencyTTL, true},
+		{"PRESIGN_DOWNLOAD_TTL", &cfg.PresignDownloadTTL, false},
+		{"EXPORT_LINK_TTL", &cfg.ExportLinkTTL, false},
+		{"ATTACHMENT_PENDING_TTL", &cfg.AttachmentPendingTTL, false},
 	}
 	for _, d := range durations {
 		value, err := envDuration(d.name, *d.dst, d.allowZero)
@@ -205,6 +249,9 @@ func LoadWorker() (WorkerConfig, error) {
 		{"AUTO_CLOSE_CHECK_BATCH", &cfg.AutoCloseCheckBatch, 1},
 		{"HOUSEKEEPING_BATCH", &cfg.HousekeepingBatch, 1},
 		{"SMTP_PORT", &cfg.SMTPPort, 1},
+		{"MAX_ATTACHMENT_BYTES", &cfg.MaxAttachmentBytes, 1},
+		{"EXPORT_BATCH_SIZE", &cfg.ExportBatchSize, 1},
+		{"THUMBNAIL_MAX_DIMENSION", &cfg.ThumbnailMaxDimension, 16},
 	}
 	for _, n := range ints {
 		value, err := envInt(n.name, *n.dst, n.min)

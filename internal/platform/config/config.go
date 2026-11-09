@@ -67,6 +67,19 @@ type Config struct {
 	// InboundEmailSecret verifies provider signatures on inbound email
 	// webhooks (HMAC-SHA256 over timestamp + "." + body).
 	InboundEmailSecret string
+
+	// Object storage for attachments, thumbnails and exports.
+	S3Endpoint           string
+	S3AccessKey          string
+	S3SecretKey          string
+	S3Bucket             string
+	S3Region             string
+	S3UseSSL             bool
+	PresignPutTTL        time.Duration
+	PresignDownloadTTL   time.Duration
+	ExportLinkTTL        time.Duration
+	AttachmentPendingTTL time.Duration
+	MaxAttachmentBytes   int
 }
 
 func Load() (Config, error) {
@@ -116,6 +129,18 @@ func Load() (Config, error) {
 		RatingTokenTTL:     30 * 24 * time.Hour,
 		PublicAppURL:       getEnv("PUBLIC_APP_URL", "http://localhost:8080"),
 		InboundEmailSecret: os.Getenv("INBOUND_EMAIL_SECRET"),
+
+		S3Endpoint:           getEnv("S3_ENDPOINT", "127.0.0.1:9000"),
+		S3AccessKey:          getEnv("S3_ACCESS_KEY", "minioadmin"),
+		S3SecretKey:          getEnv("S3_SECRET_KEY", "minioadmin"),
+		S3Bucket:             getEnv("S3_BUCKET", "gregport-attachments"),
+		S3Region:             getEnv("S3_REGION", "us-east-1"),
+		S3UseSSL:             false,
+		PresignPutTTL:        5 * time.Minute,
+		PresignDownloadTTL:   2 * time.Minute,
+		ExportLinkTTL:        24 * time.Hour,
+		AttachmentPendingTTL: time.Hour,
+		MaxAttachmentBytes:   10 << 20,
 	}
 
 	var errs []error
@@ -190,6 +215,10 @@ func Load() (Config, error) {
 		{"RATING_RATE_LIMIT_WINDOW", &cfg.RatingRateLimitWindow},
 		{"RATING_TOKEN_TTL", &cfg.RatingTokenTTL},
 		{"IDEMPOTENCY_TTL", &cfg.IdempotencyTTL},
+		{"PRESIGN_PUT_TTL", &cfg.PresignPutTTL},
+		{"PRESIGN_DOWNLOAD_TTL", &cfg.PresignDownloadTTL},
+		{"EXPORT_LINK_TTL", &cfg.ExportLinkTTL},
+		{"ATTACHMENT_PENDING_TTL", &cfg.AttachmentPendingTTL},
 	}
 	for _, d := range redisDurations {
 		value, err := envDuration(d.name, *d.dst, false)
@@ -210,6 +239,7 @@ func Load() (Config, error) {
 		{"PUBLIC_RATE_LIMIT_REQUESTS", &cfg.PublicRateLimitRequests, 1},
 		{"LOGIN_RATE_LIMIT_REQUESTS", &cfg.LoginRateLimitRequests, 1},
 		{"RATING_RATE_LIMIT_REQUESTS", &cfg.RatingRateLimitRequests, 1},
+		{"MAX_ATTACHMENT_BYTES", &cfg.MaxAttachmentBytes, 1},
 	}
 	for _, n := range ints {
 		value, err := envInt(n.name, *n.dst, n.min)
@@ -224,6 +254,21 @@ func Load() (Config, error) {
 		errs = append(errs, err)
 	} else {
 		cfg.TrustProxyHeaders = value
+	}
+
+	if value, err := envBool("S3_USE_SSL", cfg.S3UseSSL); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.S3UseSSL = value
+	}
+	if cfg.S3Endpoint == "" {
+		errs = append(errs, errors.New("S3_ENDPOINT is required"))
+	}
+	if cfg.S3Bucket == "" {
+		errs = append(errs, errors.New("S3_BUCKET is required"))
+	}
+	if cfg.S3AccessKey == "" || cfg.S3SecretKey == "" {
+		errs = append(errs, errors.New("S3_ACCESS_KEY and S3_SECRET_KEY are required"))
 	}
 
 	if cidrs, err := envCIDRs("TRUSTED_PROXY_CIDRS"); err != nil {
