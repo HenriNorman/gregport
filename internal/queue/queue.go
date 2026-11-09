@@ -31,6 +31,9 @@ const (
 	TaskNotify          = "notify:send"
 	TaskWebhookDispatch = "webhook:dispatch"
 	TaskWebhookDeliver  = "webhook:deliver"
+	TaskAttachmentValidate = "attachment:validate"
+	TaskThumbnailGenerate  = "thumbnail:generate"
+	TaskExportRun          = "export:run"
 	TaskNoop            = "system:noop"
 )
 

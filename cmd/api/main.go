@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/joho/godotenv"
 
+	"github.com/HenriNorman/gregport/internal/attachments"
 	"github.com/HenriNorman/gregport/internal/auth"
 	"github.com/HenriNorman/gregport/internal/dashboard"
 	"github.com/HenriNorman/gregport/internal/idempotency"
@@ -27,6 +28,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/platform/metrics"
 	"github.com/HenriNorman/gregport/internal/platform/ratelimit"
+	"github.com/HenriNorman/gregport/internal/queue"
 	"github.com/HenriNorman/gregport/internal/ratings"
 	"github.com/HenriNorman/gregport/internal/sla"
 	"github.com/HenriNorman/gregport/internal/storage"
@@ -99,7 +101,19 @@ func main() {
 	if err := objectStore.EnsureBucket(ctx); err != nil {
 		logger.Warn("object storage unavailable at startup", "error", err)
 	}
-	_ = objectStore
+
+	queueClient := queue.NewClient(queue.Config{
+		Redis: queue.RedisOptions{
+			Addr:         cfg.RedisAddr,
+			Password:     cfg.RedisPassword,
+			DB:           cfg.RedisDB,
+			DialTimeout:  cfg.RedisDialTimeout,
+			ReadTimeout:  cfg.RedisReadTimeout,
+			WriteTimeout: cfg.RedisWriteTimeout,
+		},
+		Logger: logger,
+	})
+	defer queueClient.Close()
 
 	counters := metrics.New()
 	defer counters.Log(logger)
@@ -201,6 +215,18 @@ func main() {
 	webhookSvc := webhooks.NewService(webhooks.NewRepository(pool))
 	webhookSvc.SetSender(webhooks.NewHTTPSender(webhooks.SenderOptions{Timeout: webhooks.DefaultTimeout}))
 	webhooksHandler := webhooks.NewHandler(webhookSvc)
+
+	// attachment wiring
+	attachmentSvc := attachments.NewService(
+		attachments.NewRepository(pool),
+		objectStore,
+		cfg.MaxAttachmentBytes,
+		cfg.PresignPutTTL,
+		cfg.PresignDownloadTTL,
+		cfg.AttachmentPendingTTL,
+	)
+	attachmentSvc.SetEnqueuer(queueClient)
+	attachmentHandler := attachments.NewHandler(attachmentSvc)
 
 	// idempotency wiring (PostgreSQL-backed store, not Redis)
 	idempotencyRepo := idempotency.NewRepository(pool)
@@ -313,6 +339,12 @@ func main() {
 				r.Post("/{number}/merge", ticketsHandler.Merge)
 				r.Get("/{number}/comments", ticketsHandler.ListComments)
 				r.Post("/{number}/macros/{id}", ticketsHandler.ApplyMacro)
+				r.Post("/{number}/attachments/presign", attachmentHandler.Presign)
+			})
+
+			r.Route("/attachments", func(r chi.Router) {
+				r.Post("/{id}/confirm", attachmentHandler.Confirm)
+				r.Get("/{id}/download", attachmentHandler.Download)
 			})
 
 			r.Route("/teams", func(r chi.Router) {
