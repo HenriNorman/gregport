@@ -14,6 +14,7 @@ import (
 
 	"github.com/HenriNorman/gregport/internal/attachments"
 	"github.com/HenriNorman/gregport/internal/auth"
+	"github.com/HenriNorman/gregport/internal/customers"
 	"github.com/HenriNorman/gregport/internal/dashboard"
 	"github.com/HenriNorman/gregport/internal/exports"
 	"github.com/HenriNorman/gregport/internal/idempotency"
@@ -238,6 +239,10 @@ func main() {
 	exportSvc.SetEnqueuer(queueClient)
 	exportHandler := exports.NewHandler(exportSvc)
 
+	// customer data erasure wiring
+	customerSvc := customers.NewService(customers.NewRepository(pool))
+	customerHandler := customers.NewHandler(customerSvc)
+
 	// idempotency wiring (PostgreSQL-backed store, not Redis)
 	idempotencyRepo := idempotency.NewRepository(pool)
 	idempotencyCfg := middleware.IdempotencyConfig{
@@ -361,6 +366,9 @@ func main() {
 				r.With(auth.RequireRole("owner", "admin")).Post("/", exportHandler.Create)
 				r.Get("/{id}", exportHandler.Get)
 			})
+
+			r.With(auth.RequireRole("owner", "admin")).
+				Delete("/customers/{id}/data", customerHandler.Erase)
 
 			r.Route("/teams", func(r chi.Router) {
 				r.With(auth.RequireRole("owner", "admin")).Post("/", ticketsHandler.CreateTeam)
