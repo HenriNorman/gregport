@@ -19,6 +19,7 @@ services:
       - ./migrations/0006_ticket_ratings.up.sql:/docker-entrypoint-initdb.d/0006_ticket_ratings.sql:ro
       - ./migrations/0007_webhooks.up.sql:/docker-entrypoint-initdb.d/0007_webhooks.sql:ro
       - ./migrations/0008_inbound_email.up.sql:/docker-entrypoint-initdb.d/0008_inbound_email.sql:ro
+      - ./migrations/0009_attachments_exports.up.sql:/docker-entrypoint-initdb.d/0009_attachments_exports.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
