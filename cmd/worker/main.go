@@ -13,6 +13,7 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/joho/godotenv"
 
+	"github.com/HenriNorman/gregport/internal/attachments"
 	"github.com/HenriNorman/gregport/internal/email"
 	"github.com/HenriNorman/gregport/internal/housekeeping"
 	"github.com/HenriNorman/gregport/internal/idempotency"
@@ -76,7 +77,6 @@ func run() error {
 	if err := objectStore.EnsureBucket(signalCtx); err != nil {
 		logger.Warn("object storage unavailable at startup", "error", err)
 	}
-	_ = objectStore
 
 	redisCache := cache.NewRedis(cache.RedisOptions{
 		Addr:         cfg.RedisAddr,
@@ -132,6 +132,11 @@ func run() error {
 	webhookSvc.SetSender(webhooks.NewHTTPSender(webhooks.SenderOptions{Timeout: webhooks.DefaultTimeout}))
 	webhookSvc.SetEnqueuer(queueClient)
 	webhookHandler := webhooks.NewTaskHandler(webhookSvc, logger)
+
+	attachmentRepo := attachments.NewRepository(pool)
+	attachmentHandler := attachments.NewTaskHandler(
+		attachmentRepo, objectStore, cfg.ThumbnailMaxDimension, logger,
+	)
 
 	ticketsRepo := tickets.NewRepository(pool)
 	breachChecker := tickets.NewBreachChecker(ticketsRepo)
@@ -198,6 +203,8 @@ func run() error {
 		worker.HandlerRegistration{Type: queue.TaskNotify, Handler: notifyHandler},
 		worker.HandlerRegistration{Type: queue.TaskWebhookDispatch, Handler: asynq.HandlerFunc(webhookHandler.Dispatch)},
 		worker.HandlerRegistration{Type: queue.TaskWebhookDeliver, Handler: asynq.HandlerFunc(webhookHandler.Deliver)},
+		worker.HandlerRegistration{Type: queue.TaskAttachmentValidate, Handler: asynq.HandlerFunc(attachmentHandler.Validate)},
+		worker.HandlerRegistration{Type: queue.TaskThumbnailGenerate, Handler: asynq.HandlerFunc(attachmentHandler.Thumbnail)},
 		worker.HandlerRegistration{Type: queue.TaskSLABreachCheck, Handler: breachHandler},
 		worker.HandlerRegistration{Type: queue.TaskAutoClose, Handler: autoCloseHandler},
 		worker.HandlerRegistration{Type: queue.TaskHousekeeping, Handler: housekeepingHandler},
