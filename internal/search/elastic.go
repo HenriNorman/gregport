@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -262,3 +263,33 @@ func (b *ElasticBackend) buildQuery(orgID uuid.UUID, f Filter, queryText string,
 // Compile-time check: the Elasticsearch backend is one of the swappable
 // backends the service can use.
 var _ Backend = (*ElasticBackend)(nil)
+
+// FallbackBackend tries the primary (Elasticsearch) backend first and falls
+// back to the secondary (Postgres) backend when the cluster is unavailable or
+// the index does not exist yet. Writes always go to Elasticsearch through the
+// sync jobs; reads are always served, even when search is down.
+type FallbackBackend struct {
+	primary  Backend
+	fallback Backend
+}
+
+// NewFallbackBackend wraps a primary backend with a secondary fallback. The
+// primary is queried first; only ErrSearchUnavailable and ErrIndexNotFound
+// trigger a fallback. All other errors are returned as-is.
+func NewFallbackBackend(primary, fallback Backend) *FallbackBackend {
+	return &FallbackBackend{primary: primary, fallback: fallback}
+}
+
+// Search queries the primary backend, falling back to the secondary when the
+// cluster is down or the index is missing. The org filter is mandatory in both
+// backends, so tenant isolation is never compromised by a fallback.
+func (b *FallbackBackend) Search(ctx context.Context, orgID uuid.UUID, f Filter) (Result, error) {
+	res, err := b.primary.Search(ctx, orgID, f)
+	if err == nil {
+		return res, nil
+	}
+	if errors.Is(err, ErrSearchUnavailable) || errors.Is(err, ErrIndexNotFound) {
+		return b.fallback.Search(ctx, orgID, f)
+	}
+	return Result{}, err
+}

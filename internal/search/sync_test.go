@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"github.com/sony/gobreaker"
 
 	"github.com/HenriNorman/gregport/internal/queue"
 )
@@ -156,4 +158,136 @@ func TestNewSyncTaskPayload(t *testing.T) {
 	if payload.OrgID != orgID || payload.TicketID != id {
 		t.Fatalf("payload = %+v", payload)
 	}
+}
+
+type alwaysFailIndexer struct {
+	calls int
+}
+
+func (f *alwaysFailIndexer) IndexTicket(_ context.Context, _ TicketDocument) error {
+	f.calls++
+	return ErrSearchUnavailable
+}
+
+func (f *alwaysFailIndexer) DeleteTicket(_ context.Context, _, _ uuid.UUID, _ int64) error {
+	f.calls++
+	return ErrSearchUnavailable
+}
+
+func TestSyncHandlerCircuitBreakerSkipsWhenOpen(t *testing.T) {
+	orgID := uuid.New()
+	id := uuid.New()
+	loader := &fakeDocLoader{state: DocumentState{Document: TicketDocument{
+		ID: id, OrgID: orgID, Version: 1,
+	}, Found: true}}
+	indexer := &alwaysFailIndexer{}
+	handler := NewSyncHandler(loader, indexer, nil)
+
+	// Trip the circuit: 5 consecutive failures.
+	for i := 0; i < 5; i++ {
+		if err := handler.Handle(context.Background(), syncTask(t, orgID, id)); err != nil {
+			if !errors.Is(err, ErrSearchUnavailable) {
+				t.Fatalf("handle %d: %v, want ErrSearchUnavailable", i, err)
+			}
+		}
+	}
+
+	// The circuit should now be open. The next call should skip (nil error).
+	if err := handler.Handle(context.Background(), syncTask(t, orgID, id)); err != nil {
+		t.Fatalf("handle with open circuit: %v, want nil (skip)", err)
+	}
+
+	// The breaker should have recorded 6 attempts (5 failures + 1 blocked).
+	if indexer.calls != 5 {
+		t.Fatalf("indexer calls = %d, want 5 (6th call skipped by breaker)", indexer.calls)
+	}
+}
+
+func TestSyncHandlerCircuitBreakerRecovers(t *testing.T) {
+	orgID := uuid.New()
+	id := uuid.New()
+	loader := &fakeDocLoader{state: DocumentState{Document: TicketDocument{
+		ID: id, OrgID: orgID, Version: 1,
+	}, Found: true}}
+	indexer := &alwaysFailIndexer{}
+	handler := NewSyncHandler(loader, indexer, nil)
+
+	// Trip the circuit.
+	for i := 0; i < 5; i++ {
+		if err := handler.Handle(context.Background(), syncTask(t, orgID, id)); err != nil {
+			if !errors.Is(err, ErrSearchUnavailable) {
+				t.Fatalf("handle %d: %v, want ErrSearchUnavailable", i, err)
+			}
+		}
+	}
+
+	// Wait for the circuit to enter half-open state (30s timeout is too long
+	// for a unit test; instead create a handler with a short timeout).
+	// This test verifies that a successful call after the breaker resets works.
+	// We directly reset the breaker to simulate recovery.
+	// Access the breaker through the handler is not possible, so we test via
+	// a fresh handler with a failing then succeeding indexer.
+	indexer.calls = 0
+
+	// Create a new handler with a short-interval breaker for recovery testing.
+	st := gobreaker.Settings{
+		Name:        "search-index-test",
+		MaxRequests: 1,
+		Interval:    100 * time.Millisecond,
+		Timeout:     100 * time.Millisecond,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			return counts.ConsecutiveFailures >= 2
+		},
+	}
+	handler2 := &SyncHandler{
+		loader:  loader,
+		indexer: indexer,
+		logger:  slog.Default(),
+		breaker: gobreaker.NewCircuitBreaker(st),
+	}
+
+	// Trip with 2 failures.
+	for i := 0; i < 2; i++ {
+		if err := handler2.Handle(context.Background(), syncTask(t, orgID, id)); err != nil {
+			if !errors.Is(err, ErrSearchUnavailable) {
+				t.Fatalf("trip %d: %v", i, err)
+			}
+		}
+	}
+
+	// Circuit should be open; next call skips.
+	if err := handler2.Handle(context.Background(), syncTask(t, orgID, id)); err != nil {
+		t.Fatalf("open circuit: %v", err)
+	}
+
+	// Wait for the timeout to pass so the circuit goes half-open.
+	time.Sleep(200 * time.Millisecond)
+
+	// Make the indexer succeed.
+	succeedingIndexer := &succeedIndexer{}
+	handler2.indexer = succeedingIndexer
+
+	// Half-open: one request allowed through. If it succeeds, circuit closes.
+	if err := handler2.Handle(context.Background(), syncTask(t, orgID, id)); err != nil {
+		t.Fatalf("half-open: %v", err)
+	}
+
+	// Circuit should now be closed; subsequent calls work normally.
+	if err := handler2.Handle(context.Background(), syncTask(t, orgID, id)); err != nil {
+		t.Fatalf("closed circuit: %v", err)
+	}
+}
+
+type succeedIndexer struct {
+	calls int
+}
+
+func (f *succeedIndexer) IndexTicket(_ context.Context, _ TicketDocument) error {
+	f.calls++
+	return nil
+}
+
+func (f *succeedIndexer) DeleteTicket(_ context.Context, _, _ uuid.UUID, _ int64) error {
+	f.calls++
+	return nil
 }

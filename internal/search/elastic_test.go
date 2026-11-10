@@ -318,3 +318,93 @@ func TestElasticBackendErrorsBecome503(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+type fallibleBackend struct {
+	primaryErr  error
+	primaryRes  Result
+	fallbackErr error
+	fallbackRes Result
+	calls       int
+}
+
+func (f *fallibleBackend) Search(_ context.Context, _ uuid.UUID, _ Filter) (Result, error) {
+	f.calls++
+	if f.primaryErr != nil {
+		return Result{}, f.primaryErr
+	}
+	return f.primaryRes, nil
+}
+
+type alwaysFallbackBackend struct {
+	primaryErr  error
+	fallbackRes Result
+}
+
+func (f *alwaysFallbackBackend) Search(_ context.Context, _ uuid.UUID, _ Filter) (Result, error) {
+	if f.primaryErr != nil {
+		return Result{}, f.primaryErr
+	}
+	return Result{}, nil
+}
+
+func TestFallbackBackendPrimarySucceeds(t *testing.T) {
+	orgID := uuid.New()
+	want := Result{Hits: []TicketHit{{ID: uuid.New(), Subject: "from primary"}}}
+	fb := &fallibleBackend{primaryRes: want}
+	b := NewFallbackBackend(fb, &fallibleBackend{primaryRes: Result{Hits: []TicketHit{{Subject: "from fallback"}}}})
+
+	res, err := b.Search(context.Background(), orgID, Filter{})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Hits) != 1 || res.Hits[0].Subject != "from primary" {
+		t.Fatalf("result = %+v, want primary", res)
+	}
+	if fb.calls != 1 {
+		t.Fatalf("primary calls = %d, want 1", fb.calls)
+	}
+}
+
+func TestFallbackBackendFallsBackOnUnavailable(t *testing.T) {
+	orgID := uuid.New()
+	want := Result{Hits: []TicketHit{{ID: uuid.New(), Subject: "from fallback"}}}
+	fb := &fallibleBackend{primaryErr: ErrSearchUnavailable}
+	b := NewFallbackBackend(fb, &fallibleBackend{primaryRes: want})
+
+	res, err := b.Search(context.Background(), orgID, Filter{Query: "printer"})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Hits) != 1 || res.Hits[0].Subject != "from fallback" {
+		t.Fatalf("result = %+v, want fallback", res)
+	}
+}
+
+func TestFallbackBackendFallsBackOnIndexNotFound(t *testing.T) {
+	orgID := uuid.New()
+	want := Result{Hits: []TicketHit{{ID: uuid.New(), Subject: "from fallback"}}}
+	fb := &fallibleBackend{primaryErr: ErrIndexNotFound}
+	b := NewFallbackBackend(fb, &fallibleBackend{primaryRes: want})
+
+	res, err := b.Search(context.Background(), orgID, Filter{})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res.Hits) != 1 || res.Hits[0].Subject != "from fallback" {
+		t.Fatalf("result = %+v, want fallback", res)
+	}
+}
+
+func TestFallbackBackendNoFallbackOnOtherError(t *testing.T) {
+	orgID := uuid.New()
+	boom := errors.New("boom")
+	fb := &fallibleBackend{primaryErr: boom}
+	b := NewFallbackBackend(fb, &fallibleBackend{primaryRes: Result{Hits: []TicketHit{{Subject: "from fallback"}}}})
+
+	if _, err := b.Search(context.Background(), orgID, Filter{}); !errors.Is(err, boom) {
+		t.Fatalf("error = %v, want %v", err, boom)
+	}
+	if fb.calls != 1 {
+		t.Fatalf("primary calls = %d, want 1 (no fallback)", fb.calls)
+	}
+}

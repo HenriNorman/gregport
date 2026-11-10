@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/elastic/go-elasticsearch/v8/esapi"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"github.com/sony/gobreaker"
 
 	"github.com/HenriNorman/gregport/internal/queue"
 )
@@ -156,19 +158,43 @@ func NewSyncTask(orgID, ticketID uuid.UUID) (*asynq.Task, error) {
 
 // SyncHandler processes one ticket index job. It always loads the current
 // Postgres row instead of trusting event data, which makes duplicate and
-// out-of-order deliveries converge on the latest state.
+// out-of-order deliveries converge on the latest state. A circuit breaker
+// protects the sync jobs: when Elasticsearch is repeatedly unavailable, the
+// circuit opens and indexing is skipped instead of failing and retrying. The
+// index stays eventually consistent and self-heals when the circuit closes.
 type SyncHandler struct {
 	loader  DocumentLoader
 	indexer DocumentIndexer
 	logger  *slog.Logger
+	breaker *gobreaker.CircuitBreaker
 }
 
-// NewSyncHandler creates the index job handler.
+// NewSyncHandler creates the index job handler with a circuit breaker that
+// trips after 5 consecutive Elasticsearch failures and stays open for 30
+// seconds. When the circuit is open, indexing jobs are skipped (logged as
+// warnings) rather than retried, protecting both the worker and the cluster.
 func NewSyncHandler(loader DocumentLoader, indexer DocumentIndexer, logger *slog.Logger) *SyncHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &SyncHandler{loader: loader, indexer: indexer, logger: logger}
+	st := gobreaker.Settings{
+		Name:        "search-index",
+		MaxRequests: 1,
+		Interval:    10 * time.Second,
+		Timeout:     30 * time.Second,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			return counts.ConsecutiveFailures >= 5
+		},
+		OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
+			logger.Info("search index circuit breaker state change", "from", from.String(), "to", to.String())
+		},
+	}
+	return &SyncHandler{
+		loader:  loader,
+		indexer: indexer,
+		logger:  logger,
+		breaker: gobreaker.NewCircuitBreaker(st),
+	}
 }
 
 // Handle implements asynq.Handler.
@@ -185,15 +211,43 @@ func (h *SyncHandler) Handle(ctx context.Context, task *asynq.Task) error {
 	if err != nil {
 		return err
 	}
+
+	var indexErr error
 	if !state.Found {
-		// The ticket was hard-purged or never existed in this org. Removing
-		// the id is safe and heals an index left behind by a failed job.
-		return h.indexer.DeleteTicket(ctx, payload.OrgID, payload.TicketID, 0)
+		indexErr = h.breakerProtected(func() error {
+			return h.indexer.DeleteTicket(ctx, payload.OrgID, payload.TicketID, 0)
+		})
+	} else if state.Deleted {
+		indexErr = h.breakerProtected(func() error {
+			return h.indexer.DeleteTicket(ctx, payload.OrgID, payload.TicketID, state.Version)
+		})
+	} else {
+		indexErr = h.breakerProtected(func() error {
+			return h.indexer.IndexTicket(ctx, state.Document)
+		})
 	}
-	if state.Deleted {
-		return h.indexer.DeleteTicket(ctx, payload.OrgID, payload.TicketID, state.Version)
+
+	// When the circuit is open we skip the job instead of failing: the index
+	// stays eventually consistent and self-heals when Elasticsearch returns.
+	if errors.Is(indexErr, gobreaker.ErrOpenState) {
+		h.logger.Warn("search index circuit open, skipping job",
+			"org_id", payload.OrgID, "ticket_id", payload.TicketID)
+		return nil
 	}
-	return h.indexer.IndexTicket(ctx, state.Document)
+	return indexErr
+}
+
+// breakerProtected runs f through the circuit breaker. A successful call
+// counts as a success; an error counts as a failure. ErrOpenCircuit is
+// returned without calling f when the circuit is open.
+func (h *SyncHandler) breakerProtected(f func() error) error {
+	_, err := h.breaker.Execute(func() (any, error) {
+		if err := f(); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+	return err
 }
 
 // Compile-time checks for the production implementations.
