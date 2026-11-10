@@ -260,7 +260,8 @@ func main() {
 	if err := search.NewIndexManager(esClient).Bootstrap(ctx); err != nil {
 		logger.Warn("elasticsearch unavailable at startup; search falls back to postgres", "error", err)
 	}
-	searchSvc := search.NewService(search.NewRepository(pool))
+	searchRepo := search.NewRepository(pool)
+	searchSvc := search.NewService(search.NewElasticBackend(esClient, searchRepo))
 	searchHandler := search.NewHandler(searchSvc)
 
 	// idempotency wiring (PostgreSQL-backed store, not Redis)

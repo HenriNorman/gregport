@@ -283,6 +283,56 @@ func BenchmarkPostgresSearch(b *testing.B) {
 	}
 }
 
+func TestTicketsByIDsScopesAndSkipsDeleted(t *testing.T) {
+	if testing.Short() {
+		t.Skip("postgres integration test")
+	}
+	pool := testPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	orgA := seedOrg(t, pool)
+	orgB := seedOrg(t, pool)
+	userA := seedUser(t, pool)
+	userB := seedUser(t, pool)
+	custA := seedCustomer(t, pool, orgA)
+	custB := seedCustomer(t, pool, orgB)
+	t.Cleanup(func() {
+		cleanupOrg(t, pool, orgA, userA)
+		cleanupOrg(t, pool, orgB, userB)
+	})
+
+	ticketA := seedTicket(t, pool, orgA, 1, custA, &userA, "Visible ticket", "open")
+	deletedA := seedTicket(t, pool, orgA, 2, custA, nil, "Deleted ticket", "open")
+	ticketB := seedTicket(t, pool, orgB, 1, custB, nil, "Foreign ticket", "open")
+	if _, err := pool.Exec(ctx, `UPDATE tickets SET deleted_at = now() WHERE id = $1`, deletedA); err != nil {
+		t.Fatalf("soft delete: %v", err)
+	}
+
+	hits, err := repo.TicketsByIDs(ctx, orgA, []uuid.UUID{ticketA, deletedA, ticketB})
+	if err != nil {
+		t.Fatalf("TicketsByIDs: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits = %+v, want only the visible org A ticket", hits)
+	}
+	got, ok := hits[ticketA]
+	if !ok {
+		t.Fatalf("missing visible ticket %s", ticketA)
+	}
+	if got.Number != 1 || got.Subject != "Visible ticket" || got.OrgID != orgA {
+		t.Fatalf("hydrated hit = %+v", got)
+	}
+}
+
+func TestTicketsByIDsRequiresOrg(t *testing.T) {
+	pool := testPool(t)
+	repo := NewRepository(pool)
+	if _, err := repo.TicketsByIDs(context.Background(), uuid.Nil, []uuid.UUID{uuid.New()}); !errors.Is(err, ErrMissingOrg) {
+		t.Fatalf("TicketsByIDs without org = %v, want ErrMissingOrg", err)
+	}
+}
+
 func TestPostgresSearchPagination(t *testing.T) {
 	if testing.Short() {
 		t.Skip("postgres integration test")

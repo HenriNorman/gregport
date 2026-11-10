@@ -2,10 +2,12 @@ package search
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/google/uuid"
 
+	"github.com/HenriNorman/gregport/internal/platform/httpx"
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 )
 
@@ -38,6 +40,9 @@ func (s *Service) Search(ctx context.Context, p requestctx.Principal, f Filter) 
 
 	res, err := s.repo.Search(ctx, p.OrgID, f)
 	if err != nil {
+		if errors.Is(err, ErrSearchUnavailable) || errors.Is(err, ErrIndexNotFound) {
+			return Result{}, httpx.ServiceUnavailable("search_unavailable", "search is temporarily unavailable")
+		}
 		return Result{}, err
 	}
 	for i := range res.Hits {

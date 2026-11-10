@@ -35,13 +35,13 @@ func TestRenderHighlightEmpty(t *testing.T) {
 func TestCursorRoundTrip(t *testing.T) {
 	id := uuid.New()
 	created := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
-	raw := encodeCursor(0.125, created, id)
+	raw := encodeCursor(0.125, created, id, 42)
 
 	c, err := decodeCursor(raw)
 	if err != nil {
 		t.Fatalf("decode cursor: %v", err)
 	}
-	if c.Rank != 0.125 || !c.CreatedAt.Equal(created) || c.ID != id {
+	if c.Rank != 0.125 || !c.CreatedAt.Equal(created) || c.ID != id || c.Number != 42 {
 		t.Fatalf("cursor round trip = %+v", c)
 	}
 }

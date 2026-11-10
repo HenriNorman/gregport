@@ -7,8 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/HenriNorman/gregport/internal/platform/httpx"
 )
 
 // Repository is the Postgres full-text search backend. It is the baseline and
@@ -31,10 +29,10 @@ func (r *Repository) Search(ctx context.Context, orgID uuid.UUID, f Filter) (Res
 	}
 	queryText := strings.TrimSpace(f.Query)
 	if len(queryText) > MaxQueryBytes {
-		return Result{}, httpx.Unprocessable("invalid_search_query", "search query is too long")
+		return Result{}, errQueryTooLong
 	}
 	if f.Status != nil && !ValidStatus(*f.Status) {
-		return Result{}, httpx.Unprocessable("invalid_search_filter", "status is not a valid ticket status")
+		return Result{}, errInvalidStatus
 	}
 	f.Limit = NormalizeLimit(f.Limit)
 
@@ -93,10 +91,55 @@ func (r *Repository) Search(ctx context.Context, orgID uuid.UUID, f Filter) (Res
 	if len(out) > f.Limit {
 		out = out[:f.Limit]
 		last := out[len(out)-1]
-		next = encodeCursor(last.Rank, last.CreatedAt, last.ID)
+		next = encodeCursor(last.Rank, last.CreatedAt, last.ID, last.Number)
 	}
 
 	return Result{Hits: out, NextCursor: next}, nil
+}
+
+// TicketsByIDs loads canonical ticket rows for the given ids, scoped to one
+// organisation. It is the hydration step after an Elasticsearch query: the
+// index supplies ordering and highlights, Postgres supplies the authoritative
+// row, and soft-deleted or foreign tickets are silently absent.
+func (r *Repository) TicketsByIDs(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]TicketHit, error) {
+	if orgID == uuid.Nil {
+		return nil, ErrMissingOrg
+	}
+	out := make(map[uuid.UUID]TicketHit, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT t.id, t.org_id, t.number, t.subject, t.status, t.priority,
+		       t.assignee_id, c.email AS requester_email,
+		       t.created_at, t.updated_at
+		FROM tickets t
+		JOIN customers c ON c.id = t.requester_id
+		WHERE t.org_id = $1
+		  AND t.deleted_at IS NULL
+		  AND t.id = ANY($2::uuid[])`,
+		orgID, ids,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("hydrate search hits: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var h TicketHit
+		if err := rows.Scan(
+			&h.ID, &h.OrgID, &h.Number, &h.Subject, &h.Status, &h.Priority,
+			&h.AssigneeID, &h.RequesterEmail, &h.CreatedAt, &h.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan hydrated search hit: %w", err)
+		}
+		out[h.ID] = h
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("hydrate search rows: %w", err)
+	}
+	return out, nil
 }
 
 // buildFilterClause appends optional facet parameters and returns the SQL

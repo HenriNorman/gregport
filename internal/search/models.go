@@ -33,6 +33,13 @@ const MaxQueryBytes = 512
 // ErrInvalidCursor is returned when the opaque cursor cannot be decoded.
 var ErrInvalidCursor = httpx.BadRequest("invalid_cursor", "cursor is invalid")
 
+// Shared validation errors, so the Postgres and Elasticsearch backends reject
+// the same inputs with the same API response.
+var (
+	errQueryTooLong  = httpx.Unprocessable("invalid_search_query", "search query is too long")
+	errInvalidStatus = httpx.Unprocessable("invalid_search_filter", "status is not a valid ticket status")
+)
+
 // ErrMissingOrg is returned when a search is attempted without an org id. The
 // repository refuses to run rather than risk an unscoped query.
 var ErrMissingOrg = errors.New("search: org id is required")
