@@ -27,6 +27,8 @@ func clearWorkerEnv(t *testing.T) {
 		"SMTP_FROM", "SMTP_FROM_NAME",
 		"RATING_TOKEN_SECRET", "RATING_TOKEN_TTL", "PUBLIC_APP_URL",
 		"JWT_SECRET",
+		"ELASTICSEARCH_URL", "ELASTICSEARCH_INDEX", "ELASTICSEARCH_USERNAME",
+		"ELASTICSEARCH_PASSWORD", "ELASTICSEARCH_API_KEY", "ELASTICSEARCH_TIMEOUT",
 	} {
 		t.Setenv(key, "")
 	}
@@ -109,6 +111,12 @@ func TestLoadWorkerDefaults(t *testing.T) {
 	}
 	if cfg.RatingTokenTTL != 30*24*time.Hour || cfg.PublicAppURL != "http://localhost:8080" {
 		t.Fatalf("rating defaults: ttl=%s url=%s", cfg.RatingTokenTTL, cfg.PublicAppURL)
+	}
+	if cfg.ElasticsearchURL != "http://localhost:9200" || cfg.ElasticsearchIndex != "tickets" {
+		t.Fatalf("elasticsearch defaults: url=%s index=%s", cfg.ElasticsearchURL, cfg.ElasticsearchIndex)
+	}
+	if cfg.ElasticsearchTimeout != 3*time.Second {
+		t.Fatalf("elasticsearch timeout: %s", cfg.ElasticsearchTimeout)
 	}
 }
 
@@ -373,6 +381,11 @@ func TestLoadWorkerValidation(t *testing.T) {
 			name: "invalid rating token ttl",
 			env:  map[string]string{"DB_PASSWORD": "secret", "RATING_TOKEN_TTL": "soon"},
 			want: "RATING_TOKEN_TTL",
+		},
+		{
+			name: "invalid elasticsearch url",
+			env:  map[string]string{"DB_PASSWORD": "secret", "ELASTICSEARCH_URL": "localhost:9200"},
+			want: "ELASTICSEARCH_URL",
 		},
 	}
 

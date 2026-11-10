@@ -46,6 +46,12 @@ var optionalKeys = []string{
 	"TRUST_PROXY_HEADERS",
 	"TRUSTED_PROXY_CIDRS",
 	"IDEMPOTENCY_TTL",
+	"ELASTICSEARCH_URL",
+	"ELASTICSEARCH_INDEX",
+	"ELASTICSEARCH_USERNAME",
+	"ELASTICSEARCH_PASSWORD",
+	"ELASTICSEARCH_API_KEY",
+	"ELASTICSEARCH_TIMEOUT",
 }
 
 func setRequired(t *testing.T) {
@@ -113,6 +119,9 @@ func TestLoadDefaults(t *testing.T) {
 		{"TrustProxyHeaders", cfg.TrustProxyHeaders, false},
 		{"TrustedProxyCIDRs", len(cfg.TrustedProxyCIDRs), 0},
 		{"IdempotencyTTL", cfg.IdempotencyTTL, 24 * time.Hour},
+		{"ElasticsearchURL", cfg.ElasticsearchURL, "http://localhost:9200"},
+		{"ElasticsearchIndex", cfg.ElasticsearchIndex, "tickets"},
+		{"ElasticsearchTimeout", cfg.ElasticsearchTimeout, 3 * time.Second},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -161,6 +170,11 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("TRUST_PROXY_HEADERS", "true")
 	t.Setenv("TRUSTED_PROXY_CIDRS", "10.0.0.0/8, 192.168.0.0/16")
 	t.Setenv("IDEMPOTENCY_TTL", "12h")
+	t.Setenv("ELASTICSEARCH_URL", "https://es.internal:9200")
+	t.Setenv("ELASTICSEARCH_INDEX", "support-tickets")
+	t.Setenv("ELASTICSEARCH_USERNAME", "elastic")
+	t.Setenv("ELASTICSEARCH_PASSWORD", "es-secret")
+	t.Setenv("ELASTICSEARCH_TIMEOUT", "1500ms")
 
 	cfg, err := Load()
 	if err != nil {
@@ -227,6 +241,56 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.IdempotencyTTL != 12*time.Hour {
 		t.Errorf("idempotency ttl: %s", cfg.IdempotencyTTL)
+	}
+	if cfg.ElasticsearchURL != "https://es.internal:9200" ||
+		cfg.ElasticsearchIndex != "support-tickets" ||
+		cfg.ElasticsearchUsername != "elastic" ||
+		cfg.ElasticsearchPassword != "es-secret" ||
+		cfg.ElasticsearchTimeout != 1500*time.Millisecond {
+		t.Errorf("elasticsearch settings: %+v", cfg)
+	}
+}
+
+func TestLoadRejectsInvalidElasticsearchSettings(t *testing.T) {
+	cases := []struct {
+		name string
+		env  map[string]string
+	}{
+		{
+			name: "unsupported scheme",
+			env:  map[string]string{"ELASTICSEARCH_URL": "ftp://localhost:9200"},
+		},
+		{
+			name: "missing host",
+			env:  map[string]string{"ELASTICSEARCH_URL": "http://"},
+		},
+		{
+			name: "invalid index",
+			env:  map[string]string{"ELASTICSEARCH_INDEX": "Tickets"},
+		},
+		{
+			name: "half credentials",
+			env:  map[string]string{"ELASTICSEARCH_USERNAME": "elastic"},
+		},
+		{
+			name: "api key and basic auth",
+			env: map[string]string{
+				"ELASTICSEARCH_USERNAME": "elastic",
+				"ELASTICSEARCH_PASSWORD": "secret",
+				"ELASTICSEARCH_API_KEY":  "key",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setDefaults(t)
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			if _, err := Load(); err == nil {
+				t.Fatal("Load = nil error, want validation error")
+			}
+		})
 	}
 }
 

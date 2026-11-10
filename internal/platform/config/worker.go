@@ -85,6 +85,15 @@ type WorkerConfig struct {
 	MaxAttachmentBytes    int
 	ExportBatchSize       int
 	ThumbnailMaxDimension int
+
+	// Elasticsearch index-sync settings. The worker writes derived documents
+	// and never blocks the API's ticket writes on them.
+	ElasticsearchURL      string
+	ElasticsearchIndex    string
+	ElasticsearchUsername string
+	ElasticsearchPassword string
+	ElasticsearchAPIKey   string
+	ElasticsearchTimeout  time.Duration
 }
 
 // LoadWorker reads the worker configuration from the environment. Defaults
@@ -161,6 +170,13 @@ func LoadWorker() (WorkerConfig, error) {
 		MaxAttachmentBytes:    10 << 20,
 		ExportBatchSize:       1000,
 		ThumbnailMaxDimension: 512,
+
+		ElasticsearchURL:      getEnv("ELASTICSEARCH_URL", "http://localhost:9200"),
+		ElasticsearchIndex:    getEnv("ELASTICSEARCH_INDEX", "tickets"),
+		ElasticsearchUsername: os.Getenv("ELASTICSEARCH_USERNAME"),
+		ElasticsearchPassword: os.Getenv("ELASTICSEARCH_PASSWORD"),
+		ElasticsearchAPIKey:   os.Getenv("ELASTICSEARCH_API_KEY"),
+		ElasticsearchTimeout:  3 * time.Second,
 	}
 
 	var errs []error
@@ -184,6 +200,15 @@ func LoadWorker() (WorkerConfig, error) {
 	}
 	if cfg.S3AccessKey == "" || cfg.S3SecretKey == "" {
 		errs = append(errs, errors.New("S3_ACCESS_KEY and S3_SECRET_KEY are required"))
+	}
+	if err := validateElasticsearch(
+		cfg.ElasticsearchURL,
+		cfg.ElasticsearchIndex,
+		cfg.ElasticsearchUsername,
+		cfg.ElasticsearchPassword,
+		cfg.ElasticsearchAPIKey,
+	); err != nil {
+		errs = append(errs, err)
 	}
 	if err := validateAppURL(cfg.PublicAppURL); err != nil {
 		errs = append(errs, err)
@@ -232,6 +257,7 @@ func LoadWorker() (WorkerConfig, error) {
 		{"PRESIGN_DOWNLOAD_TTL", &cfg.PresignDownloadTTL, false},
 		{"EXPORT_LINK_TTL", &cfg.ExportLinkTTL, false},
 		{"ATTACHMENT_PENDING_TTL", &cfg.AttachmentPendingTTL, false},
+		{"ELASTICSEARCH_TIMEOUT", &cfg.ElasticsearchTimeout, false},
 	}
 	for _, d := range durations {
 		value, err := envDuration(d.name, *d.dst, d.allowZero)

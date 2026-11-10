@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -80,6 +81,16 @@ type Config struct {
 	ExportLinkTTL        time.Duration
 	AttachmentPendingTTL time.Duration
 	MaxAttachmentBytes   int
+
+	// Elasticsearch is the primary full-text backend. The index is derived
+	// from Postgres and can be rebuilt, so an unreachable cluster degrades
+	// search without blocking ticket writes.
+	ElasticsearchURL      string
+	ElasticsearchIndex    string
+	ElasticsearchUsername string
+	ElasticsearchPassword string
+	ElasticsearchAPIKey   string
+	ElasticsearchTimeout  time.Duration
 }
 
 func Load() (Config, error) {
@@ -141,6 +152,13 @@ func Load() (Config, error) {
 		ExportLinkTTL:        24 * time.Hour,
 		AttachmentPendingTTL: time.Hour,
 		MaxAttachmentBytes:   10 << 20,
+
+		ElasticsearchURL:      getEnv("ELASTICSEARCH_URL", "http://localhost:9200"),
+		ElasticsearchIndex:    getEnv("ELASTICSEARCH_INDEX", "tickets"),
+		ElasticsearchUsername: os.Getenv("ELASTICSEARCH_USERNAME"),
+		ElasticsearchPassword: os.Getenv("ELASTICSEARCH_PASSWORD"),
+		ElasticsearchAPIKey:   os.Getenv("ELASTICSEARCH_API_KEY"),
+		ElasticsearchTimeout:  3 * time.Second,
 	}
 
 	var errs []error
@@ -219,6 +237,7 @@ func Load() (Config, error) {
 		{"PRESIGN_DOWNLOAD_TTL", &cfg.PresignDownloadTTL},
 		{"EXPORT_LINK_TTL", &cfg.ExportLinkTTL},
 		{"ATTACHMENT_PENDING_TTL", &cfg.AttachmentPendingTTL},
+		{"ELASTICSEARCH_TIMEOUT", &cfg.ElasticsearchTimeout},
 	}
 	for _, d := range redisDurations {
 		value, err := envDuration(d.name, *d.dst, false)
@@ -271,6 +290,16 @@ func Load() (Config, error) {
 		errs = append(errs, errors.New("S3_ACCESS_KEY and S3_SECRET_KEY are required"))
 	}
 
+	if err := validateElasticsearch(
+		cfg.ElasticsearchURL,
+		cfg.ElasticsearchIndex,
+		cfg.ElasticsearchUsername,
+		cfg.ElasticsearchPassword,
+		cfg.ElasticsearchAPIKey,
+	); err != nil {
+		errs = append(errs, err)
+	}
+
 	if cidrs, err := envCIDRs("TRUSTED_PROXY_CIDRS"); err != nil {
 		errs = append(errs, err)
 	} else {
@@ -315,6 +344,37 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// elasticsearchIndexRE matches an index or alias name. Elasticsearch requires
+// lowercase names and forbids a leading -, _, +, so both the concrete
+// versioned index (tickets-v1) and the stable alias (tickets) match.
+var elasticsearchIndexRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+
+// validateElasticsearch checks settings that would otherwise fail only at the
+// first search: a URL with the wrong scheme, an invalid index name, or half of
+// a credential pair. The cluster itself is allowed to be down at startup.
+func validateElasticsearch(rawURL, index, username, password, apiKey string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("ELASTICSEARCH_URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return errors.New("ELASTICSEARCH_URL must use http or https")
+	}
+	if u.Host == "" {
+		return errors.New("ELASTICSEARCH_URL must include a host")
+	}
+	if !elasticsearchIndexRE.MatchString(index) {
+		return errors.New("ELASTICSEARCH_INDEX must be a lowercase index or alias name")
+	}
+	if (username == "") != (password == "") {
+		return errors.New("ELASTICSEARCH_USERNAME and ELASTICSEARCH_PASSWORD must be set together")
+	}
+	if apiKey != "" && username != "" {
+		return errors.New("set either ELASTICSEARCH_API_KEY or ELASTICSEARCH_USERNAME, not both")
+	}
+	return nil
 }
 
 func envDuration(name string, fallback time.Duration, allowZero bool) (time.Duration, error) {
