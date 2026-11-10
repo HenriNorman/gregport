@@ -222,6 +222,11 @@ func (m *IndexManager) indexExists(ctx context.Context, index string) (bool, err
 	}
 }
 
+// IndexExists reports whether a concrete index exists.
+func (m *IndexManager) IndexExists(ctx context.Context, index string) (bool, error) {
+	return m.indexExists(ctx, index)
+}
+
 // isResourceAlreadyExists reports a create race: another process created the
 // same concrete index between our existence check and create call.
 func isResourceAlreadyExists(err error) bool {

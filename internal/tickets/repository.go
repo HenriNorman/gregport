@@ -249,6 +249,75 @@ func (r *Repository) ListTickets(ctx context.Context, orgID uuid.UUID, f ListFil
 	return ListResult{Tickets: out, NextCursor: next}, nil
 }
 
+// ticketRef is a lightweight reference to a ticket, used by the reindex
+// command to read every ticket in cursor order before loading full documents.
+type ticketRef struct {
+	ID        uuid.UUID
+	OrgID     uuid.UUID
+	CreatedAt time.Time
+}
+
+// ListAllTicketsPage returns a page of all non-deleted tickets across all
+// organisations, ordered by created_at descending with id as tiebreaker. It is
+// used by the reindex command to read every ticket without an org filter.
+func (r *Repository) ListAllTicketsPage(ctx context.Context, limit int, cursor string) ([]ticketRef, string, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 10000 {
+		limit = 10000
+	}
+
+	cur, err := decodeCursor(cursor)
+	if err != nil {
+		return nil, "", err
+	}
+
+	args := []any{}
+	where := "WHERE t.deleted_at IS NULL"
+	if !cur.CreatedAt.IsZero() {
+		args = append(args, cur.CreatedAt, cur.ID)
+		where += fmt.Sprintf(" AND (t.created_at, t.id) < ($%d, $%d)", len(args)-1, len(args))
+	}
+
+	args = append(args, limit+1)
+	query := fmt.Sprintf(
+		`SELECT t.id, t.org_id, t.created_at
+		 FROM tickets t
+		 %s
+		 ORDER BY t.created_at DESC, t.id DESC
+		 LIMIT $%d`,
+		where, len(args),
+	)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("list all tickets: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ticketRef
+	for rows.Next() {
+		var ref ticketRef
+		if err := rows.Scan(&ref.ID, &ref.OrgID, &ref.CreatedAt); err != nil {
+			return nil, "", fmt.Errorf("scan ticket ref: %w", err)
+		}
+		out = append(out, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("rows: %w", err)
+	}
+
+	var next string
+	if len(out) > limit {
+		out = out[:limit]
+		last := out[len(out)-1]
+		next = encodeCursor(last.CreatedAt, last.ID)
+	}
+
+	return out, next, nil
+}
+
 func (r *Repository) GetTicket(ctx context.Context, orgID uuid.UUID, number int64) (Ticket, error) {
 	var t Ticket
 	err := r.pool.QueryRow(ctx,
