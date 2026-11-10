@@ -20,6 +20,7 @@ services:
       - ./migrations/0007_webhooks.up.sql:/docker-entrypoint-initdb.d/0007_webhooks.sql:ro
       - ./migrations/0008_inbound_email.up.sql:/docker-entrypoint-initdb.d/0008_inbound_email.sql:ro
       - ./migrations/0009_attachments_exports.up.sql:/docker-entrypoint-initdb.d/0009_attachments_exports.sql:ro
+      - ./migrations/0010_search_baseline.up.sql:/docker-entrypoint-initdb.d/0010_search_baseline.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -71,6 +72,40 @@ services:
       exit 0"
     restart: "no"
 
+  # Derived search index. Postgres remains the source of truth: the API and
+  # worker keep running and search degrades when this service is stopped.
+  # Security is disabled for local development only; never expose this port
+  # outside a private network.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    environment:
+      discovery.type: single-node
+      cluster.name: gregport-search
+      node.name: gregport-es
+      xpack.security.enabled: "false"
+      xpack.security.http.ssl.enabled: "false"
+      xpack.security.transport.ssl.enabled: "false"
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+    mem_limit: 2g
+    ports:
+      - "${ELASTICSEARCH_PORT:-9200}:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -97,6 +132,10 @@ services:
       S3_BUCKET: ${S3_BUCKET:-gregport-attachments}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_USE_SSL: ${S3_USE_SSL:-false}
+      # Derived index. There is no depends_on: the app must start and serve
+      # writes when Elasticsearch is down.
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-tickets}
     ports:
       - "${APP_PORT:-8080}:${APP_PORT:-8080}"
     depends_on:
@@ -140,6 +179,8 @@ services:
       S3_BUCKET: ${S3_BUCKET:-gregport-attachments}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_USE_SSL: ${S3_USE_SSL:-false}
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-tickets}
     ports:
       - "${WORKER_PORT:-8081}:${WORKER_PORT:-8081}"
     depends_on:
@@ -180,3 +221,4 @@ services:
 volumes:
   pgdata:
   miniodata:
+  esdata:
