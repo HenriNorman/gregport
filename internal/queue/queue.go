@@ -24,17 +24,18 @@ const (
 
 // Task types.
 const (
-	TaskEmailSend       = "email:send"
-	TaskSLABreachCheck  = "sla:breach_check"
-	TaskAutoClose       = "ticket:auto_close"
-	TaskHousekeeping    = "housekeeping:run"
-	TaskNotify          = "notify:send"
-	TaskWebhookDispatch = "webhook:dispatch"
-	TaskWebhookDeliver  = "webhook:deliver"
+	TaskEmailSend          = "email:send"
+	TaskSLABreachCheck     = "sla:breach_check"
+	TaskAutoClose          = "ticket:auto_close"
+	TaskHousekeeping       = "housekeeping:run"
+	TaskNotify             = "notify:send"
+	TaskWebhookDispatch    = "webhook:dispatch"
+	TaskWebhookDeliver     = "webhook:deliver"
 	TaskAttachmentValidate = "attachment:validate"
 	TaskThumbnailGenerate  = "thumbnail:generate"
 	TaskExportRun          = "export:run"
-	TaskNoop            = "system:noop"
+	TaskSearchIndex        = "search:index_ticket"
+	TaskNoop               = "system:noop"
 )
 
 // IOQueues is the weighted priority map for I/O-bound work. Weights are
