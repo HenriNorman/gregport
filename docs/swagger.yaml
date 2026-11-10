@@ -464,6 +464,64 @@ definitions:
         example: 1042
         type: integer
     type: object
+  search.HighlightsDTO:
+    properties:
+      comments:
+        type: string
+      subject:
+        type: string
+    type: object
+  search.HitDTO:
+    properties:
+      assignee_id:
+        example: 550e8400-e29b-41d4-a716-446655440001
+        type: string
+      created_at:
+        type: string
+      highlights:
+        $ref: '#/definitions/search.HighlightsDTO'
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      number:
+        example: 1042
+        type: integer
+      priority:
+        enum:
+        - low
+        - normal
+        - high
+        - urgent
+        example: high
+        type: string
+      requester_email:
+        example: h@acme.com
+        type: string
+      status:
+        enum:
+        - new
+        - open
+        - pending
+        - solved
+        - closed
+        example: open
+        type: string
+      subject:
+        example: Cannot log in
+        type: string
+      updated_at:
+        type: string
+    type: object
+  search.SearchResponse:
+    properties:
+      next_cursor:
+        example: eyJyIjowLjQyLCJ0IjoiMjAyNi0wMS0xNVQxMDowMDowMFoiLCJpIjoiNTUwZTg0MDAtIn0
+        type: string
+      results:
+        items:
+          $ref: '#/definitions/search.HitDTO'
+        type: array
+    type: object
   sla.CreatePolicyRequest:
     properties:
       first_response_minutes:
@@ -2344,6 +2402,70 @@ paths:
       summary: Submit a satisfaction rating
       tags:
       - ratings
+  /v1/search:
+    get:
+      description: Full-text search over ticket subjects and comment bodies, scoped
+        to the caller's org. Optional facets filter by status, tag name and assignee
+        UUID. Each hit carries HTML-safe highlight snippets with matched terms wrapped
+        in <mark>. Results are ordered by relevance, then recency, and paginate with
+        an opaque cursor. Search is eventually consistent after writes in the Elasticsearch
+        backend (about one second); the Postgres fallback is synchronous. Another
+        org's tickets are never returned.
+      parameters:
+      - description: Free-text query
+        in: query
+        name: q
+        type: string
+      - description: Filter by status
+        enum:
+        - new
+        - open
+        - pending
+        - solved
+        - closed
+        in: query
+        name: status
+        type: string
+      - description: Filter by tag name
+        in: query
+        name: tag
+        type: string
+      - description: Filter by assignee UUID
+        in: query
+        name: assignee
+        type: string
+      - description: Opaque cursor from a previous next_cursor
+        in: query
+        name: cursor
+        type: string
+      - description: Page size (default 25, max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/search.SearchResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "422":
+          description: Invalid filter, cursor or query
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "503":
+          description: Search backend unavailable
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Search tickets and comments
+      tags:
+      - search
   /v1/sla-policies:
     get:
       description: Any authenticated member may list policies. Results are scoped

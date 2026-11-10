@@ -32,6 +32,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/ratelimit"
 	"github.com/HenriNorman/gregport/internal/queue"
 	"github.com/HenriNorman/gregport/internal/ratings"
+	"github.com/HenriNorman/gregport/internal/search"
 	"github.com/HenriNorman/gregport/internal/sla"
 	"github.com/HenriNorman/gregport/internal/storage"
 	"github.com/HenriNorman/gregport/internal/tickets"
@@ -243,6 +244,10 @@ func main() {
 	customerSvc := customers.NewService(customers.NewRepository(pool))
 	customerHandler := customers.NewHandler(customerSvc)
 
+	// search wiring (Postgres full-text baseline/fallback)
+	searchSvc := search.NewService(search.NewRepository(pool))
+	searchHandler := search.NewHandler(searchSvc)
+
 	// idempotency wiring (PostgreSQL-backed store, not Redis)
 	idempotencyRepo := idempotency.NewRepository(pool)
 	idempotencyCfg := middleware.IdempotencyConfig{
@@ -313,6 +318,7 @@ func main() {
 			})
 
 			r.Get("/dashboard/counts", dashboardHandler.GetCounts)
+			r.Get("/search", searchHandler.Search)
 
 			r.Route("/notifications", func(r chi.Router) {
 				r.Get("/", notificationsHandler.List)
