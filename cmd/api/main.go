@@ -244,7 +244,22 @@ func main() {
 	customerSvc := customers.NewService(customers.NewRepository(pool))
 	customerHandler := customers.NewHandler(customerSvc)
 
-	// search wiring (Postgres full-text baseline/fallback)
+	// search wiring (Postgres full-text baseline/fallback, Elasticsearch index)
+	esClient, err := search.NewClient(search.ClientConfig{
+		URL:      cfg.ElasticsearchURL,
+		Index:    cfg.ElasticsearchIndex,
+		Username: cfg.ElasticsearchUsername,
+		Password: cfg.ElasticsearchPassword,
+		APIKey:   cfg.ElasticsearchAPIKey,
+		Timeout:  cfg.ElasticsearchTimeout,
+	})
+	if err != nil {
+		logger.Error("search configuration invalid", "error", err)
+		os.Exit(1)
+	}
+	if err := search.NewIndexManager(esClient).Bootstrap(ctx); err != nil {
+		logger.Warn("elasticsearch unavailable at startup; search falls back to postgres", "error", err)
+	}
 	searchSvc := search.NewService(search.NewRepository(pool))
 	searchHandler := search.NewHandler(searchSvc)
 
