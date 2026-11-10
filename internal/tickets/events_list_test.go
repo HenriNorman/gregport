@@ -44,10 +44,11 @@ func TestListEvents_TimelineInOrder(t *testing.T) {
 		t.Fatalf("comment: %v", err)
 	}
 
-	// status change (ticket.status_changed)
+	// status change (ticket.status_changed). Version is now 4: create,
+	// assignment, tag and comment each bumped it.
 	open := "open"
 	if _, err := repo.UpdateTicket(ctx, UpdateInput{
-		OrgID: orgA, Number: number, ExpectedVersion: 2,
+		OrgID: orgA, Number: number, ExpectedVersion: 4,
 		Actor: Actor{Type: "user", ID: &agentID}, Status: &open,
 	}); err != nil {
 		t.Fatalf("update: %v", err)

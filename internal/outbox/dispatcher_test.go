@@ -144,9 +144,10 @@ func TestDispatchOnceEnqueuesOneJobAndMarksDispatched(t *testing.T) {
 	}
 
 	jobs := enqueuer.snapshot()
-	// ticket.created produces three consumer jobs (email + notify + webhook).
-	if len(jobs) != 3 {
-		t.Fatalf("jobs: %d, want 3", len(jobs))
+	// ticket.created produces four consumer jobs (email + notify + webhook +
+	// search index sync).
+	if len(jobs) != 4 {
+		t.Fatalf("jobs: %d, want 4", len(jobs))
 	}
 	job := jobs[0]
 	if job.ID != eventID.String()+":email" {
@@ -157,6 +158,13 @@ func TestDispatchOnceEnqueuesOneJobAndMarksDispatched(t *testing.T) {
 	}
 	if job.MaxRetry != 10 {
 		t.Fatalf("max retry: %d", job.MaxRetry)
+	}
+	searchJob := jobs[3]
+	if searchJob.ID != eventID.String()+":"+ConsumerSearch || searchJob.Type != queue.TaskSearchIndex {
+		t.Fatalf("search job: %+v", searchJob)
+	}
+	if searchJob.Queue != queue.QueueLow || searchJob.MaxRetry != 10 {
+		t.Fatalf("search job routing: %+v", searchJob)
 	}
 
 	var payload EventJob
@@ -187,7 +195,7 @@ func TestDispatchOnceEnqueuesOneJobAndMarksDispatched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second dispatch: %v", err)
 	}
-	if n != 0 || len(enqueuer.snapshot()) != 3 {
+	if n != 0 || len(enqueuer.snapshot()) != 4 {
 		t.Fatalf("second dispatch re-enqueued: events=%d jobs=%d", n, len(enqueuer.snapshot()))
 	}
 }
@@ -227,9 +235,10 @@ func TestTwoDispatchersDispatchEachEventExactlyOnce(t *testing.T) {
 	}
 
 	jobs := enqueuer.snapshot()
-	// ticket.created produces three consumer jobs (email + notify + webhook).
-	if len(jobs) != eventCount*3 {
-		t.Fatalf("jobs: %d, want %d", len(jobs), eventCount*3)
+	// ticket.created produces four consumer jobs (email + notify + webhook +
+	// search index sync).
+	if len(jobs) != eventCount*4 {
+		t.Fatalf("jobs: %d, want %d", len(jobs), eventCount*4)
 	}
 
 	seen := make(map[string]bool, len(jobs))
@@ -360,10 +369,10 @@ func TestUnknownEventTypeIsMarkedDispatchedWithoutJobs(t *testing.T) {
 }
 
 func TestConsumersFor(t *testing.T) {
-	for _, eventType := range []string{"ticket.created", "comment.added", "ticket.assigned", "sla.breached"} {
+	for _, eventType := range []string{"ticket.created", "comment.added", "ticket.assigned"} {
 		cs := ConsumersFor(Event{EventType: eventType})
-		if len(cs) != 3 {
-			t.Fatalf("%s consumers: %+v, want 3", eventType, cs)
+		if len(cs) != 4 {
+			t.Fatalf("%s consumers: %+v, want 4", eventType, cs)
 		}
 		if cs[0].Name != ConsumerEmail || cs[0].TaskType != queue.TaskEmailSend {
 			t.Fatalf("%s first consumer: %+v, want email", eventType, cs[0])
@@ -374,15 +383,27 @@ func TestConsumersFor(t *testing.T) {
 		if cs[2].Name != ConsumerWebhook || cs[2].TaskType != queue.TaskWebhookDispatch {
 			t.Fatalf("%s third consumer: %+v, want webhook", eventType, cs[2])
 		}
+		if cs[3].Name != ConsumerSearch || cs[3].TaskType != queue.TaskSearchIndex || cs[3].Queue != queue.QueueLow {
+			t.Fatalf("%s fourth consumer: %+v, want search on the low queue", eventType, cs[3])
+		}
+	}
+	// An SLA breach changes no indexed field: notifications and webhooks
+	// still fire, but the document does not need to be rewritten.
+	if cs := ConsumersFor(Event{EventType: "sla.breached"}); len(cs) != 3 {
+		t.Fatalf("sla.breached consumers: %+v, want 3", cs)
 	}
 	if cs := ConsumersFor(Event{EventType: "ticket.updated"}); len(cs) != 0 {
 		t.Fatalf("unexpected consumers: %+v", cs)
 	}
 	for _, eventType := range []string{"ticket.closed", "ticket.deleted", "ticket.merged", "ticket.tagged", "ticket.untagged"} {
 		cs := ConsumersFor(Event{EventType: eventType})
-		if len(cs) != 1 || cs[0].Name != ConsumerWebhook {
-			t.Fatalf("%s consumers: %+v, want webhook only", eventType, cs)
+		if len(cs) != 2 || cs[0].Name != ConsumerWebhook || cs[1].Name != ConsumerSearch {
+			t.Fatalf("%s consumers: %+v, want webhook then search", eventType, cs)
 		}
+	}
+	cs := ConsumersFor(Event{EventType: "ticket.merge_target_updated"})
+	if len(cs) != 1 || cs[0].Name != ConsumerSearch || cs[0].TaskType != queue.TaskSearchIndex {
+		t.Fatalf("merge target consumers: %+v, want search only", cs)
 	}
 }
 
@@ -392,11 +413,11 @@ func TestConsumersForStatusChangedOnlyFilteredForEmail(t *testing.T) {
 		data string
 		want []string
 	}{
-		{name: "solved", data: `{"old":"open","new":"solved"}`, want: []string{ConsumerEmail, ConsumerWebhook}},
-		{name: "reopened", data: `{"old":"solved","new":"open"}`, want: []string{ConsumerWebhook}},
-		{name: "pending", data: `{"old":"open","new":"pending"}`, want: []string{ConsumerWebhook}},
-		{name: "missing data", want: []string{ConsumerWebhook}},
-		{name: "invalid data", data: `{`, want: []string{ConsumerWebhook}},
+		{name: "solved", data: `{"old":"open","new":"solved"}`, want: []string{ConsumerEmail, ConsumerWebhook, ConsumerSearch}},
+		{name: "reopened", data: `{"old":"solved","new":"open"}`, want: []string{ConsumerWebhook, ConsumerSearch}},
+		{name: "pending", data: `{"old":"open","new":"pending"}`, want: []string{ConsumerWebhook, ConsumerSearch}},
+		{name: "missing data", want: []string{ConsumerWebhook, ConsumerSearch}},
+		{name: "invalid data", data: `{`, want: []string{ConsumerWebhook, ConsumerSearch}},
 	}
 
 	for _, tt := range tests {

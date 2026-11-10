@@ -27,6 +27,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/queue"
 	"github.com/HenriNorman/gregport/internal/ratings"
+	"github.com/HenriNorman/gregport/internal/search"
 	"github.com/HenriNorman/gregport/internal/storage"
 	"github.com/HenriNorman/gregport/internal/tickets"
 	"github.com/HenriNorman/gregport/internal/webhooks"
@@ -144,6 +145,29 @@ func run() error {
 		cfg.ExportBatchSize, cfg.ExportLinkTTL, logger,
 	)
 
+	// Elasticsearch is derived data. The client does not contact the cluster
+	// here, so the worker starts and keeps consuming jobs while search is down;
+	// index tasks simply fail and retry.
+	esClient, err := search.NewClient(search.ClientConfig{
+		URL:      cfg.ElasticsearchURL,
+		Index:    cfg.ElasticsearchIndex,
+		Username: cfg.ElasticsearchUsername,
+		Password: cfg.ElasticsearchPassword,
+		APIKey:   cfg.ElasticsearchAPIKey,
+		Timeout:  cfg.ElasticsearchTimeout,
+	})
+	if err != nil {
+		return fmt.Errorf("search: %w", err)
+	}
+	if err := search.NewIndexManager(esClient).Bootstrap(signalCtx); err != nil {
+		logger.Warn("elasticsearch unavailable at startup; index sync will retry", "error", err)
+	}
+	searchSyncHandler := search.NewSyncHandler(
+		search.NewDocumentRepository(pool),
+		search.NewESDocumentIndexer(esClient),
+		logger,
+	)
+
 	ticketsRepo := tickets.NewRepository(pool)
 	breachChecker := tickets.NewBreachChecker(ticketsRepo)
 	breachHandler := asynq.HandlerFunc(func(ctx context.Context, task *asynq.Task) error {
@@ -222,6 +246,7 @@ func run() error {
 		worker.HandlerRegistration{Type: queue.TaskAttachmentValidate, Handler: asynq.HandlerFunc(attachmentHandler.Validate)},
 		worker.HandlerRegistration{Type: queue.TaskThumbnailGenerate, Handler: asynq.HandlerFunc(attachmentHandler.Thumbnail)},
 		worker.HandlerRegistration{Type: queue.TaskExportRun, Handler: asynq.HandlerFunc(exportHandler.Run)},
+		worker.HandlerRegistration{Type: queue.TaskSearchIndex, Handler: asynq.HandlerFunc(searchSyncHandler.Handle)},
 		worker.HandlerRegistration{Type: queue.TaskSLABreachCheck, Handler: breachHandler},
 		worker.HandlerRegistration{Type: queue.TaskAutoClose, Handler: autoCloseHandler},
 		worker.HandlerRegistration{Type: queue.TaskHousekeeping, Handler: housekeepingHandler},

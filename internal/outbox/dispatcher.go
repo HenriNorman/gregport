@@ -26,7 +26,21 @@ const (
 	ConsumerEmail   = "email"
 	ConsumerNotify  = "notify"
 	ConsumerWebhook = "webhook"
+	ConsumerSearch  = "search"
 )
+
+// searchConsumer refreshes one ticket document in the derived search index.
+// It uses the low-priority queue so a large indexing backlog cannot delay
+// customer email or notifications, and retries generously because a failure
+// only leaves the index temporarily stale.
+func searchConsumer() Consumer {
+	return Consumer{
+		Name:     ConsumerSearch,
+		TaskType: queue.TaskSearchIndex,
+		Queue:    queue.QueueLow,
+		MaxRetry: 10,
+	}
+}
 
 // Consumer describes one downstream job for an event type.
 type Consumer struct {
@@ -39,21 +53,29 @@ type Consumer struct {
 // consumers maps an event type to its downstream consumers. Only implemented
 // consumers are listed: enqueueing a task without a handler would retry and
 // archive forever.
+//
+// Every event that can change a ticket's indexed fields (subject, comments,
+// status, priority, tags, assignee, requester email, deletion) includes the
+// search consumer. SLA breach is excluded because it changes neither the ticket
+// row nor its comments; the notification and webhook consumers still run.
 var consumers = map[string][]Consumer{
 	"ticket.created": {
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
 		{Name: ConsumerNotify, TaskType: queue.TaskNotify, Queue: queue.QueueCritical, MaxRetry: 5},
 		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
+		searchConsumer(),
 	},
 	"comment.added": {
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
 		{Name: ConsumerNotify, TaskType: queue.TaskNotify, Queue: queue.QueueCritical, MaxRetry: 5},
 		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
+		searchConsumer(),
 	},
 	"ticket.assigned": {
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
 		{Name: ConsumerNotify, TaskType: queue.TaskNotify, Queue: queue.QueueCritical, MaxRetry: 5},
 		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
+		searchConsumer(),
 	},
 	"sla.breached": {
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
@@ -67,21 +89,33 @@ var consumers = map[string][]Consumer{
 	"ticket.status_changed": {
 		{Name: ConsumerEmail, TaskType: queue.TaskEmailSend, Queue: queue.QueueCritical, MaxRetry: 10},
 		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
+		searchConsumer(),
 	},
 	"ticket.closed": {
 		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
+		searchConsumer(),
 	},
 	"ticket.deleted": {
 		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
+		searchConsumer(),
 	},
 	"ticket.merged": {
 		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
+		searchConsumer(),
+	},
+	// Merging appends a system comment to the target ticket without changing
+	// the source's indexed fields further. This internal event exists solely
+	// to refresh the target document; it is not exposed to webhooks.
+	"ticket.merge_target_updated": {
+		searchConsumer(),
 	},
 	"ticket.tagged": {
 		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
+		searchConsumer(),
 	},
 	"ticket.untagged": {
 		{Name: ConsumerWebhook, TaskType: queue.TaskWebhookDispatch, Queue: queue.QueueDefault, MaxRetry: 5},
+		searchConsumer(),
 	},
 }
 

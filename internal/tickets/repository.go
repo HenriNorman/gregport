@@ -656,19 +656,25 @@ func (r *Repository) CreateComment(ctx context.Context, in CreateCommentInput) (
 			return fmt.Errorf("insert comment: %w", err)
 		}
 
-		// set first_response_at if this is the first public agent comment
-		if !in.IsInternal {
-			if _, err := tx.Exec(ctx,
-				`UPDATE tickets
-				 SET updated_at = now(),
-				     first_response_at = COALESCE(first_response_at, now())
-				 WHERE id = $1`,
-				ticketID,
-			); err != nil {
-				return fmt.Errorf("bump ticket: %w", err)
-			}
+		// Every comment changes the ticket's searchable text, so bump the
+		// version even for internal notes. That keeps the ticket version a
+		// truthful aggregate revision and lets the search index use external
+		// versioning. first_response_at is set by the first public agent
+		// comment only.
+		if _, err := tx.Exec(ctx,
+			`UPDATE tickets
+			 SET updated_at = now(),
+			     version = version + 1,
+			     first_response_at = CASE
+			         WHEN $2 AND NOT $3 THEN COALESCE(first_response_at, now())
+			         ELSE first_response_at
+			     END
+			 WHERE id = $1`,
+			ticketID, in.Actor.ID != nil, in.IsInternal,
+		); err != nil {
+			return fmt.Errorf("bump ticket: %w", err)
 		}
-		// customer comments have actor_user_id NULL and can't be watchers)
+		// customer comments have actor_user_id NULL and can't be watchers
 		if in.Actor.ID != nil {
 			if _, err := tx.Exec(ctx,
 				`INSERT INTO ticket_watchers (ticket_id, user_id) VALUES ($1, $2)
@@ -676,13 +682,6 @@ func (r *Repository) CreateComment(ctx context.Context, in CreateCommentInput) (
 				ticketID, *in.Actor.ID,
 			); err != nil {
 				return fmt.Errorf("auto-watch commenter: %w", err)
-			}
-		} else {
-			if _, err := tx.Exec(ctx,
-				`UPDATE tickets SET updated_at = now() WHERE id = $1`,
-				ticketID,
-			); err != nil {
-				return fmt.Errorf("bump ticket: %w", err)
 			}
 		}
 
@@ -1180,6 +1179,14 @@ func (r *Repository) AttachTag(ctx context.Context, orgID uuid.UUID, number int6
 			return nil
 		}
 
+		// Tags are indexed, so a tag change is a ticket revision.
+		if _, err := tx.Exec(ctx,
+			`UPDATE tickets SET version = version + 1, updated_at = now() WHERE id = $1`,
+			ticketID,
+		); err != nil {
+			return fmt.Errorf("bump ticket: %w", err)
+		}
+
 		return Record(ctx, tx, orgID, ticketID, actor, "ticket.tagged", map[string]any{
 			"tag": tagName,
 		})
@@ -1226,6 +1233,14 @@ func (r *Repository) DetachTag(ctx context.Context, orgID uuid.UUID, number int6
 		}
 		if tag.RowsAffected() == 0 {
 			return nil
+		}
+
+		// Tags are indexed, so a tag change is a ticket revision.
+		if _, err := tx.Exec(ctx,
+			`UPDATE tickets SET version = version + 1, updated_at = now() WHERE id = $1`,
+			ticketID,
+		); err != nil {
+			return fmt.Errorf("bump ticket: %w", err)
 		}
 
 		return Record(ctx, tx, orgID, ticketID, actor, "ticket.untagged", map[string]any{
@@ -1461,10 +1476,28 @@ func (r *Repository) MergeTickets(ctx context.Context, orgID uuid.UUID, sourceNu
 		); err != nil {
 			return fmt.Errorf("target comment: %w", err)
 		}
+		if err := tx.QueryRow(ctx,
+			`UPDATE tickets
+			 SET version = version + 1, updated_at = now()
+			 WHERE id = $1
+			 RETURNING version, updated_at`,
+			target.ID,
+		).Scan(&target.Version, &target.UpdatedAt); err != nil {
+			return fmt.Errorf("bump merge target: %w", err)
+		}
 
 		if err := Record(ctx, tx, orgID, source.ID, actor, "ticket.merged", map[string]any{
 			"into_number": target.Number,
 			"into_id":     target.ID.String(),
+		}); err != nil {
+			return err
+		}
+		// The target gained the "Merged from" system comment, which changes
+		// its searchable text. A separate internal event refreshes its
+		// document without sending the requester a customer-visible email.
+		if err := Record(ctx, tx, orgID, target.ID, actor, "ticket.merge_target_updated", map[string]any{
+			"from_number": source.Number,
+			"from_id":     source.ID.String(),
 		}); err != nil {
 			return err
 		}
