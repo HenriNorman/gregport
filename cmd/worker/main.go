@@ -27,6 +27,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/queue"
 	"github.com/HenriNorman/gregport/internal/ratings"
+	"github.com/HenriNorman/gregport/internal/realtime"
 	"github.com/HenriNorman/gregport/internal/search"
 	"github.com/HenriNorman/gregport/internal/storage"
 	"github.com/HenriNorman/gregport/internal/tickets"
@@ -278,8 +279,11 @@ func run() error {
 	}
 	var done []donePair
 
-	// The dispatcher turns committed outbox rows into queue jobs.
+	// The dispatcher turns committed outbox rows into queue jobs and live
+	// real-time events.
+	backplane := realtime.NewRedisBackplane(redisCache.Client())
 	dispatcher := outbox.NewDispatcher(pool, queueClient, logger, cfg.OutboxBatch, cfg.OutboxInterval)
+	dispatcher.SetPublisher(backplane)
 	dispatcherDone := make(chan struct{})
 	go func() {
 		dispatcher.Run(workerCtx)

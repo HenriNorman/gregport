@@ -37,6 +37,32 @@ type writeTracker struct {
 	wrote bool
 }
 
+// TimeoutExcept applies Timeout to every request except the exact paths
+// listed. Long-lived handlers such as Server-Sent Events must outlive the
+// normal request deadline.
+func TimeoutExcept(d time.Duration, paths ...string) func(http.Handler) http.Handler {
+	if len(paths) == 0 {
+		return Timeout(d)
+	}
+
+	skip := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		skip[p] = struct{}{}
+	}
+
+	withTimeout := Timeout(d)
+	return func(next http.Handler) http.Handler {
+		timed := withTimeout(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := skip[r.URL.Path]; ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+			timed.ServeHTTP(w, r)
+		})
+	}
+}
+
 func (tw *writeTracker) WriteHeader(code int) {
 	tw.wrote = true
 	tw.ResponseWriter.WriteHeader(code)

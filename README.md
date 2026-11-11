@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/HenriNorman/gregport/actions/workflows/ci.yml/badge.svg)](https://github.com/HenriNorman/gregport/actions/workflows/ci.yml)
 
-A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports organizations, users, memberships, tickets, comments, SLA policies, notifications, webhooks, and full-text search.
+A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports organizations, users, memberships, tickets, comments, SLA policies, notifications, webhooks, full-text search, and live ticket updates over Server-Sent Events.
 
 ---
 
@@ -45,6 +45,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Exports | Complete — asynchronous filtered CSV exports, keyset streaming into object storage with flat memory, completion email with a 24-hour link |
 | Customer erasure | Complete — idempotent org-scoped anonymisation that keeps ticket history and writes an audit row |
 | Search | Complete — PostgreSQL full-text baseline, Elasticsearch index with a mandatory org filter, highlights, `search_after` pagination, Postgres fallback, sync circuit breaker, zero-downtime reindex, and a measured latency comparison |
+| Real-time updates | Complete — SSE over Redis pub/sub, short-lived single-use stream tokens, `Last-Event-ID` replay from `ticket_events.seq`, typing indicators, slow-consumer drops, tenant isolation and a measured memory-per-connection figure |
 
 ### Authentication
 
@@ -565,6 +566,14 @@ The service layer depends on repository interfaces rather than concrete implemen
 </details>
 
 <details>
+<summary><code>cmd/streambench/</code> — SSE connection and memory benchmark</summary>
+
+- `main.go` — opens many real SSE connections against a running API and
+  reports RSS growth per idle connection.
+
+</details>
+
+<details>
 <summary><code>internal/auth/</code> — authentication and tokens</summary>
 
 - `models.go`
@@ -791,6 +800,19 @@ The service layer depends on repository interfaces rather than concrete implemen
 </details>
 
 <details>
+<summary><code>internal/realtime/</code> — resumable Server-Sent Events</summary>
+
+- `tokens.go` — org-bound single-use stream tokens stored in Redis.
+- `events.go` — wire event shape, org channel names and the agent-safe data allow-list.
+- `backplane.go` — Redis pub/sub publisher and per-org subscriptions.
+- `hub.go` — per-org connection registry, buffered writers, heartbeat, replay and slow-consumer drops.
+- `repository.go` — `ticket_events` replay by `(org_id, seq)` and org-scoped ticket checks.
+- `typing.go` — five-second typing key plus ephemeral event.
+- `handler.go` — `POST /v1/stream-tokens`, `GET /v1/stream` and `POST /v1/tickets/{number}/typing`.
+
+</details>
+
+<details>
 <summary><code>internal/worker/</code> — worker runtime</summary>
 
 - `health.go` — `/healthz` and `/readyz` (PostgreSQL, Redis cache and queue).
@@ -853,6 +875,13 @@ jobs:
 - The Elasticsearch index is not created by SQL: `cmd/reindex` or the worker
   bootstrap creates the concrete index and alias from the strict mapping in
   `internal/search/index.go`.
+
+`0011_realtime_stream` adds the resumable SSE cursor:
+
+- `ticket_events.seq` is assigned by a sequence, backfilled in
+  `(created_at, id)` order for existing rows, and indexed by `(org_id, seq)`.
+- The unique `seq` index and the non-null constraint keep the cursor monotonic;
+  new events get their value from the column default.
 
 ---
 
@@ -1054,6 +1083,11 @@ The application reads its configuration from environment variables.
 | `SERVER_IDLE_TIMEOUT` | No | `60s` | Go duration |
 | `REQUEST_TIMEOUT` | No | `10s` | Go duration; keep below `SERVER_WRITE_TIMEOUT` |
 | `SHUTDOWN_TIMEOUT` | No | `15s` | Go duration; keep above `REQUEST_TIMEOUT` |
+| `STREAM_TOKEN_TTL` | No | `30s` | Lifetime of a single-use SSE token |
+| `STREAM_HEARTBEAT_INTERVAL` | No | `20s` | SSE comment heartbeat; keep between 15s and 25s for proxy keep-alive |
+| `STREAM_BUFFER_SIZE` | No | `64` | Per-connection event buffer; a full buffer drops the slow client |
+| `STREAM_REPLAY_BATCH` | No | `200` | Rows read per replay page after `Last-Event-ID` |
+| `TYPING_INDICATOR_TTL` | No | `5s` | How long a typing key survives without a fresh event |
 | `REDIS_ADDR` | No | `localhost:6379` | Redis host and port |
 | `REDIS_PASSWORD` | No | — | Redis password |
 | `REDIS_DB` | No | `0` | Redis logical database |
@@ -1149,6 +1183,8 @@ reported together. In particular:
   with basic auth.
 - `MAX_ATTACHMENT_BYTES` must be at least one; uploads above it are rejected
   before any URL is issued.
+- Stream settings must be positive: token TTL, heartbeat interval, typing TTL,
+  buffer size, and replay batch.
 - The worker reads the shared database/Redis variables plus the `WORKER_*`
   knobs. It does not require `JWT_SECRET`, because it never authenticates users,
   but it does require `RATING_TOKEN_SECRET` so solved-ticket email can sign
@@ -2046,6 +2082,148 @@ needs no extra service, and keeps search working when Elasticsearch is down.
 
 ---
 
+## Real-time Updates
+
+Agents see ticket changes live over Server-Sent Events (SSE). SSE is
+one-directional, reconnects automatically in the browser, and passes through
+ordinary HTTP proxies; WebSocket is reserved for genuinely bidirectional
+features such as live customer chat, which is not implemented. Typing, the one
+small upstream signal, uses a plain POST instead.
+
+| Endpoint | Purpose |
+|:--|:--|
+| `POST /v1/stream-tokens` | Mint a short-lived single-use token for `EventSource` |
+| `GET /v1/stream?token=` | The caller's org event stream |
+| `POST /v1/tickets/{number}/typing` | Ephemeral typing indicator |
+
+### Opening a stream
+
+`EventSource` cannot send an `Authorization` header, and putting the access
+token in a URL leaks it into proxy logs. An authenticated call to
+`POST /v1/stream-tokens` stores a random 32-byte token in Redis with the
+principal and a 30 second TTL. `GET /v1/stream` consumes it with Redis `GETDEL`,
+so even a leaked URL only works once. The token is bound to one org; the stream
+never accepts an org from the query string.
+
+```js
+const { token } = await fetch("/v1/stream-tokens", {
+  method: "POST",
+  headers: { Authorization: `Bearer ${accessToken}` },
+}).then((r) => r.json());
+
+const events = new EventSource(`/v1/stream?token=${encodeURIComponent(token)}`);
+events.addEventListener("ticket", (e) => {
+  const update = JSON.parse(e.data); // { seq, type, ticket_id, ticket_number, data, ... }
+  applyTicketUpdate(update);
+});
+events.addEventListener("typing", (e) => {
+  showTyping(JSON.parse(e.data));
+});
+```
+
+### Hub and backplane
+
+Each API instance runs an in-process hub with a registry of connections per
+org. A connection gets a buffered channel and the handler goroutine is its only
+writer. Broadcasting takes the registry lock briefly and performs non-blocking
+sends; if a connection's buffer is full, that connection is closed and removed.
+The client reconnects and replays, so a slow reader cannot delay anyone else.
+
+Live events move through Redis pub/sub on `org:{id}:events`. The outbox
+dispatcher publishes after it claims a committed `ticket_events` row, so a
+write handled by any instance reaches clients connected to any other instance.
+Each API instance subscribes only to orgs that currently have a local
+connection, and drops the subscription when the last one leaves. Redis pub/sub
+is not durable; the events table is the recovery path.
+
+A comment heartbeat is written every 20 seconds (`STREAM_HEARTBEAT_INTERVAL`,
+kept between 15 and 25 seconds) to keep idle proxies from closing the
+connection.
+
+### Resuming with `Last-Event-ID`
+
+Migration `0011_realtime_stream` adds a monotonic `seq` column to
+`ticket_events`, backed by a sequence and indexed by `(org_id, seq)`. Every SSE
+ticket frame uses that seq as its `id`. On reconnect the browser sends
+`Last-Event-ID`; the handler subscribes to the live channel first, replays
+`ticket_events` where `seq > Last-Event-ID` in pages, then continues live. The
+subscription is established before the replay query so no event can fall into
+the gap. Delivery is at-least-once: a small per-connection sequence window
+suppresses the overlap between replay and live delivery, and clients should key
+updates by `seq` or `event_id`. Publish order can differ from seq order by a
+few positions because seq is assigned inside the writing transaction; a client
+that reconnects from the highest id it has seen simply receives a harmless
+duplicate rather than losing an event. Replay is bounded by
+`TICKET_EVENT_RETENTION`; a client offline longer than the retention window
+must refetch the ticket instead.
+
+### Timeouts and shutdown
+
+SSE handlers outlive the normal request deadline. The `/v1/stream` path is
+excluded from `REQUEST_TIMEOUT` and the handler clears the server write
+deadline with `http.NewResponseController(w).SetWriteDeadline(time.Time{})`.
+The hub sets a fresh per-write deadline instead, so a client that stops reading
+cannot pin a writer forever.
+
+On `SIGTERM`, the API cancels the shared hub context before calling
+`srv.Shutdown`. Every stream handler returns, so the drain finishes within the
+shutdown deadline instead of waiting for connections that never close on their
+own. The shutdown test covers this path explicitly.
+
+### Tenant isolation and payload safety
+
+The hub only knows the org bound to the consumed stream token. Event payloads
+are filtered through an explicit per-event allow-list before they are published
+or replayed, so internal fields added to a `ticket_events` row later are not
+exposed accidentally. A ticket in another org returns `404` from the typing
+endpoint, and two orgs connected to the same instance never receive each
+other's events.
+
+### Typing
+
+`POST /v1/tickets/{number}/typing` verifies the ticket belongs to the caller's
+org, writes `realtime:typing:{org}:{number}:{actor}` with a 5 second TTL, and
+publishes a `typing` event. Clients show the indicator until events stop for
+five seconds; there is no separate "stopped" message.
+
+### Measuring idle connections
+
+`cmd/streambench` logs in (or accepts a JWT), opens many real SSE connections,
+and reports the API process's RSS growth per connection:
+
+```bash
+go run ./cmd/streambench \
+  -base-url http://localhost:8080 \
+  -email bench@example.com -password '...' \
+  -connections 2000 -concurrency 50 -hold 10s \
+  -server-pid "$(pgrep -f 'cmd/api')"
+```
+
+Raise `RATE_LIMIT_REQUESTS` for the benchmark run; token minting is an
+authenticated request, and the default budget is 100 per minute.
+
+**Results.** Measured on 2026-11-11 on one local machine (Linux amd64, 8
+vCPUs, Go 1.27.2) with PostgreSQL 16 and Redis 7 in Docker and the API running
+as a local process. RSS was sampled from `/proc/<pid>/status` immediately
+before opening the connections and 500 ms after they were all open. Each run
+used a fresh API process.
+
+| Connections | Open time | RSS before | RSS after | Delta | Per connection |
+|--:|--:|--:|--:|--:|--:|
+| 2,000 | 508 ms | 22.1 MB | 130.9 MB | 108.8 MB | 54.4 kB |
+| 5,000 | 1.16 s | 22.0 MB | 281.7 MB | 259.7 MB | 52.0 kB |
+
+The marginal cost is stable at roughly 52 kB per idle stream. That number
+includes the goroutine stack, the 64-event channel buffer, the HTTP server's
+read/write buffers, and Go allocator slack; RSS is not returned to the OS
+immediately when connections close, so compare runs started from a fresh
+process. At this rate 10,000 idle streams need about 520 MB of RSS, before
+accounting for live event traffic. Reduce `STREAM_BUFFER_SIZE` if the workload
+is bursty but each organisation has many connections, at the cost of dropping
+slow clients sooner.
+
+---
+
 ## Logging
 
 The API writes structured JSON to stdout using `log/slog`, at the level set by
@@ -2094,16 +2272,22 @@ expires:
 `REQUEST_TIMEOUT` should stay below `SERVER_WRITE_TIMEOUT`. The server write
 timeout remains the hard stop for a handler that ignores context cancellation.
 
+`GET /v1/stream` is the deliberate exception. SSE connections are long-lived,
+so the path is skipped by the request-timeout middleware; the handler clears
+the server write deadline and the hub applies a fresh per-write deadline. Every
+other route keeps the normal deadline.
+
 ---
 
 ## Graceful Shutdown
 
 On `SIGTERM` or `SIGINT` the server:
 
-1. stops accepting new connections;
-2. waits up to `SHUTDOWN_TIMEOUT` (default `15s`) for in-flight requests;
-3. closes the database pool;
-4. exits with status `0`.
+1. cancels the real-time hub, so every SSE handler returns;
+2. stops accepting new connections;
+3. waits up to `SHUTDOWN_TIMEOUT` (default `15s`) for in-flight requests;
+4. closes the database pool;
+5. exits with status `0`.
 
 If the deadline expires, remaining connections are closed and the process
 exits non-zero. Keep `SHUTDOWN_TIMEOUT` above `REQUEST_TIMEOUT` so active
@@ -2225,6 +2409,16 @@ and adds a comment; an illegal status transition in a macro returns `422`
 - Out-of-order index jobs: an older external version cannot overwrite a newer document; version conflicts are treated as success.
 - Tenant-safe deletes: deleting with a foreign `org_id` is a no-op, and deleting a missing document is success.
 - Index lifecycle: bootstrap creates the mapping and alias, alias swap is atomic, and reindex derives a fresh generation.
+
+**Real-time**
+
+- Stream tokens are org-bound, single-use (`GETDEL`), and expire after their TTL; a reused or expired token returns `401`.
+- Two hubs sharing one Redis both receive an event published by either instance, including events with no seq (typing).
+- Reconnecting with `Last-Event-ID` sends only events after that seq, then switches to live delivery; duplicate seqs are suppressed.
+- Two orgs connected to the same hub never cross-deliver; the replay query and typing check are org-scoped.
+- A connection whose buffer fills is dropped without blocking the fan-out; heartbeats are sent on an idle connection.
+- The last connection to leave an org closes its Redis subscription.
+- The shutdown test proves the hub hook releases a long-lived stream handler before `srv.Shutdown`.
 
 **Audit**
 

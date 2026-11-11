@@ -34,6 +34,14 @@ type Config struct {
 	RequestTimeout          time.Duration
 	ShutdownTimeout         time.Duration
 
+	// Real-time streams. Tokens are short-lived and single-use; the heartbeat
+	// keeps proxies from closing an idle SSE connection.
+	StreamTokenTTL          time.Duration
+	StreamHeartbeatInterval time.Duration
+	StreamBufferSize        int
+	StreamReplayBatch       int
+	TypingTTL               time.Duration
+
 	RedisAddr         string
 	RedisPassword     string
 	RedisDB           int
@@ -112,6 +120,12 @@ func Load() (Config, error) {
 		ServerIdleTimeout:       60 * time.Second,
 		RequestTimeout:          10 * time.Second,
 		ShutdownTimeout:         15 * time.Second,
+
+		StreamTokenTTL:          30 * time.Second,
+		StreamHeartbeatInterval: 20 * time.Second,
+		StreamBufferSize:        64,
+		StreamReplayBatch:       200,
+		TypingTTL:               5 * time.Second,
 
 		RedisAddr:         getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPassword:     os.Getenv("REDIS_PASSWORD"),
@@ -206,6 +220,9 @@ func Load() (Config, error) {
 		{"SERVER_IDLE_TIMEOUT", &cfg.ServerIdleTimeout, false},
 		{"REQUEST_TIMEOUT", &cfg.RequestTimeout, true},
 		{"SHUTDOWN_TIMEOUT", &cfg.ShutdownTimeout, false},
+		{"STREAM_TOKEN_TTL", &cfg.StreamTokenTTL, false},
+		{"STREAM_HEARTBEAT_INTERVAL", &cfg.StreamHeartbeatInterval, false},
+		{"TYPING_INDICATOR_TTL", &cfg.TypingTTL, false},
 	}
 	for _, d := range durations {
 		value, err := envDuration(d.name, *d.dst, d.allowZero)
@@ -259,6 +276,8 @@ func Load() (Config, error) {
 		{"LOGIN_RATE_LIMIT_REQUESTS", &cfg.LoginRateLimitRequests, 1},
 		{"RATING_RATE_LIMIT_REQUESTS", &cfg.RatingRateLimitRequests, 1},
 		{"MAX_ATTACHMENT_BYTES", &cfg.MaxAttachmentBytes, 1},
+		{"STREAM_BUFFER_SIZE", &cfg.StreamBufferSize, 1},
+		{"STREAM_REPLAY_BATCH", &cfg.StreamReplayBatch, 1},
 	}
 	for _, n := range ints {
 		value, err := envInt(n.name, *n.dst, n.min)

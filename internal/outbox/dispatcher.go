@@ -19,6 +19,7 @@ import (
 
 	"github.com/HenriNorman/gregport/internal/platform/database"
 	"github.com/HenriNorman/gregport/internal/queue"
+	"github.com/HenriNorman/gregport/internal/realtime"
 )
 
 // Consumer names are part of the deterministic task ID.
@@ -159,13 +160,15 @@ func emailEventDataAllows(ev Event) bool {
 
 // Event is one claimed outbox row.
 type Event struct {
-	ID        uuid.UUID
-	OrgID     uuid.UUID
-	TicketID  uuid.UUID
-	EventType string
-	ActorID   uuid.UUID
-	Data      []byte
-	CreatedAt time.Time
+	ID           uuid.UUID
+	Seq          int64
+	OrgID        uuid.UUID
+	TicketID     uuid.UUID
+	TicketNumber int64
+	EventType    string
+	ActorID      uuid.UUID
+	Data         []byte
+	CreatedAt    time.Time
 }
 
 // EventJob is the JSON payload handed to every consumer.
@@ -185,11 +188,12 @@ type Enqueuer interface {
 
 // Dispatcher drains the outbox in bounded batches.
 type Dispatcher struct {
-	pool     *pgxpool.Pool
-	enqueuer Enqueuer
-	logger   *slog.Logger
-	batch    int
-	interval time.Duration
+	pool      *pgxpool.Pool
+	enqueuer  Enqueuer
+	publisher realtime.Publisher
+	logger    *slog.Logger
+	batch     int
+	interval  time.Duration
 }
 
 // NewDispatcher creates a dispatcher. Batch and interval fall back to safe
@@ -211,6 +215,13 @@ func NewDispatcher(pool *pgxpool.Pool, enqueuer Enqueuer, logger *slog.Logger, b
 		batch:    batch,
 		interval: interval,
 	}
+}
+
+// SetPublisher enables live real-time delivery. Publishing is best-effort: a
+// Redis failure must not roll back email, notification or webhook jobs, and a
+// reconnecting client recovers the event from ticket_events.
+func (d *Dispatcher) SetPublisher(p realtime.Publisher) {
+	d.publisher = p
 }
 
 // Run polls until ctx is cancelled. Errors are logged and retried on the next
@@ -268,12 +279,16 @@ func (d *Dispatcher) claimAndEnqueue(ctx context.Context) ([]Event, error) {
 
 	err := database.WithTx(ctx, d.pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
-			`SELECT id, org_id, ticket_id, event_type, actor_id, data, created_at
-			 FROM ticket_events
-			 WHERE dispatched_at IS NULL
-			 ORDER BY created_at, id
+			`SELECT te.id, te.seq, te.org_id, te.ticket_id,
+			        COALESCE(t.number, 0), te.event_type,
+			        COALESCE(te.actor_id, '00000000-0000-0000-0000-000000000000'::uuid),
+			        te.data, te.created_at
+			 FROM ticket_events te
+			 LEFT JOIN tickets t ON t.id = te.ticket_id
+			 WHERE te.dispatched_at IS NULL
+			 ORDER BY te.created_at, te.id
 			 LIMIT $1
-			 FOR UPDATE SKIP LOCKED`,
+			 FOR UPDATE OF te SKIP LOCKED`,
 			d.batch,
 		)
 		if err != nil {
@@ -283,7 +298,11 @@ func (d *Dispatcher) claimAndEnqueue(ctx context.Context) ([]Event, error) {
 		claimed = claimed[:0]
 		for rows.Next() {
 			var ev Event
-			if err := rows.Scan(&ev.ID, &ev.OrgID, &ev.TicketID, &ev.EventType, &ev.ActorID, &ev.Data, &ev.CreatedAt); err != nil {
+			if err := rows.Scan(
+				&ev.ID, &ev.Seq, &ev.OrgID, &ev.TicketID,
+				&ev.TicketNumber, &ev.EventType, &ev.ActorID,
+				&ev.Data, &ev.CreatedAt,
+			); err != nil {
 				rows.Close()
 				return fmt.Errorf("scan outbox row: %w", err)
 			}
@@ -306,6 +325,8 @@ func (d *Dispatcher) claimAndEnqueue(ctx context.Context) ([]Event, error) {
 				}
 			}
 
+			d.publish(ctx, ev)
+
 			if _, err := tx.Exec(ctx,
 				`UPDATE ticket_events SET dispatched_at = now() WHERE id = $1`,
 				ev.ID,
@@ -320,6 +341,34 @@ func (d *Dispatcher) claimAndEnqueue(ctx context.Context) ([]Event, error) {
 		return nil, err
 	}
 	return claimed, nil
+}
+
+func (d *Dispatcher) publish(ctx context.Context, ev Event) {
+	if d.publisher == nil {
+		return
+	}
+
+	payload := realtime.Event{
+		Seq:          ev.Seq,
+		ID:           ev.ID,
+		Type:         ev.EventType,
+		TicketID:     ev.TicketID,
+		TicketNumber: ev.TicketNumber,
+		Data:         realtime.SafeData(ev.EventType, ev.Data),
+		CreatedAt:    ev.CreatedAt,
+	}
+	if ev.ActorID != uuid.Nil {
+		actorID := ev.ActorID
+		payload.ActorID = &actorID
+	}
+
+	if err := d.publisher.PublishEvent(ctx, ev.OrgID, payload); err != nil {
+		d.logger.Warn("realtime publish failed",
+			"event_id", ev.ID,
+			"org_id", ev.OrgID,
+			"error", err,
+		)
+	}
 }
 
 func jobFor(ev Event, consumer Consumer) (queue.Job, error) {

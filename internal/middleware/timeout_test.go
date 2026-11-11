@@ -13,6 +13,35 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/httpx"
 )
 
+func TestTimeoutExcept_SkipsOnlyConfiguredPath(t *testing.T) {
+	var buf bytes.Buffer
+	router := testRouter(&buf, func(r chi.Router) {
+		r.Use(TimeoutExcept(30*time.Millisecond, "/v1/stream"))
+		r.Get("/v1/stream", func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := r.Context().Deadline(); ok {
+				t.Error("stream context must not have a request deadline")
+			}
+			time.Sleep(60 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+		})
+		r.Get("/v1/other", func(_ http.ResponseWriter, r *http.Request) {
+			<-r.Context().Done()
+		})
+	})
+
+	stream := httptest.NewRecorder()
+	router.ServeHTTP(stream, httptest.NewRequest(http.MethodGet, "/v1/stream", nil))
+	if stream.Code != http.StatusOK {
+		t.Fatalf("stream status: %d", stream.Code)
+	}
+
+	other := httptest.NewRecorder()
+	router.ServeHTTP(other, httptest.NewRequest(http.MethodGet, "/v1/other", nil))
+	if other.Code != http.StatusServiceUnavailable {
+		t.Fatalf("other status: %d", other.Code)
+	}
+}
+
 func TestTimeout_FastRequestPassesThrough(t *testing.T) {
 	var buf bytes.Buffer
 	router := testRouter(&buf, func(r chi.Router) {

@@ -111,6 +111,53 @@ func TestRunServer_GracefulShutdownWaitsForInflight(t *testing.T) {
 	}
 }
 
+func TestRunServer_ShutdownHookReleasesLongLivedHandler(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	hookCalled := make(chan struct{})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/stream", func(_ http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+	})
+
+	ln := newListener(t)
+	errCh := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		errCh <- runServer(ctx, &http.Server{Handler: mux}, ln, time.Second, discardLogger(), func() {
+			close(hookCalled)
+			close(release)
+		})
+	}()
+
+	go func() {
+		resp, err := http.Get("http://" + ln.Addr().String() + "/stream")
+		if err == nil {
+			resp.Body.Close()
+		}
+	}()
+
+	waitFor(t, started, "stream handler did not start")
+	cancel()
+
+	select {
+	case <-hookCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown hook did not run")
+	}
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("runServer: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runServer did not return after the stream handler was released")
+	}
+}
+
 func TestRunServer_ShutdownTimeout(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})

@@ -464,6 +464,14 @@ definitions:
         example: 1042
         type: integer
     type: object
+  realtime.StreamTokenResponse:
+    properties:
+      expires_at:
+        type: string
+      token:
+        example: Vt3...
+        type: string
+    type: object
   search.HighlightsDTO:
     properties:
       comments:
@@ -2658,6 +2666,59 @@ paths:
       summary: Update an SLA policy
       tags:
       - sla
+  /v1/stream:
+    get:
+      description: Server-Sent Events for the org bound to the stream token. The token
+        is single-use and passed in the query string because EventSource cannot set
+        headers. Each ticket event uses its ticket_events seq as the SSE id; reconnect
+        with Last-Event-ID to replay only the missed events. A comment heartbeat is
+        sent every 20 seconds.
+      parameters:
+      - description: Single-use token from POST /v1/stream-tokens
+        in: query
+        name: token
+        required: true
+        type: string
+      - description: Last seq the client received
+        in: header
+        name: Last-Event-ID
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE stream
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      summary: Live ticket stream
+      tags:
+      - realtime
+  /v1/stream-tokens:
+    post:
+      description: EventSource cannot send an Authorization header, so an authenticated
+        call mints a random token that is valid for 30 seconds and can be used once.
+        The token is bound to the caller's org; the stream can never read another
+        tenant's events.
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/realtime.StreamTokenResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Issue a stream token
+      tags:
+      - realtime
   /v1/tags:
     get:
       description: Any member of the org may list tags.
@@ -3614,6 +3675,39 @@ paths:
       summary: Attach a tag to a ticket
       tags:
       - tags
+  /v1/tickets/{number}/typing:
+    post:
+      description: Sets a 5 second Redis key and publishes a typing event to the org
+        stream. Clients show the indicator until events stop arriving. A ticket in
+        another org returns 404.
+      parameters:
+      - description: Per-org ticket number
+        in: path
+        name: number
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpx.APIError'
+      security:
+      - BearerAuth: []
+      summary: Signal that an agent is typing
+      tags:
+      - realtime
   /v1/tickets/{number}/watchers/{userId}:
     delete:
       description: 'Any member of the org may remove a watcher. Idempotent: removing

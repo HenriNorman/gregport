@@ -24,7 +24,9 @@ func newServer(cfg config.Config, handler http.Handler) *http.Server {
 }
 
 // runServer serves until ctx is cancelled, then drains in-flight requests.
-func runServer(ctx context.Context, srv *http.Server, ln net.Listener, shutdownTimeout time.Duration, logger *slog.Logger) error {
+// Shutdown hooks run before srv.Shutdown so long-lived handlers (SSE) can
+// return instead of holding the drain open until the timeout.
+func runServer(ctx context.Context, srv *http.Server, ln net.Listener, shutdownTimeout time.Duration, logger *slog.Logger, beforeShutdown ...func()) error {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- srv.Serve(ln)
@@ -38,6 +40,12 @@ func runServer(ctx context.Context, srv *http.Server, ln net.Listener, shutdownT
 		return err
 	case <-ctx.Done():
 		logger.Info("shutting down", "timeout", shutdownTimeout.String())
+
+		for _, hook := range beforeShutdown {
+			if hook != nil {
+				hook()
+			}
+		}
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()

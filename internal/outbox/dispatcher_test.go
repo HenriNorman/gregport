@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/HenriNorman/gregport/internal/queue"
+	"github.com/HenriNorman/gregport/internal/realtime"
 )
 
 type recordingEnqueuer struct {
@@ -445,6 +446,87 @@ func TestDispatcherDefaults(t *testing.T) {
 	}
 	if d.logger == nil {
 		t.Fatal("logger must default")
+	}
+}
+
+type recordingPublisher struct {
+	mu     sync.Mutex
+	events []realtime.Event
+	orgIDs []uuid.UUID
+	err    error
+}
+
+func (r *recordingPublisher) PublishEvent(_ context.Context, orgID uuid.UUID, ev realtime.Event) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.err != nil {
+		return r.err
+	}
+	r.events = append(r.events, ev)
+	r.orgIDs = append(r.orgIDs, orgID)
+	return nil
+}
+
+func (r *recordingPublisher) snapshot() ([]realtime.Event, []uuid.UUID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]realtime.Event(nil), r.events...), append([]uuid.UUID(nil), r.orgIDs...)
+}
+
+func TestDispatchPublishesAgentSafeRealtimeEvent(t *testing.T) {
+	pool := dispatcherTestPool(t)
+	orgID, ticketID := seedOutboxTicket(t, pool)
+	seedEvent(t, pool, orgID, ticketID, "ticket.created", `{"number":1,"priority":"high","internal_note":"secret"}`)
+
+	publisher := &recordingPublisher{}
+	d := NewDispatcher(pool, &recordingEnqueuer{}, nil, 100, time.Second)
+	d.SetPublisher(publisher)
+
+	if _, err := d.DispatchOnce(context.Background()); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	events, orgs := publisher.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("published events: %d", len(events))
+	}
+	if len(orgs) != 1 || orgs[0] != orgID {
+		t.Fatalf("published org: %v", orgs)
+	}
+	ev := events[0]
+	if ev.Seq <= 0 {
+		t.Fatalf("event seq: %d", ev.Seq)
+	}
+	if ev.TicketID != ticketID || ev.TicketNumber != 1 || ev.Type != "ticket.created" {
+		t.Fatalf("event: %+v", ev)
+	}
+	if string(ev.Data) != `{"number":1,"priority":"high"}` {
+		t.Fatalf("safe data: %s", ev.Data)
+	}
+}
+
+func TestDispatchContinuesWhenRealtimePublishFails(t *testing.T) {
+	pool := dispatcherTestPool(t)
+	orgID, ticketID := seedOutboxTicket(t, pool)
+	seedEvent(t, pool, orgID, ticketID, "ticket.created", `{"number":1}`)
+
+	enqueuer := &recordingEnqueuer{}
+	publisher := &recordingPublisher{err: errors.New("redis down")}
+	d := NewDispatcher(pool, enqueuer, nil, 100, time.Second)
+	d.SetPublisher(publisher)
+
+	n, err := d.DispatchOnce(context.Background())
+	if err != nil {
+		t.Fatalf("dispatch must not fail on a realtime publish error: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("dispatched: %d", n)
+	}
+	if len(enqueuer.snapshot()) == 0 {
+		t.Fatal("jobs were not enqueued")
+	}
+	if _, undispatched := countUnscopedEvents(t, pool, orgID); undispatched != 0 {
+		t.Fatalf("undispatched events: %d", undispatched)
 	}
 }
 

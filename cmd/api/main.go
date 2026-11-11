@@ -32,6 +32,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/ratelimit"
 	"github.com/HenriNorman/gregport/internal/queue"
 	"github.com/HenriNorman/gregport/internal/ratings"
+	"github.com/HenriNorman/gregport/internal/realtime"
 	"github.com/HenriNorman/gregport/internal/search"
 	"github.com/HenriNorman/gregport/internal/sla"
 	"github.com/HenriNorman/gregport/internal/storage"
@@ -265,6 +266,19 @@ func main() {
 	searchSvc := search.NewService(search.NewFallbackBackend(elasticBackend, searchRepo))
 	searchHandler := search.NewHandler(searchSvc)
 
+	// real-time wiring (SSE over Redis pub/sub)
+	realtimeRepo := realtime.NewRepository(pool)
+	realtimeBackplane := realtime.NewRedisBackplane(redisCache.Client())
+	streamTokens := realtime.NewTokenStore(redisCache.Client(), cfg.StreamTokenTTL)
+	streamHub := realtime.NewHub(realtimeBackplane, realtimeRepo, logger, realtime.HubOptions{
+		Heartbeat:   cfg.StreamHeartbeatInterval,
+		BufferSize:  cfg.StreamBufferSize,
+		ReplayBatch: cfg.StreamReplayBatch,
+	})
+	defer streamHub.Close()
+	typingSvc := realtime.NewTypingService(realtimeRepo, redisCache, realtimeBackplane, cfg.TypingTTL)
+	realtimeHandler := realtime.NewHandler(streamTokens, streamHub, typingSvc, logger)
+
 	// idempotency wiring (PostgreSQL-backed store, not Redis)
 	idempotencyRepo := idempotency.NewRepository(pool)
 	idempotencyCfg := middleware.IdempotencyConfig{
@@ -281,7 +295,9 @@ func main() {
 	r.Use(middleware.WithLogger(logger))
 	r.Use(middleware.RequestLogger())
 	r.Use(middleware.Recovery)
-	r.Use(middleware.Timeout(cfg.RequestTimeout))
+	// SSE connections outlive the normal request deadline; the stream handler
+	// manages its own per-write deadline.
+	r.Use(middleware.TimeoutExcept(cfg.RequestTimeout, "/v1/stream"))
 
 	r.Get("/healthz", health.Live)
 	r.Get("/readyz", health.Ready(pool, observedCache))
@@ -312,6 +328,10 @@ func main() {
 		inboundHandler := inboundemail.NewHandler(inboundSvc)
 		r.Post("/inbound/email", inboundHandler.Submit)
 
+		// Server-Sent Events authenticate with a single-use token in the query
+		// string because EventSource cannot set an Authorization header.
+		r.Get("/stream", realtimeHandler.Stream)
+
 		// protected
 		r.Group(func(r chi.Router) {
 			r.Use(auth.Authenticate(tm, ticketsSvc.AuthenticateAPIKey))
@@ -319,6 +339,7 @@ func main() {
 			r.Use(middleware.Idempotency(idempotencyCfg))
 
 			r.Get("/me", authHandler.Me)
+			r.Post("/stream-tokens", realtimeHandler.IssueStreamToken)
 
 			r.Route("/organization", func(r chi.Router) {
 				r.Get("/settings", organizationsHandler.GetSettings)
@@ -373,6 +394,7 @@ func main() {
 				r.Put("/{number}/watchers/{userId}", ticketsHandler.AddWatcher)
 				r.Delete("/{number}/watchers/{userId}", ticketsHandler.RemoveWatcher)
 				r.Get("/{number}/events", ticketsHandler.ListEvents)
+				r.Post("/{number}/typing", realtimeHandler.Typing)
 				r.Post("/{number}/comments", ticketsHandler.CreateComment)
 				r.Post("/{number}/merge", ticketsHandler.Merge)
 				r.Get("/{number}/comments", ticketsHandler.ListComments)
@@ -441,7 +463,7 @@ func main() {
 	defer stop()
 
 	logger.Info("listening", "port", cfg.AppPort)
-	if err := runServer(signalCtx, srv, ln, cfg.ShutdownTimeout, logger); err != nil {
+	if err := runServer(signalCtx, srv, ln, cfg.ShutdownTimeout, logger, streamHub.Close); err != nil {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
 	}

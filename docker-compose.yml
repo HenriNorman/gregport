@@ -21,6 +21,7 @@ services:
       - ./migrations/0008_inbound_email.up.sql:/docker-entrypoint-initdb.d/0008_inbound_email.sql:ro
       - ./migrations/0009_attachments_exports.up.sql:/docker-entrypoint-initdb.d/0009_attachments_exports.sql:ro
       - ./migrations/0010_search_baseline.up.sql:/docker-entrypoint-initdb.d/0010_search_baseline.sql:ro
+      - ./migrations/0011_realtime_stream.up.sql:/docker-entrypoint-initdb.d/0011_realtime_stream.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
