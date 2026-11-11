@@ -535,8 +535,32 @@ The service layer depends on repository interfaces rather than concrete implemen
 <details>
 <summary><code>cmd/worker/</code> — background worker entry point</summary>
 
-- `main.go` — worker initialization: config, logger, PostgreSQL, Redis, health server, the I/O and CPU asynq servers, the outbox dispatcher, the breach/auto-close/housekeeping schedulers and the email handler.
+- `main.go` — worker initialization: config, logger, PostgreSQL, Redis, health server, the I/O and CPU asynq servers, the outbox dispatcher, the breach/auto-close/housekeeping schedulers, the email handler and the search index handler.
 - `server.go` — health HTTP server with the same signal-driven graceful shutdown as the API.
+
+</details>
+
+<details>
+<summary><code>cmd/reindex/</code> — Elasticsearch index rebuild</summary>
+
+- `main.go` — pages all tickets from PostgreSQL, bulk-indexes a fresh
+  generation, refreshes once, swaps the alias and deletes the old index.
+
+</details>
+
+<details>
+<summary><code>cmd/seed/</code> — load-test data generator</summary>
+
+- `main.go` — COPY-based generator for organisations, customers, agents,
+  tags, tickets, comments and ticket tags.
+
+</details>
+
+<details>
+<summary><code>cmd/benchsearch/</code> — search latency benchmark</summary>
+
+- `main.go` — runs identical queries through the PostgreSQL and Elasticsearch
+  backends and reports p50/p95/mean latency.
 
 </details>
 
@@ -1831,9 +1855,9 @@ GET /v1/search?q=printer&status=open&tag=hardware&assignee=<uuid>&limit=25&curso
 | `limit` | Page size. Default `25`, maximum `100`. |
 | `cursor` | Opaque continuation token from `next_cursor`. |
 
-Each hit carries the canonical ticket fields plus `subject_highlight` and
-`comment_highlight`. Highlight values are HTML-safe: source text is escaped and
-only the matched terms are wrapped in `<mark>`.
+Each hit carries the canonical ticket fields plus a `highlights` object with
+`subject` and `comments` snippets. Highlight values are HTML-safe: source text
+is escaped and only the matched terms are wrapped in `<mark>`.
 
 ### PostgreSQL baseline
 
@@ -1853,8 +1877,9 @@ result is hydrated from PostgreSQL before it is returned.
 
 - Concrete indexes are `tickets-v1`, `tickets-v2`, ... and the stable alias is
   `tickets`. Searches and sync writes always target the alias.
-- Bootstrap creates `tickets-v1` and the alias when neither exists. The worker
-  logs a warning and continues if Elasticsearch is down at startup.
+- Bootstrap creates `tickets-v1` and the alias when neither exists. The API and
+  worker both bootstrap at startup and log a warning, then continue, if
+  Elasticsearch is down.
 - The mapping is `dynamic: strict`, so an accidental new field fails the write
   instead of silently bloating the index.
 
@@ -1929,7 +1954,7 @@ indexed field.
 |:--|:--|
 | Elasticsearch unavailable during a ticket write | The write succeeds. It commits to PostgreSQL and the outbox; no index call is made in the request path. |
 | Elasticsearch unavailable or index missing during search | Search falls back to the PostgreSQL backend and returns `200`. |
-| Both Elasticsearch and PostgreSQL unavailable | The PostgreSQL error is returned (a database outage is a `500`). The service maps search-backend unavailability to `503` when no fallback can serve the request. |
+| Both Elasticsearch and PostgreSQL unavailable | The PostgreSQL error is returned as a normal database failure (`500`); no further backend is tried. |
 | Elasticsearch returns a non-availability error (for example a bad query) | The error propagates as `5xx`; it is not hidden by a fallback. |
 | Index jobs fail repeatedly | Retries, then the circuit opens and jobs are skipped; the next successful probe resumes syncing. |
 | Index contains a stale or foreign document | Hydration drops it because PostgreSQL scopes by `org_id` and `deleted_at`. |
@@ -2117,7 +2142,7 @@ is listed below it, not a hidden requirement.
 
 ## Testing
 
-The project includes integration tests, authentication unit tests, logging and middleware tests, and security-focused token tests.
+The project includes integration tests, authentication unit tests, search tests, logging and middleware tests, and security-focused token tests.
 
 ### Running Tests
 
@@ -2133,15 +2158,17 @@ Run the entire test suite:
 go test -p 1 ./... -race -count=1
 ```
 
-Ticket tests are integration tests and require PostgreSQL. CI runs the same
-command against a fresh, migrated PostgreSQL 16 service. `-p 1` is deliberate:
-every integration package shares one database, and the outbox dispatcher claims
-rows globally, so running packages in parallel would let one package consume
-another's pending events.
+Ticket tests are integration tests and require PostgreSQL. Search backend and
+index-lifecycle tests also require Elasticsearch; they are skipped with
+`go test -short`, and CI starts a single-node cluster for the full run. `-p 1`
+is deliberate: every integration package shares one database, and the outbox
+dispatcher claims rows globally, so running packages in parallel would let one
+package consume another's pending events.
 
 ### Integration Tests
 
-These tests use a real PostgreSQL database.
+These tests use a real PostgreSQL database. Search backend tests also use a
+real Elasticsearch cluster.
 
 **Authentication**
 
@@ -2550,10 +2577,11 @@ The authentication cycle has also been verified end to end using `curl`:
 `.github/workflows/ci.yml` runs on pushes to `main`, pull requests, and manual
 dispatch. Every run:
 
-1. Starts PostgreSQL 16 as a service container and applies all
-   `migrations/*.up.sql` files in order.
+1. Starts PostgreSQL 16 and Redis as service containers, launches a single-node
+   Elasticsearch 8.15 container, then applies all `migrations/*.up.sql` files in
+   order.
 2. Checks that `go.mod` and `go.sum` are tidy, then runs `go vet ./...` and
-   `go test -p 1 ./... -race -count=1` against that real database.
+   `go test -p 1 ./... -race -count=1` against those real services.
 3. Validates the rendered Compose stack with `docker compose config --quiet`.
 4. Builds the production image.
 5. Checks that the image runs as UID/GID `10001`.

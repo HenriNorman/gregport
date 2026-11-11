@@ -67,6 +67,27 @@ jobs:
             psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d gregport -f "$f"
           done
 
+      - name: Start Elasticsearch
+        run: |
+          sudo sysctl -w vm.max_map_count=262144
+          docker run -d --name elasticsearch-ci \
+            -p 9200:9200 \
+            -e discovery.type=single-node \
+            -e xpack.security.enabled=false \
+            -e xpack.security.http.ssl.enabled=false \
+            -e xpack.security.transport.ssl.enabled=false \
+            -e ES_JAVA_OPTS="-Xms512m -Xmx512m" \
+            docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+          for _ in $(seq 1 60); do
+            if curl -fsS 'http://127.0.0.1:9200/_cluster/health?wait_for_status=yellow&timeout=5s' >/dev/null; then
+              echo "elasticsearch is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs elasticsearch-ci
+          exit 1
+
       - name: Check module files
         run: go mod tidy -diff
 
