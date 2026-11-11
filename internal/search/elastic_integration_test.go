@@ -70,6 +70,15 @@ func TestElasticBackendIntegration(t *testing.T) {
 		{
 			id: uuid.New(),
 			doc: esTicketDoc{
+				OrgID: orgA.String(), Number: 4, Subject: "Printer offline on floor one",
+				CommentsText: "The printer is disconnected from the network",
+				Status:       "open", Priority: "normal",
+				RequesterEmail: "a@example.com", CreatedAt: base.Add(2 * time.Minute), UpdatedAt: base.Add(2 * time.Minute), Version: 1,
+			},
+		},
+		{
+			id: uuid.New(),
+			doc: esTicketDoc{
 				OrgID: orgB.String(), Number: 1, Subject: "Printer failure elsewhere",
 				CommentsText: "same words, different tenant",
 				Status:       "open", Priority: "normal",
@@ -149,7 +158,7 @@ func TestElasticBackendIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("search: %v", err)
 		}
-		if len(res.Hits) != 1 || res.Hits[0].ID != docs[2].id {
+		if len(res.Hits) != 1 || res.Hits[0].ID != docs[3].id {
 			t.Fatalf("org B hits = %+v", res.Hits)
 		}
 	})
@@ -173,8 +182,38 @@ func TestElasticBackendIntegration(t *testing.T) {
 			}
 			cursor = res.NextCursor
 		}
+		if len(seen) != 3 {
+			t.Fatalf("pagination saw %d org A tickets, want 3", len(seen))
+		}
+	})
+
+	// Scored pagination must be stable even when two hits have the same or
+	// very similar scores. The cursor carries the raw sort tuple
+	// (score, created_at, number), so no page can skip or repeat a hit.
+	t.Run("scored pagination is stable", func(t *testing.T) {
+		seen := map[uuid.UUID]bool{}
+		cursor := ""
+		for page := 0; page < 5; page++ {
+			res, err := svc.Search(ctx, pA, Filter{Query: "printer", Limit: 1, Cursor: cursor})
+			if err != nil {
+				t.Fatalf("page %d: %v", page, err)
+			}
+			if len(res.Hits) > 1 {
+				t.Fatalf("page %d returned %d hits, want at most 1", page, len(res.Hits))
+			}
+			for _, h := range res.Hits {
+				if seen[h.ID] {
+					t.Fatalf("duplicate hit %s", h.ID)
+				}
+				seen[h.ID] = true
+			}
+			if res.NextCursor == "" {
+				break
+			}
+			cursor = res.NextCursor
+		}
 		if len(seen) != 2 {
-			t.Fatalf("pagination saw %d org A tickets, want 2", len(seen))
+			t.Fatalf("scored pagination saw %d tickets, want 2", len(seen))
 		}
 	})
 }

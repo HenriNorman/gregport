@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +118,85 @@ func TestESDocumentIndexerIntegration(t *testing.T) {
 	if err := indexer.DeleteTicket(ctx, orgID, id, 4); err != nil {
 		t.Fatalf("delete missing doc: %v", err)
 	}
+}
+
+// TestESDocumentIndexerRefreshWaitFor proves that index and delete writes are
+// visible to search immediately after the call returns, without a manual
+// refresh. This is what refresh=wait_for buys: documented consistency is "a
+// search or two later, within ~1s", not "after an operator refreshes".
+func TestESDocumentIndexerRefreshWaitFor(t *testing.T) {
+	client := integrationESClient(t)
+	manager := NewIndexManager(client)
+	ctx := context.Background()
+	if err := manager.Bootstrap(ctx); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	target, err := manager.AliasTarget(ctx)
+	if err != nil {
+		t.Fatalf("alias target: %v", err)
+	}
+	t.Cleanup(func() { _ = manager.DeleteIndex(context.Background(), target) })
+
+	indexer := NewESDocumentIndexer(client)
+	orgID := uuid.New()
+	id := uuid.New()
+	token := "waitfor" + uuid.NewString()[:8]
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	doc := TicketDocument{
+		ID: id, OrgID: orgID, Number: 1,
+		Subject:      token + " printer jam",
+		CommentsText: "the printer jams again " + token,
+		Status:       "open", Priority: "high",
+		RequesterEmail: "waitfor@example.com",
+		CreatedAt:      now, UpdatedAt: now, Version: 1,
+	}
+	if err := indexer.IndexTicket(ctx, doc); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	if got := countSubjectHits(t, client, token); got != 1 {
+		t.Fatalf("immediately after index, hits = %d, want 1 (refresh=wait_for)", got)
+	}
+
+	if err := indexer.DeleteTicket(ctx, orgID, id, 2); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if got := countSubjectHits(t, client, token); got != 0 {
+		t.Fatalf("immediately after delete, hits = %d, want 0 (refresh=wait_for)", got)
+	}
+}
+
+// countSubjectHits runs a match query on the subject field without an explicit
+// refresh, so it observes exactly what a search request would see.
+func countSubjectHits(t *testing.T, client *Client, token string) int {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"query": map[string]any{"match": map[string]any{"subject": token}},
+	})
+	if err != nil {
+		t.Fatalf("marshal query: %v", err)
+	}
+	res, err := client.ES().Search(
+		client.ES().Search.WithContext(context.Background()),
+		client.ES().Search.WithIndex(client.Alias()),
+		client.ES().Search.WithBody(strings.NewReader(string(body))),
+	)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	defer res.Body.Close()
+	if err := ResponseError(res); err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	var payload struct {
+		Hits struct {
+			Hits []json.RawMessage `json:"hits"`
+		} `json:"hits"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode search: %v", err)
+	}
+	return len(payload.Hits.Hits)
 }
 
 func TestESDocumentIndexerRejectsInvalidDocuments(t *testing.T) {
