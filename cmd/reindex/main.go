@@ -18,7 +18,10 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 
@@ -85,7 +88,10 @@ func main() {
 		logger.Info("current alias target", "index", oldIndex)
 	}
 
-	newIndex := esClient.IndexName("v2")
+	newIndex := nextIndexName(esClient, oldIndex)
+	if newIndex == oldIndex {
+		log.Fatalf("refusing to reindex into the current alias target %q", oldIndex)
+	}
 	exists, err := indexMgr.IndexExists(ctx, newIndex)
 	if err != nil {
 		log.Fatalf("check new index: %v", err)
@@ -123,6 +129,23 @@ func main() {
 	}
 
 	logger.Info("reindex finished successfully")
+}
+
+// nextIndexName picks a fresh concrete index name for the rebuild. When the
+// current alias target is "tickets-vN", the next generation is "tickets-vN+1";
+// otherwise it falls back to a timestamped name. This makes reindex repeatable
+// without ever deleting the index that is currently serving searches.
+func nextIndexName(client *search.Client, current string) string {
+	prefix := client.Alias() + "-v"
+	if strings.HasPrefix(current, prefix) {
+		if n, err := strconv.Atoi(strings.TrimPrefix(current, prefix)); err == nil && n >= 0 {
+			return client.IndexName("v" + strconv.Itoa(n+1))
+		}
+	}
+	if current == "" {
+		return client.IndexName("v1")
+	}
+	return client.IndexName("reindex-" + strconv.FormatInt(time.Now().Unix(), 10))
 }
 
 // reindexAll pages every non-deleted ticket from Postgres, builds its search
