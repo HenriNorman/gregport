@@ -115,6 +115,14 @@ func main() {
 	}
 	logger.Info("reindex complete")
 
+	// One refresh before the swap makes every document visible as soon as the
+	// alias moves. Per-batch refreshes during the rebuild would rebuild
+	// segments hundreds of times and dominate the run time.
+	if err := refreshIndex(ctx, esClient, newIndex); err != nil {
+		log.Fatalf("refresh new index: %v", err)
+	}
+	logger.Info("new index refreshed", "index", newIndex)
+
 	if err := indexMgr.SwapAlias(ctx, oldIndex, newIndex); err != nil {
 		log.Fatalf("swap alias: %v", err)
 	}
@@ -146,6 +154,19 @@ func nextIndexName(client *search.Client, current string) string {
 		return client.IndexName("v1")
 	}
 	return client.IndexName("reindex-" + strconv.FormatInt(time.Now().Unix(), 10))
+}
+
+// refreshIndex makes every document in the index visible to search.
+func refreshIndex(ctx context.Context, esClient *search.Client, index string) error {
+	res, err := esClient.ES().Indices.Refresh(
+		esClient.ES().Indices.Refresh.WithContext(ctx),
+		esClient.ES().Indices.Refresh.WithIndex(index),
+	)
+	if err != nil {
+		return fmt.Errorf("%w: refresh index %s: %v", search.ErrSearchUnavailable, index, err)
+	}
+	defer res.Body.Close()
+	return search.ResponseError(res)
 }
 
 // reindexAll pages every non-deleted ticket from Postgres, builds its search
@@ -251,7 +272,6 @@ func bulkIndex(
 		bytes.NewReader(buf.Bytes()),
 		esClient.ES().Bulk.WithContext(ctx),
 		esClient.ES().Bulk.WithIndex(index),
-		esClient.ES().Bulk.WithRefresh("true"),
 	)
 	if err != nil {
 		return fmt.Errorf("%w: bulk request: %v", search.ErrSearchUnavailable, err)

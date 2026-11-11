@@ -37,6 +37,8 @@ func NewESDocumentIndexer(client *Client) *ESDocumentIndexer {
 
 // IndexTicket indexes one ticket document. A version conflict means a newer
 // document is already present, which is success: the index is derived data.
+// Writes use refresh=wait_for, so a document is searchable almost immediately
+// (within one refresh interval, 1s by default) without a manual refresh.
 func (i *ESDocumentIndexer) IndexTicket(ctx context.Context, doc TicketDocument) error {
 	if doc.ID == uuid.Nil || doc.OrgID == uuid.Nil {
 		return ErrMissingOrg
@@ -56,6 +58,7 @@ func (i *ESDocumentIndexer) IndexTicket(ctx context.Context, doc TicketDocument)
 		i.client.ES().Index.WithDocumentID(doc.ID.String()),
 		i.client.ES().Index.WithVersion(int(doc.Version)),
 		i.client.ES().Index.WithVersionType("external"),
+		i.client.ES().Index.WithRefresh("wait_for"),
 	)
 	if err != nil {
 		return fmt.Errorf("%w: index ticket: %v", ErrSearchUnavailable, err)
@@ -72,7 +75,9 @@ func (i *ESDocumentIndexer) IndexTicket(ctx context.Context, doc TicketDocument)
 
 // DeleteTicket removes one document. It verifies the stored org id first so a
 // malformed event payload cannot delete another tenant's document; the ticket
-// id is global, but defense in depth is cheap on the rare delete path.
+// id is global, but defense in depth is cheap on the rare delete path. Deletes
+// also use refresh=wait_for so the removal becomes visible within one refresh
+// interval, matching the write path.
 func (i *ESDocumentIndexer) DeleteTicket(ctx context.Context, orgID, ticketID uuid.UUID, version int64) error {
 	if orgID == uuid.Nil || ticketID == uuid.Nil {
 		return ErrMissingOrg
@@ -114,6 +119,7 @@ func (i *ESDocumentIndexer) DeleteTicket(ctx context.Context, orgID, ticketID uu
 	opts := []func(*esapi.DeleteRequest){
 		i.client.ES().Delete.WithContext(ctx),
 		i.client.ES().Delete.WithVersionType("external"),
+		i.client.ES().Delete.WithRefresh("wait_for"),
 	}
 	if version > 0 {
 		// External versions must increase. The DB version is already ahead
