@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/HenriNorman/gregport/actions/workflows/ci.yml/badge.svg)](https://github.com/HenriNorman/gregport/actions/workflows/ci.yml)
 
-A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports organizations, users, memberships, tickets, comments, SLA policies, notifications, and webhooks.
+A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports organizations, users, memberships, tickets, comments, SLA policies, notifications, webhooks, and full-text search.
 
 ---
 
@@ -44,6 +44,7 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Thumbnails | Complete — CPU-queue image resizing to a bounded edge, JPEG output, throughput measured across worker concurrency |
 | Exports | Complete — asynchronous filtered CSV exports, keyset streaming into object storage with flat memory, completion email with a 24-hour link |
 | Customer erasure | Complete — idempotent org-scoped anonymisation that keeps ticket history and writes an audit row |
+| Search | Complete — PostgreSQL full-text baseline, Elasticsearch index with a mandatory org filter, highlights, `search_after` pagination, Postgres fallback, sync circuit breaker, zero-downtime reindex, and a measured latency comparison |
 
 ### Authentication
 
@@ -751,6 +752,21 @@ The service layer depends on repository interfaces rather than concrete implemen
 </details>
 
 <details>
+<summary><code>internal/search/</code> — ticket search</summary>
+
+- `repository.go` — PostgreSQL full-text baseline and fallback; scoped
+  hydration by ticket ids.
+- `elastic.go` — Elasticsearch backend, mandatory org filter, highlights,
+  `search_after` cursors, and the fallback wrapper.
+- `index.go` — strict mapping, index bootstrap, alias target and atomic swap.
+- `document.go` — canonical document loader from PostgreSQL with comment caps.
+- `sync.go` — asynq index job, external versioning, org-safe deletes, circuit
+  breaker.
+- `handler.go` — `GET /v1/search`.
+
+</details>
+
+<details>
 <summary><code>internal/worker/</code> — worker runtime</summary>
 
 - `health.go` — `/healthz` and `/readyz` (PostgreSQL, Redis cache and queue).
@@ -803,6 +819,16 @@ jobs:
   row count, error text and `storage_key` once finished.
 - `idx_attachments_org_status_expires` and `idx_export_jobs_org_created`
   support housekeeping and org-scoped listing.
+
+`0010_search_baseline` adds the PostgreSQL search baseline:
+
+- Generated `search_vector` columns on `tickets.subject` and `comments.body`,
+  so the vectors cannot drift from their source rows.
+- GIN indexes on both columns, so the fallback is an index scan rather than a
+  sequential scan.
+- The Elasticsearch index is not created by SQL: `cmd/reindex` or the worker
+  bootstrap creates the concrete index and alias from the strict mapping in
+  `internal/search/index.go`.
 
 ---
 
@@ -943,16 +969,20 @@ container; `localhost` refers to the container itself.
 |:--|:--|
 | `db` | `postgres:16-alpine` with a named `pgdata` volume and a `pg_isready` health check. |
 | `redis` | `redis:7-alpine` with a `redis-cli ping` health check. Cache and limiter state are intentionally not persisted. |
+| `elasticsearch` | `elasticsearch:8.15.3` single node with security disabled for local development, a 1 GB heap (`ES_JAVA_OPTS`), a 2 GB container memory limit, and an `esdata` volume. The search index is derived data and can be rebuilt. |
 | `minio` | `minio/minio:latest` private S3-compatible bucket for attachments, thumbnails and exports. |
 | `minio-init` | `minio/mc:latest` one-shot job that creates the private bucket, then exits. |
 | `api` | Built from the local `Dockerfile`; waits for `db`, `redis` and `minio-init` to be healthy and reads its environment from `.env`. |
-| `worker` | Built from `Dockerfile.worker`; connects to the same database and Redis, exposes its health probes on `${WORKER_PORT:-8081}`, and has a 40s stop grace period for in-flight jobs. |
+| `worker` | Built from `Dockerfile.worker`; connects to the same database, Redis and Elasticsearch, exposes its health probes on `${WORKER_PORT:-8081}`, and has a 40s stop grace period for in-flight jobs. |
 | `asynqmon` | Optional queue UI from `hibiken/asynqmon`. It lives in the `ops` profile and is not started by default. |
 
 - PostgreSQL publishes `${DB_PORT:-5432}` on the host; the API connects
   internally on `db:5432`, regardless of the host port.
 - Redis publishes `${REDIS_PORT:-6379}` on the host; the API connects
   internally on `redis:6379`.
+- Elasticsearch publishes `${ELASTICSEARCH_PORT:-9200}` on the host; the API
+  and worker connect internally on `elasticsearch:9200`. Search works without
+  it: reads fall back to PostgreSQL and index jobs retry or short-circuit.
 - The `*.up.sql` migrations are mounted read-only into
   `/docker-entrypoint-initdb.d` and run once when the volume is first created.
   Use `docker compose down -v` to reset the database.
@@ -1006,6 +1036,12 @@ The application reads its configuration from environment variables.
 | `REDIS_DIAL_TIMEOUT` | No | `1s` | Go duration |
 | `REDIS_READ_TIMEOUT` | No | `500ms` | Go duration |
 | `REDIS_WRITE_TIMEOUT` | No | `500ms` | Go duration |
+| `ELASTICSEARCH_URL` | No | `http://localhost:9200` | Elasticsearch base URL; `http` or `https` |
+| `ELASTICSEARCH_INDEX` | No | `tickets` | Stable alias searches target; concrete indexes are `<alias>-vN` |
+| `ELASTICSEARCH_USERNAME` | No | — | Basic-auth username; must be set together with the password |
+| `ELASTICSEARCH_PASSWORD` | No | — | Basic-auth password; must be set together with the username |
+| `ELASTICSEARCH_API_KEY` | No | — | API key auth; mutually exclusive with username/password |
+| `ELASTICSEARCH_TIMEOUT` | No | `3s` | Per-request Elasticsearch timeout |
 | `CACHE_TIMEOUT` | No | `200ms` | Per-operation cache deadline |
 | `CACHE_TTL_SETTINGS` | No | `5m` | Org settings cache TTL |
 | `CACHE_TTL_SLA_POLICIES` | No | `5m` | SLA policy cache TTL |
@@ -1083,6 +1119,10 @@ reported together. In particular:
 - `IDEMPOTENCY_TTL` must be positive.
 - `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY` and `S3_SECRET_KEY` are required
   so the API and worker can reach the private object-storage bucket.
+- `ELASTICSEARCH_URL` must be an absolute `http`/`https` URL with a host, and
+  `ELASTICSEARCH_INDEX` must be a valid lowercase index or alias name.
+  Username and password must be set together; an API key cannot be combined
+  with basic auth.
 - `MAX_ATTACHMENT_BYTES` must be at least one; uploads above it are rejected
   before any URL is issued.
 - The worker reads the shared database/Redis variables plus the `WORKER_*`
@@ -1772,6 +1812,215 @@ The cursor is opaque and should never be parsed by clients.
 
 ---
 
+## Search
+
+`GET /v1/search` searches ticket subjects and comment bodies. It is backed by
+Elasticsearch and falls back to PostgreSQL full-text search whenever the
+cluster is unavailable or the index has not been built yet.
+
+```http
+GET /v1/search?q=printer&status=open&tag=hardware&assignee=<uuid>&limit=25&cursor=<opaque>
+```
+
+| Parameter | Description |
+|:--|:--|
+| `q` | Free-text query. Empty lists the org's most recent tickets. |
+| `status` | Optional ticket status filter. |
+| `tag` | Optional exact tag name filter. |
+| `assignee` | Optional assignee UUID filter. |
+| `limit` | Page size. Default `25`, maximum `100`. |
+| `cursor` | Opaque continuation token from `next_cursor`. |
+
+Each hit carries the canonical ticket fields plus `subject_highlight` and
+`comment_highlight`. Highlight values are HTML-safe: source text is escaped and
+only the matched terms are wrapped in `<mark>`.
+
+### PostgreSQL baseline
+
+Migration `0010_search_baseline` adds generated `tsvector` columns and GIN
+indexes to `tickets.subject` and `comments.body`. The baseline uses
+`websearch_to_tsquery`, `ts_rank_cd`, and `ts_headline` for snippets. Generated
+columns cannot drift from the row that produced them.
+
+This backend is both the reference implementation for latency comparisons and
+the operational fallback. It is synchronous: a search immediately after a write
+sees that write.
+
+### Elasticsearch index
+
+The index is **derived data**. PostgreSQL remains the source of truth; every
+result is hydrated from PostgreSQL before it is returned.
+
+- Concrete indexes are `tickets-v1`, `tickets-v2`, ... and the stable alias is
+  `tickets`. Searches and sync writes always target the alias.
+- Bootstrap creates `tickets-v1` and the alias when neither exists. The worker
+  logs a warning and continues if Elasticsearch is down at startup.
+- The mapping is `dynamic: strict`, so an accidental new field fails the write
+  instead of silently bloating the index.
+
+| Field | Type | Purpose |
+|:--|:--|:--|
+| `org_id` | `keyword` | Mandatory tenant filter. Built inside the backend. |
+| `number` | `long` | Per-org ticket number; final sort tiebreaker. |
+| `subject` | `text` | Searched with a `3x` boost and highlighted. |
+| `comments_text` | `text` | Recent non-deleted comments, searched and highlighted. |
+| `status` | `keyword` | Facet filter. |
+| `priority` | `keyword` | Facet filter. |
+| `tags` | `keyword` | Exact tag facet filter. |
+| `assignee_id` | `keyword` | Assignee facet filter. |
+| `requester_email` | `keyword` | Displayed with each hit. |
+| `created_at`, `updated_at` | `date` | Sort and recency ordering. |
+| `version` | `long` | External version, copied from `tickets.version`. |
+
+A document id is the ticket UUID. `comments_text` concatenates up to 200 most
+recent comments, caps each comment at 4 KiB, and caps the whole field at 64 KiB,
+so one huge thread cannot make refresh or highlighting expensive.
+
+### Query semantics
+
+- Text queries use `multi_match` on `subject^3` and `comments_text` with
+  `best_fields` and `operator: and`.
+- The `org_id` filter is constructed inside the repository/backend. Neither the
+  handler nor a caller can issue an unscoped query, and there is no code path
+  that builds a search without it.
+- Facets add `term` filters for `status`, `tags`, and `assignee_id`.
+- Results sort by `_score DESC, created_at DESC, number DESC`. An empty query
+  sorts by `created_at DESC, number DESC`.
+- Pagination uses `search_after` on the raw sort tuple
+  `(rank, created_at, number)`. The backend fetches `limit+1` hits to decide
+  whether another page exists and derives the cursor from the last kept hit.
+- After the query, hits are hydrated from PostgreSQL with
+  `WHERE org_id = $1 AND id = ANY($2) AND deleted_at IS NULL`, preserving index
+  order. A row deleted after indexing, or a foreign-org row, is silently
+  dropped. The index can affect ordering and highlights; it can never invent or
+  leak ticket contents.
+
+### Index synchronisation
+
+Every mutating endpoint writes a domain event to the `ticket_events` outbox in
+the same transaction as the change. The worker's outbox dispatcher turns each
+event into a low-priority `search:index_ticket` job. Events covered by the sync
+consumer: `ticket.created`, `comment.added`, `ticket.assigned`,
+`ticket.status_changed`, `ticket.closed`, `ticket.deleted`, `ticket.merged`,
+`ticket.tagged`, `ticket.untagged`, and the internal
+`ticket.merge_target_updated`. `sla.breached` is excluded because it changes no
+indexed field.
+
+- The job payload carries `org_id` and `ticket_id`; the handler reloads the
+  current row from PostgreSQL instead of trusting event data. Duplicate and
+  out-of-order deliveries converge on the latest state.
+- Writes use the ticket's `version` as an external version. A stale job gets a
+  version conflict, which is treated as success: a newer document already won.
+- Comments, tag attach/detach, and merge-target updates bump `tickets.version`,
+  so every indexed field is covered by that version.
+- Soft deletes remove the document by id after verifying the stored `org_id`.
+  A missing document is success, so replayed delete jobs converge.
+- Writes use `refresh=wait_for`: a change is searchable within one refresh
+  interval (about one second) without an operator refreshing the index.
+- Index jobs run on the low-priority queue with 10 retries, so a large indexing
+  backlog cannot delay customer email or notifications. A circuit breaker trips
+  after 5 consecutive Elasticsearch failures, stays open for 30 seconds, and
+  allows one half-open probe. While open, index jobs are skipped with a warning;
+  the index stays eventually consistent and self-heals when the cluster returns.
+
+### Failure behaviour
+
+| Condition | Behaviour |
+|:--|:--|
+| Elasticsearch unavailable during a ticket write | The write succeeds. It commits to PostgreSQL and the outbox; no index call is made in the request path. |
+| Elasticsearch unavailable or index missing during search | Search falls back to the PostgreSQL backend and returns `200`. |
+| Both Elasticsearch and PostgreSQL unavailable | The PostgreSQL error is returned (a database outage is a `500`). The service maps search-backend unavailability to `503` when no fallback can serve the request. |
+| Elasticsearch returns a non-availability error (for example a bad query) | The error propagates as `5xx`; it is not hidden by a fallback. |
+| Index jobs fail repeatedly | Retries, then the circuit opens and jobs are skipped; the next successful probe resumes syncing. |
+| Index contains a stale or foreign document | Hydration drops it because PostgreSQL scopes by `org_id` and `deleted_at`. |
+| Reindex interrupted before the alias swap | The old index keeps serving searches; the new index is discarded or overwritten by the next run. |
+
+The health endpoint reports the API as ready without contacting
+Elasticsearch: search degradation must not take the whole API out of rotation.
+
+### Reindexing
+
+```bash
+go run ./cmd/reindex
+```
+
+The command pages all non-deleted tickets across all organisations, loads each
+derived document from PostgreSQL, bulk-indexes into a fresh generation
+(`tickets-vN+1`), refreshes once, atomically swaps the `tickets` alias, and
+deletes the previous index. Searches never see a partially built index. Running
+it twice is safe: the next run derives a new generation instead of deleting the
+index currently behind the alias.
+
+### Seed data and latency benchmark
+
+`cmd/seed` creates a realistic corpus. It uses `COPY` and batches inside one
+transaction per chunk.
+
+```bash
+# Default: 1,000,000 tickets across 5 organisations, about six minutes locally.
+go run ./cmd/seed
+
+# Small verification run.
+SEED_TICKETS=1000 SEED_ORGS=2 SEED_CUSTOMERS=50 SEED_USERS=5 go run ./cmd/seed
+```
+
+| Variable | Default | Meaning |
+|:--|:--|:--|
+| `SEED_TICKETS` | `1000000` | Total tickets across all organisations. |
+| `SEED_ORGS` | `5` | Organisations to spread tickets across. |
+| `SEED_CUSTOMERS` | `1000` | Customers per organisation. |
+| `SEED_USERS` | `50` | Agent users created globally. |
+| `SEED_TAGS` | `12` | Tags per organisation. |
+| `SEED_BATCH` | `5000` | Tickets per batch. |
+| `SEED_RANDOM_SEED` | time-based | Reproducible RNG seed. |
+
+`cmd/benchsearch` measures both backends through the same `search.Backend`
+interface the API uses, including PostgreSQL hydration for Elasticsearch hits:
+
+```bash
+go run ./cmd/benchsearch
+```
+
+It warms each path, then reports p50/p95/mean latency per query and overall.
+`BENCH_ITERATIONS` (default `50`), `BENCH_WARMUP`, `BENCH_LIMIT`, `BENCH_ORG` and
+`BENCH_QUERIES` control the run.
+
+**Results.** Measured on 2026-11-11 on one local machine: 1,001,803 tickets
+and 2,502,146 comments across five seeded organisations (2.0 GB PostgreSQL
+database), PostgreSQL 16 and a single-node Elasticsearch 8.15.3 with a 1 GB
+heap. Both services ran locally, and the benchmark ran on the same host. Each
+row is 50 iterations after 5 warmups with limit 25; every query returned 25
+hits. Elasticsearch latency includes hydrating the canonical rows from
+PostgreSQL.
+
+| Query | PostgreSQL FTS p50 | PostgreSQL FTS p95 | Elasticsearch p50 | Elasticsearch p95 |
+|:--|--:|--:|--:|--:|
+| `printer` | 456.40 ms | 470.12 ms | 8.22 ms | 9.37 ms |
+| `cannot log in` | 475.05 ms | 480.85 ms | 9.43 ms | 10.52 ms |
+| `invoice` | 468.23 ms | 473.27 ms | 8.40 ms | 9.46 ms |
+| `api error` | 474.96 ms | 482.38 ms | 9.36 ms | 10.79 ms |
+| `crash on startup` | 478.84 ms | 485.89 ms | 9.15 ms | 10.67 ms |
+| `password reset` | 471.57 ms | 481.35 ms | 8.77 ms | 11.01 ms |
+| `refund` | 464.15 ms | 473.53 ms | 8.03 ms | 8.99 ms |
+| `attachment` | 1412.71 ms | 1423.57 ms | 8.29 ms | 9.77 ms |
+| `export records` | 470.61 ms | 477.56 ms | 9.04 ms | 11.01 ms |
+| `webhook` | 463.79 ms | 475.15 ms | 8.20 ms | 9.15 ms |
+| **Overall** | **472.05 ms** | **1412.71 ms** | **8.70 ms** | **10.23 ms** |
+
+The overall Elasticsearch p50 is about 54x lower than PostgreSQL. Individual
+queries are typically around 50x faster; the `attachment` outlier shows why a
+single slow term can dominate a percentile. These are local loopback numbers on
+one machine, not a production capacity plan: network, shard layout, concurrent
+load and heap size all change absolute latency. The comparison is still
+like-for-like because both backends ran the same queries through the same Go
+interface on the same corpus.
+
+The PostgreSQL baseline remains operationally important: it is synchronous,
+needs no extra service, and keeps search working when Elasticsearch is down.
+
+
+---
+
 ## Logging
 
 The API writes structured JSON to stdout using `log/slog`, at the level set by
@@ -1847,7 +2096,7 @@ is listed below it, not a hidden requirement.
 | **1. Codebase** | One Git repository with two deployables: `cmd/api` serves HTTP and `cmd/worker` runs background jobs. They share internal packages rather than copy-pasted services. | Yes |
 | **2. Dependencies** | Every Go dependency is pinned in `go.mod`/`go.sum`. The runtime image contains only the compiled binary on Alpine; nothing is installed at runtime. | Yes |
 | **3. Config** | All settings come from environment variables. `config.Load` and `config.LoadWorker` validate them before startup, secrets have no defaults, `.env` is local-only, and Compose injects values at start. | Yes |
-| **4. Backing services** | PostgreSQL is attached through `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` and `DB_NAME`. Redis is attached through `REDIS_ADDR`, `REDIS_PASSWORD` and `REDIS_DB` for caching, rate limiting, idempotency and the asynq queue. Both endpoints are built at runtime, so they can change without code changes. | Yes |
+| **4. Backing services** | PostgreSQL is attached through `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` and `DB_NAME`. Redis is attached through `REDIS_ADDR`, `REDIS_PASSWORD` and `REDIS_DB` for caching, rate limiting, idempotency and the asynq queue. Elasticsearch is attached through `ELASTICSEARCH_URL` and `ELASTICSEARCH_INDEX` for search. All endpoints are built at runtime, so they can change without code changes. | Yes |
 | **5. Build, release, run** | A multi-stage `Dockerfile` builds a static binary. The image is the immutable release artifact and configuration is supplied when the container starts. CI builds the image; registry publishing is not automated yet. | Yes |
 | **6. Processes** | The API is stateless: access tokens are JWTs, refresh tokens are stored hashed in PostgreSQL, and no sessions live in process memory. The worker keeps no durable state either; `ticket_events` is the outbox and Redis holds only queue/cache state. | Yes |
 | **7. Port binding** | The API binds `:APP_PORT` (`8080` by default) and the worker binds `:WORKER_PORT` (`8081`) for health probes. Compose publishes the ports; no external web server is required. | Yes |
@@ -1863,7 +2112,6 @@ is listed below it, not a hidden requirement.
 - Migrations run only when the Compose database volume is first initialized;
   there is no standalone migration command for existing databases.
 - Logs are stdout-only; there is no bundled aggregation or retention layer.
-- Webhooks are schema-defined but have no producer or consumer yet.
 
 ---
 
@@ -1942,6 +2190,15 @@ duplicate name returns `409`; applying a macro sets status, attaches tags,
 and adds a comment; an illegal status transition in a macro returns `422` 
 (state machine applies); another org's macro returns `404`.
 
+**Search**
+
+- PostgreSQL baseline: org scoping, highlighting, filters, and keyset pagination return every matching ticket exactly once; another org's tickets are never returned.
+- Elasticsearch backend (skipped with `go test -short`; requires the Compose cluster): subject and comment searches return only the caller's org, highlights are HTML-safe and present for both fields, and `search_after` pagination covers every hit once, including hits with tied scores.
+- `refresh=wait_for`: a document is searchable immediately after the index call returns and disappears from search immediately after the delete call, without a manual refresh.
+- Out-of-order index jobs: an older external version cannot overwrite a newer document; version conflicts are treated as success.
+- Tenant-safe deletes: deleting with a foreign `org_id` is a no-op, and deleting a missing document is success.
+- Index lifecycle: bootstrap creates the mapping and alias, alias swap is atomic, and reindex derives a fresh generation.
+
 **Audit**
 
 - `member.role_changed` and `member.removed` write audit rows; the
@@ -2008,6 +2265,24 @@ These tests perform real JWT signing and verification without a database.
 - Refresh-token uniqueness and hashing.
 
 They verify actual security behavior, including algorithm pinning, required expiration, and tamper detection.
+
+### Search Tests
+
+The mapping, cursor, highlight and fallback tests run without external
+services. Document-loader tests require PostgreSQL; backend and index-lifecycle
+tests require Elasticsearch and are skipped with `-short`.
+
+- The index mapping declares every required field and `dynamic: strict`.
+- Cursor encoding round-trips and rejects empty, malformed, or incomplete
+  payloads.
+- Highlight rendering escapes HTML in the source text and restores only the
+  `<mark>` sentinels, so a ticket subject containing markup cannot inject HTML.
+- `FallbackBackend` falls back only on `ErrSearchUnavailable` and
+  `ErrIndexNotFound`; every other error propagates.
+- The sync circuit breaker trips after five failures, skips jobs while open,
+  and recovers through a half-open probe.
+- The document loader caps comment bodies and total comment text, and scopes
+  every read by `org_id`.
 
 ### Logging and Middleware Tests
 
@@ -2099,7 +2374,7 @@ The dispatcher tests are PostgreSQL integration tests.
   queue routing reaches the email handler, and the delivery is persisted as
   `sent`. The test replays the task twice and proves only one email is sent,
   then drives the breach and auto-close checkers and verifies their events use
-  the same path (`sla.breached` emails; `ticket.closed` has no consumer). It
+  the same path (`sla.breached` emails; `ticket.closed` has no email consumer). It
   also proves a solved status change emits a `ticket_solved` email with a
   verifiable rating token, while a non-solved transition emits nothing.
 
@@ -2293,26 +2568,31 @@ The same checks can be run locally with the commands in
 
 ## Current Development Direction
 
-The worker, queue, SLA engine, notifications, email and rating blocks are
-complete. The API writes domain events to the `ticket_events` outbox in the
-same transaction as the change; `cmd/worker` claims them, enqueues
-deterministic asynq jobs and runs the consumers. Email is the first consumer:
-ticket creation, comments, assignment, SLA breaches and solved transitions
-produce idempotent deliveries with retries, a circuit breaker and SMTP
-transport; solved email carries the signed rating link.
+The worker, queue, SLA engine, notifications, email, webhooks, search and
+rating blocks are complete. The API writes domain events to the
+`ticket_events` outbox in the same transaction as the change; `cmd/worker`
+claims them, enqueues deterministic asynq jobs and runs the consumers. Email
+delivers idempotent ticket, comment, assignment, breach and solved messages
+with retries, a circuit breaker and SMTP transport; solved email carries the
+signed rating link. Webhook delivery signs and retries payloads with SSRF
+protection and a dead-letter path. Search keeps a derived Elasticsearch index
+in sync through low-priority jobs and falls back to PostgreSQL full-text search
+whenever the cluster is unavailable.
 
 SLA automation is complete as well: policies set first-response and
 resolution deadlines on ticket create and priority change, a scheduler records
 breaches, and another scheduler auto-closes solved tickets after the configured
 window. Housekeeping prunes expired idempotency keys, dispatched events, old
 audit rows and delivered email rows, orphan pending uploads and expired
-soft-deleted tickets.
+soft-deleted tickets. Attachments use direct-to-storage uploads with
+quarantine and thumbnails, exports stream CSV asynchronously, and erasure
+removes customer data across the related tables.
 
 Production basics remains complete: structured JSON logging with request IDs,
 the unified error envelope, server/request timeouts, liveness/readiness checks,
 graceful shutdown, fail-fast configuration validation, multi-stage images for
 both binaries, the Compose stack, CI and the twelve-factor alignment table.
 
-Remaining work: webhook delivery (schema-defined, no producer or consumer yet),
-production deployment and release automation, and standalone migration tooling
-for existing databases.
+Remaining work: production deployment and release automation, standalone
+migration tooling for existing databases, and log aggregation/retention beyond
+stdout.
