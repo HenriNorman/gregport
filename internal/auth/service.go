@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
 	"crypto/rand"
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Repo interface {
@@ -26,13 +26,27 @@ type Repo interface {
 }
 
 type Service struct {
-	repo Repo
+	repo   Repo
 	tokens *TokenManager
+	cost   int
+	guard  LoginGuard
 }
 
 func NewService(repo Repo, tokens *TokenManager) *Service {
-	return &Service{repo: repo, tokens: tokens}
+	return &Service{repo: repo, tokens: tokens, cost: bcrypt.DefaultCost}
 }
+
+// SetBcryptCost controls the work factor for new password hashes. Existing
+// hashes keep their embedded cost; only signup is affected.
+func (s *Service) SetBcryptCost(cost int) {
+	if cost >= bcrypt.MinCost && cost <= 15 {
+		s.cost = cost
+	}
+}
+
+// SetLoginGuard installs the per-account backoff. Without a guard, login relies
+// on the per-IP rate limiter alone.
+func (s *Service) SetLoginGuard(g LoginGuard) { s.guard = g }
 
 type SignupInput struct {
 	OrgName  string
@@ -42,9 +56,9 @@ type SignupInput struct {
 }
 
 type LoginInput struct {
-	Email    string
-	Password string
-	OrgSlug  string
+	Email     string
+	Password  string
+	OrgSlug   string
 	UserAgent string
 	IP        string
 }
@@ -84,7 +98,7 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (Organization, Use
 	}
 
 	// 3. hash
-	hash, err := bcrypt.GenerateFromPassword([]byte(in.Password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(in.Password), s.cost)
 	if err != nil {
 		return Organization{}, User{}, Membership{}, fmt.Errorf("hash: %w", err)
 	}
@@ -141,18 +155,34 @@ func randomSuffix() string {
 func (s *Service) Login(ctx context.Context, in LoginInput) (TokenPair, error) {
 	email := strings.ToLower(strings.TrimSpace(in.Email))
 
+	if s.guard != nil {
+		allowed, err := s.guard.Allowed(ctx, email)
+		if err == nil && !allowed {
+			return TokenPair{}, ErrAccountLocked
+		}
+	}
+	failed := func() (TokenPair, error) {
+		if s.guard != nil {
+			_ = s.guard.Failure(ctx, email)
+		}
+		return TokenPair{}, ErrInvalidCredentials
+	}
+
 	cand, err := s.repo.FindLoginCandidate(ctx, email)
 	if err != nil {
 		if errors.Is(err, ErrInvalidCredentials) {
 			// constant-time defense: do a bcrypt comparison anyway
 			_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(in.Password))
-			return TokenPair{}, ErrInvalidCredentials
+			return failed()
 		}
 		return TokenPair{}, err
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(cand.PasswordHash), []byte(in.Password)); err != nil {
-		return TokenPair{}, ErrInvalidCredentials
+		return failed()
+	}
+	if s.guard != nil {
+		_ = s.guard.Reset(ctx, email)
 	}
 
 	mem, err := pickMembership(cand.Memberships, in.OrgSlug)
@@ -188,8 +218,8 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (TokenPair, error) {
 		ExpiresIn:    ttl,
 		Principal: requestctx.Principal{
 			ActorID: cand.UserID,
-			OrgID:  mem.OrgID,
-			Role:   mem.Role,
+			OrgID:   mem.OrgID,
+			Role:    mem.Role,
 		},
 	}, nil
 }
@@ -269,8 +299,8 @@ func (s *Service) Refresh(ctx context.Context, rawRefresh string, userAgent, ip 
 		ExpiresIn:    ttl,
 		Principal: requestctx.Principal{
 			ActorID: userID,
-			OrgID:  orgID,
-			Role:   role,
+			OrgID:   orgID,
+			Role:    role,
 		},
 	}, nil
 }

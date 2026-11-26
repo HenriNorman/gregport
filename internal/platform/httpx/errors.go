@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
@@ -90,11 +91,15 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 
 	if status >= http.StatusInternalServerError && (ae == nil || !ae.logged) {
-		logging.FromContext(r.Context()).Error("request failed",
+		attrs := []any{
 			"error", err,
 			"method", r.Method,
 			"route", RoutePattern(r.Context()),
-		)
+		}
+		if sc := trace.SpanContextFromContext(r.Context()); sc.IsValid() {
+			attrs = append(attrs, "trace_id", sc.TraceID().String())
+		}
+		logging.FromContext(r.Context()).Error("request failed", attrs...)
 	}
 
 	_ = WriteJSON(w, status, errorEnvelope{Error: errorBody{
@@ -138,6 +143,10 @@ func Conflict(code, msg string) *APIError {
 
 func Unprocessable(code, msg string) *APIError {
 	return &APIError{Status: http.StatusUnprocessableEntity, Code: code, Message: msg}
+}
+
+func TooManyRequests(code, msg string) *APIError {
+	return &APIError{Status: http.StatusTooManyRequests, Code: code, Message: msg}
 }
 
 func ServiceUnavailable(code, msg string) *APIError {

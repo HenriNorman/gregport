@@ -97,6 +97,22 @@ jobs:
       - name: Test
         run: go test -p 1 ./... -race -count=1
 
+      - name: Install security tools
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: Vulnerability scan
+        run: govulncheck ./...
+
+      - name: Static security scan
+        run: gosec -quiet -severity high -exclude-dir=deploy ./...
+
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Validate compose file
         env:
           DB_PASSWORD: ci-password
@@ -108,6 +124,16 @@ jobs:
 
       - name: Build image
         run: docker build -t gregport-api:ci .
+
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: gregport-api:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
 
       - name: Check image user
         run: test "$(docker image inspect --format '{{.Config.User}}' gregport-api:ci)" = "10001:10001"
@@ -131,6 +157,7 @@ jobs:
             -e DB_PASSWORD=Henri123 \
             -e DB_NAME=gregport \
             -e APP_PORT=18080 \
+            -e METRICS_PORT=19091 \
             -e JWT_SECRET="$JWT_SECRET" \
             -e RATING_TOKEN_SECRET="$RATING_TOKEN_SECRET" \
             gregport-api:ci
@@ -153,6 +180,13 @@ jobs:
 
           curl -fsS http://127.0.0.1:18080/healthz
           curl -fsS http://127.0.0.1:18080/readyz
+          curl -fsS http://127.0.0.1:18080/docs | grep -q redoc
+          curl -fsS http://127.0.0.1:18080/openapi.yaml | grep -q "openapi: 3.1.0"
+          curl -fsS http://127.0.0.1:19091/metrics | grep -q gregport_http_requests_total
+          if curl -fsS http://127.0.0.1:18080/metrics >/dev/null 2>&1; then
+            echo "metrics must not be exposed on the public API port" >&2
+            exit 1
+          fi
 
           docker stop --timeout 20 gregport-api-ci
           status=$(docker inspect --format '{{.State.ExitCode}}' gregport-api-ci)

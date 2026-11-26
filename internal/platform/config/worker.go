@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -37,6 +38,21 @@ type WorkerConfig struct {
 	WorkerReadTimeout       time.Duration
 	WorkerWriteTimeout      time.Duration
 	WorkerIdleTimeout       time.Duration
+
+	MetricsPort     string
+	Pprof           bool
+	MaxRequestBytes int64
+
+	OTELEnabled     bool
+	OTELEndpoint    string
+	OTELServiceName string
+	OTELInsecure    bool
+	OTELSampleRatio float64
+
+	DBMaxConns        int
+	DBMinConns        int
+	DBMaxConnLifetime time.Duration
+	DBMaxConnIdleTime time.Duration
 
 	OutboxInterval     time.Duration
 	OutboxBatch        int
@@ -123,6 +139,20 @@ func LoadWorker() (WorkerConfig, error) {
 		WorkerReadTimeout:       10 * time.Second,
 		WorkerWriteTimeout:      10 * time.Second,
 		WorkerIdleTimeout:       60 * time.Second,
+
+		MetricsPort:     getEnv("WORKER_METRICS_PORT", "9092"),
+		MaxRequestBytes: 1 << 20,
+
+		OTELEnabled:     false,
+		OTELEndpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318"),
+		OTELServiceName: getEnv("OTEL_SERVICE_NAME", "gregport-worker"),
+		OTELInsecure:    true,
+		OTELSampleRatio: 1,
+
+		DBMaxConns:        10,
+		DBMinConns:        1,
+		DBMaxConnLifetime: 30 * time.Minute,
+		DBMaxConnIdleTime: 5 * time.Minute,
 
 		OutboxInterval: time.Second,
 		OutboxBatch:    100,
@@ -227,6 +257,28 @@ func LoadWorker() (WorkerConfig, error) {
 	} else {
 		cfg.WorkerPort = port
 	}
+	if port, err := envPort("WORKER_METRICS_PORT", cfg.MetricsPort); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.MetricsPort = port
+	}
+	if value, err := envFloat("OTEL_SAMPLE_RATIO", cfg.OTELSampleRatio, 0, 1); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.OTELSampleRatio = value
+	}
+	for name, dst := range map[string]*bool{
+		"OTEL_ENABLED":  &cfg.OTELEnabled,
+		"OTEL_INSECURE": &cfg.OTELInsecure,
+		"PPROF_ENABLED": &cfg.Pprof,
+	} {
+		value, err := envBool(name, *dst)
+		if err != nil {
+			errs = append(errs, err)
+		} else {
+			*dst = value
+		}
+	}
 
 	durations := []struct {
 		name      string
@@ -258,6 +310,8 @@ func LoadWorker() (WorkerConfig, error) {
 		{"EXPORT_LINK_TTL", &cfg.ExportLinkTTL, false},
 		{"ATTACHMENT_PENDING_TTL", &cfg.AttachmentPendingTTL, false},
 		{"ELASTICSEARCH_TIMEOUT", &cfg.ElasticsearchTimeout, false},
+		{"DB_MAX_CONN_LIFETIME", &cfg.DBMaxConnLifetime, false},
+		{"DB_MAX_CONN_IDLE_TIME", &cfg.DBMaxConnIdleTime, false},
 	}
 	for _, d := range durations {
 		value, err := envDuration(d.name, *d.dst, d.allowZero)
@@ -284,6 +338,8 @@ func LoadWorker() (WorkerConfig, error) {
 		{"MAX_ATTACHMENT_BYTES", &cfg.MaxAttachmentBytes, 1},
 		{"EXPORT_BATCH_SIZE", &cfg.ExportBatchSize, 1},
 		{"THUMBNAIL_MAX_DIMENSION", &cfg.ThumbnailMaxDimension, 16},
+		{"DB_MAX_CONNS", &cfg.DBMaxConns, 1},
+		{"DB_MIN_CONNS", &cfg.DBMinConns, 0},
 	}
 	for _, n := range ints {
 		value, err := envInt(n.name, *n.dst, n.min)
@@ -292,6 +348,16 @@ func LoadWorker() (WorkerConfig, error) {
 			continue
 		}
 		*n.dst = value
+	}
+
+	if cfg.DBMinConns > cfg.DBMaxConns {
+		errs = append(errs, fmt.Errorf("DB_MIN_CONNS (%d) must not exceed DB_MAX_CONNS (%d)", cfg.DBMinConns, cfg.DBMaxConns))
+	}
+	if cfg.OTELEnabled {
+		u, err := url.Parse(cfg.OTELEndpoint)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			errs = append(errs, errors.New("OTEL_EXPORTER_OTLP_ENDPOINT must be an http or https URL"))
+		}
 	}
 
 	if len(errs) > 0 {

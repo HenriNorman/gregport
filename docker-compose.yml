@@ -137,6 +137,17 @@ services:
       # writes when Elasticsearch is down.
       ELASTICSEARCH_URL: http://elasticsearch:9200
       ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-tickets}
+      METRICS_PORT: "9091"
+      PPROF_ENABLED: ${PPROF_ENABLED:-false}
+      APP_ENV: ${APP_ENV:-production}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      MAX_REQUEST_BYTES: ${MAX_REQUEST_BYTES:-1048576}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_INSECURE: "true"
+      OTEL_SERVICE_NAME: gregport-api
+      DB_MAX_CONNS: ${DB_MAX_CONNS:-20}
+      DB_MIN_CONNS: ${DB_MIN_CONNS:-2}
     ports:
       - "${APP_PORT:-8080}:${APP_PORT:-8080}"
     depends_on:
@@ -182,6 +193,14 @@ services:
       S3_USE_SSL: ${S3_USE_SSL:-false}
       ELASTICSEARCH_URL: http://elasticsearch:9200
       ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-tickets}
+      WORKER_METRICS_PORT: "9092"
+      PPROF_ENABLED: ${PPROF_ENABLED:-false}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_INSECURE: "true"
+      OTEL_SERVICE_NAME: gregport-worker
+      DB_MAX_CONNS: ${WORKER_DB_MAX_CONNS:-10}
+      DB_MIN_CONNS: ${WORKER_DB_MIN_CONNS:-1}
     ports:
       - "${WORKER_PORT:-8081}:${WORKER_PORT:-8081}"
     depends_on:
@@ -198,6 +217,53 @@ services:
       retries: 5
       start_period: 5s
     stop_grace_period: 40s
+    restart: unless-stopped
+
+  # Prometheus scrapes the API and worker on the private compose network. The
+  # application metrics ports are never published to the host.
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./deploy/prometheus:/etc/prometheus:ro
+      - prometheusdata:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      - api
+      - worker
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # OTLP/HTTP collector and trace UI. Point OTEL_EXPORTER_OTLP_ENDPOINT at
+  # http://jaeger:4318 inside compose; the UI is http://localhost:16686.
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "127.0.0.1:${JAEGER_UI_PORT:-16686}:16686"
+      - "127.0.0.1:${OTEL_HTTP_PORT:-4318}:4318"
     restart: unless-stopped
 
   # Optional queue UI for operations. It is excluded from the default profile
@@ -223,3 +289,5 @@ volumes:
   pgdata:
   miniodata:
   esdata:
+  prometheusdata:
+  grafanadata:

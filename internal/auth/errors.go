@@ -11,5 +11,6 @@ var (
 	ErrInvalidEmail       = httpx.Unprocessable("invalid_email", "email format is invalid")
 	ErrEmptyName          = httpx.Unprocessable("empty_name", "name cannot be empty")
 	ErrInvalidCredentials = httpx.Unauthorized("invalid_credentials", "invalid email or password")
+	ErrAccountLocked      = httpx.TooManyRequests("account_locked", "too many failed logins; try again later")
 	ErrOrgRequired        = httpx.Unprocessable("org_required", "org_slug is required when the user belongs to multiple organizations")
 )

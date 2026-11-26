@@ -2,16 +2,21 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/exaring/otelpgx"
 	"github.com/go-chi/chi/v5"
 	"github.com/joho/godotenv"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
+	apidocs "github.com/HenriNorman/gregport/api"
 	"github.com/HenriNorman/gregport/internal/attachments"
 	"github.com/HenriNorman/gregport/internal/auth"
 	"github.com/HenriNorman/gregport/internal/customers"
@@ -30,6 +35,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/platform/metrics"
 	"github.com/HenriNorman/gregport/internal/platform/ratelimit"
+	"github.com/HenriNorman/gregport/internal/platform/telemetry"
 	"github.com/HenriNorman/gregport/internal/queue"
 	"github.com/HenriNorman/gregport/internal/ratings"
 	"github.com/HenriNorman/gregport/internal/realtime"
@@ -79,10 +85,32 @@ func main() {
 	}
 	logging.SetDefault(logger)
 
+	shutdownTracing, err := telemetry.Init(context.Background(), telemetry.Config{
+		Enabled:     cfg.OTELEnabled,
+		Endpoint:    cfg.OTELEndpoint,
+		ServiceName: cfg.OTELServiceName,
+		Environment: envOr("APP_ENV", "development"),
+		SampleRatio: cfg.OTELSampleRatio,
+		Insecure:    cfg.OTELInsecure,
+	})
+	if err != nil {
+		logger.Error("tracing init failed", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(ctx)
+	}()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	pool, err := database.NewPool(ctx, cfg.DSN())
+	pool, err := database.NewPool(ctx, cfg.DSN(),
+		database.WithPoolLimits(cfg.DBMaxConns, cfg.DBMinConns),
+		database.WithConnLifetime(cfg.DBMaxConnLifetime, cfg.DBMaxConnIdleTime),
+		database.WithTracer(otelpgx.NewTracer()),
+	)
 	if err != nil {
 		logger.Error("database unavailable", "error", err)
 		os.Exit(1)
@@ -119,7 +147,19 @@ func main() {
 	})
 	defer queueClient.Close()
 
+	prom := metrics.NewPrometheus()
+	metrics.RegisterPoolMetrics(prom.Registry, pool, "api")
+
+	metricsSrv := metrics.NewServer(cfg.MetricsPort, prom, cfg.Pprof)
+	go func() {
+		if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("metrics server stopped", "error", err)
+		}
+	}()
+	defer metricsSrv.Close()
+
 	counters := metrics.New()
+	counters.Attach(prom)
 	defer counters.Log(logger)
 
 	redisCache := cache.NewRedis(cache.RedisOptions{
@@ -175,6 +215,8 @@ func main() {
 	tm := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	authRepo := auth.NewRepository(pool)
 	authSvc := auth.NewService(authRepo, tm)
+	authSvc.SetBcryptCost(cfg.BcryptCost)
+	authSvc.SetLoginGuard(auth.NewRedisLoginGuard(redisCache.Client(), 5, 15*time.Minute))
 	authHandler := auth.NewHandler(authSvc)
 
 	// tickets wiring
@@ -218,6 +260,7 @@ func main() {
 	// webhook wiring
 	webhookSvc := webhooks.NewService(webhooks.NewRepository(pool))
 	webhookSvc.SetSender(webhooks.NewHTTPSender(webhooks.SenderOptions{Timeout: webhooks.DefaultTimeout}))
+	webhookSvc.SetDeliveryObserver(counters.WebhookDelivery)
 	webhooksHandler := webhooks.NewHandler(webhookSvc)
 
 	// attachment wiring
@@ -291,16 +334,22 @@ func main() {
 	ticketsSvc.SetLastUsedRedis(redisCache.Client())
 
 	r := chi.NewRouter()
+	r.Use(middleware.SecurityHeaders)
+	r.Use(middleware.CORS(middleware.CORSConfig{AllowedOrigins: cfg.CORSAllowedOrigins}))
 	r.Use(middleware.RequestID)
 	r.Use(middleware.WithLogger(logger))
+	r.Use(middleware.HTTPMetrics(prom))
 	r.Use(middleware.RequestLogger())
 	r.Use(middleware.Recovery)
+	r.Use(middleware.BodyLimit(cfg.MaxRequestBytes))
 	// SSE connections outlive the normal request deadline; the stream handler
 	// manages its own per-write deadline.
 	r.Use(middleware.TimeoutExcept(cfg.RequestTimeout, "/v1/stream"))
 
 	r.Get("/healthz", health.Live)
 	r.Get("/readyz", health.Ready(pool, observedCache))
+	r.Get("/openapi.yaml", apidocs.SpecHandler().ServeHTTP)
+	r.Get("/docs", apidocs.Docs)
 
 	r.Route("/v1", func(r chi.Router) {
 		// public, with a stricter login limiter
@@ -451,7 +500,7 @@ func main() {
 		})
 	})
 
-	srv := newServer(cfg, r)
+	srv := newServer(cfg, otelhttp.NewHandler(r, "http.server"))
 	ln, err := net.Listen("tcp", srv.Addr)
 	if err != nil {
 		logger.Error("listen failed", "addr", srv.Addr, "error", err)
@@ -462,10 +511,31 @@ func main() {
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			prom.SSEConnections.Set(float64(streamHub.Connections()))
+			select {
+			case <-signalCtx.Done():
+				prom.SSEConnections.Set(0)
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+
 	logger.Info("listening", "port", cfg.AppPort)
 	if err := runServer(signalCtx, srv, ln, cfg.ShutdownTimeout, logger, streamHub.Close); err != nil {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
 	logger.Info("server stopped")
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

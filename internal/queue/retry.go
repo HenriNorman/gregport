@@ -38,6 +38,7 @@ func RetryDelay(attempt int, _ error, _ *asynq.Task) time.Duration {
 	if delta <= 0 {
 		return d
 	}
+	// #nosec G404 -- jitter is scheduling noise, not a security decision.
 	return time.Duration(int64(d) - delta + rand.Int64N(2*delta+1))
 }
 

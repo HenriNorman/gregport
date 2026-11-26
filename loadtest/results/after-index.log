@@ -1,0 +1,867 @@
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+
+     execution: local
+        script: loadtest/k6/baseline.js
+        output: -
+
+     scenarios: (100.00%) 4 scenarios, 120 max VUs, 2m40s max duration (incl. graceful stop):
+              * ticket_list: Up to 50 looping VUs for 2m0s over 3 stages (gracefulRampDown: 10s, exec: listTickets, gracefulStop: 30s)
+              * ticket_create: 5.00 iterations/s for 2m0s (maxVUs: 10-40, exec: createTicket, startTime: 10s, gracefulStop: 30s)
+              * ticket_detail: 20 looping VUs for 2m0s (exec: ticketDetail, startTime: 10s, gracefulStop: 30s)
+              * ticket_search: 10 looping VUs for 2m0s (exec: searchTickets, startTime: 10s, gracefulStop: 30s)
+
+
+running (0m01.0s), 000/090 VUs, 0 complete and 0 interrupted iterations
+ticket_list     [   1% ] 00/50 VUs  0m00.9s/2m00.0s
+ticket_create • [   0% ] waiting    09.1s
+ticket_detail • [   0% ] waiting    09.1s
+ticket_search • [   0% ] waiting    09.1s
+
+running (0m02.0s), 000/090 VUs, 0 complete and 0 interrupted iterations
+ticket_list     [   2% ] 00/50 VUs  0m01.9s/2m00.0s
+ticket_create • [   0% ] waiting    08.1s
+ticket_detail • [   0% ] waiting    08.1s
+ticket_search • [   0% ] waiting    08.1s
+
+running (0m03.0s), 000/090 VUs, 0 complete and 0 interrupted iterations
+ticket_list     [   2% ] 00/50 VUs  0m02.9s/2m00.0s
+ticket_create • [   0% ] waiting    07.1s
+ticket_detail • [   0% ] waiting    07.1s
+ticket_search • [   0% ] waiting    07.1s
+
+running (0m04.0s), 001/090 VUs, 788 complete and 0 interrupted iterations
+ticket_list     [   3% ] 01/50 VUs  0m03.9s/2m00.0s
+ticket_create • [   0% ] waiting    06.1s
+ticket_detail • [   0% ] waiting    06.1s
+ticket_search • [   0% ] waiting    06.1s
+
+running (0m05.0s), 001/090 VUs, 1664 complete and 0 interrupted iterations
+ticket_list     [   4% ] 01/50 VUs  0m04.9s/2m00.0s
+ticket_create • [   0% ] waiting    05.1s
+ticket_detail • [   0% ] waiting    05.1s
+ticket_search • [   0% ] waiting    05.1s
+
+running (0m06.0s), 001/090 VUs, 2534 complete and 0 interrupted iterations
+ticket_list     [   5% ] 01/50 VUs  0m05.9s/2m00.0s
+ticket_create • [   0% ] waiting    04.1s
+ticket_detail • [   0% ] waiting    04.1s
+ticket_search • [   0% ] waiting    04.1s
+
+running (0m07.0s), 002/090 VUs, 4001 complete and 0 interrupted iterations
+ticket_list     [   6% ] 02/50 VUs  0m06.9s/2m00.0s
+ticket_create • [   0% ] waiting    03.1s
+ticket_detail • [   0% ] waiting    03.1s
+ticket_search • [   0% ] waiting    03.1s
+
+running (0m08.0s), 002/090 VUs, 5491 complete and 0 interrupted iterations
+ticket_list     [   7% ] 02/50 VUs  0m07.9s/2m00.0s
+ticket_create • [   0% ] waiting    02.1s
+ticket_detail • [   0% ] waiting    02.1s
+ticket_search • [   0% ] waiting    02.1s
+
+running (0m09.0s), 002/090 VUs, 7020 complete and 0 interrupted iterations
+ticket_list     [   7% ] 02/50 VUs  0m08.9s/2m00.0s
+ticket_create • [   0% ] waiting    01.1s
+ticket_detail • [   0% ] waiting    01.1s
+ticket_search • [   0% ] waiting    01.1s
+
+running (0m10.0s), 003/090 VUs, 9024 complete and 0 interrupted iterations
+ticket_list     [   8% ] 03/50 VUs  0m09.9s/2m00.0s
+ticket_create • [   0% ] waiting    00.1s
+ticket_detail • [   0% ] waiting    00.1s
+ticket_search • [   0% ] waiting    00.1s
+
+running (0m11.0s), 033/090 VUs, 11644 complete and 0 interrupted iterations
+ticket_list     [   9% ] 03/50 VUs  0m10.9s/2m00.0s
+ticket_create   [   1% ] 00/10 VUs  0m00.9s/2m0s  5.00 iters/s
+ticket_detail   [   1% ] 20 VUs     0m00.9s/2m0s 
+ticket_search   [   1% ] 10 VUs     0m00.9s/2m0s 
+
+running (0m12.0s), 033/090 VUs, 14634 complete and 0 interrupted iterations
+ticket_list     [  10% ] 03/50 VUs  0m11.9s/2m00.0s
+ticket_create   [   2% ] 00/10 VUs  0m01.9s/2m0s  5.00 iters/s
+ticket_detail   [   2% ] 20 VUs     0m01.9s/2m0s 
+ticket_search   [   2% ] 10 VUs     0m01.9s/2m0s 
+
+running (0m13.0s), 034/090 VUs, 17548 complete and 0 interrupted iterations
+ticket_list     [  11% ] 04/50 VUs  0m12.9s/2m00.0s
+ticket_create   [   2% ] 00/10 VUs  0m02.9s/2m0s  5.00 iters/s
+ticket_detail   [   2% ] 20 VUs     0m02.9s/2m0s 
+ticket_search   [   2% ] 10 VUs     0m02.9s/2m0s 
+
+running (0m14.0s), 034/090 VUs, 20645 complete and 0 interrupted iterations
+ticket_list     [  12% ] 04/50 VUs  0m13.9s/2m00.0s
+ticket_create   [   3% ] 00/10 VUs  0m03.9s/2m0s  5.00 iters/s
+ticket_detail   [   3% ] 20 VUs     0m03.9s/2m0s 
+ticket_search   [   3% ] 10 VUs     0m03.9s/2m0s 
+
+running (0m15.0s), 034/090 VUs, 23662 complete and 0 interrupted iterations
+ticket_list     [  12% ] 04/50 VUs  0m14.9s/2m00.0s
+ticket_create   [   4% ] 00/10 VUs  0m04.9s/2m0s  5.00 iters/s
+ticket_detail   [   4% ] 20 VUs     0m04.9s/2m0s 
+ticket_search   [   4% ] 10 VUs     0m04.9s/2m0s 
+
+running (0m16.0s), 035/090 VUs, 26414 complete and 0 interrupted iterations
+ticket_list     [  13% ] 05/50 VUs  0m15.9s/2m00.0s
+ticket_create   [   5% ] 00/10 VUs  0m05.9s/2m0s  5.00 iters/s
+ticket_detail   [   5% ] 20 VUs     0m05.9s/2m0s 
+ticket_search   [   5% ] 10 VUs     0m05.9s/2m0s 
+
+running (0m17.0s), 035/090 VUs, 29155 complete and 0 interrupted iterations
+ticket_list     [  14% ] 05/50 VUs  0m16.9s/2m00.0s
+ticket_create   [   6% ] 00/10 VUs  0m06.9s/2m0s  5.00 iters/s
+ticket_detail   [   6% ] 20 VUs     0m06.9s/2m0s 
+ticket_search   [   6% ] 10 VUs     0m06.9s/2m0s 
+
+running (0m18.0s), 035/090 VUs, 32101 complete and 0 interrupted iterations
+ticket_list     [  15% ] 05/50 VUs  0m17.9s/2m00.0s
+ticket_create   [   7% ] 00/10 VUs  0m07.9s/2m0s  5.00 iters/s
+ticket_detail   [   7% ] 20 VUs     0m07.9s/2m0s 
+ticket_search   [   7% ] 10 VUs     0m07.9s/2m0s 
+
+running (0m19.0s), 036/090 VUs, 34972 complete and 0 interrupted iterations
+ticket_list     [  16% ] 06/50 VUs  0m18.9s/2m00.0s
+ticket_create   [   7% ] 00/10 VUs  0m08.9s/2m0s  5.00 iters/s
+ticket_detail   [   7% ] 20 VUs     0m08.9s/2m0s 
+ticket_search   [   7% ] 10 VUs     0m08.9s/2m0s 
+
+running (0m20.0s), 036/090 VUs, 37844 complete and 0 interrupted iterations
+ticket_list     [  17% ] 06/50 VUs  0m19.9s/2m00.0s
+ticket_create   [   8% ] 00/10 VUs  0m09.9s/2m0s  5.00 iters/s
+ticket_detail   [   8% ] 20 VUs     0m09.9s/2m0s 
+ticket_search   [   8% ] 10 VUs     0m09.9s/2m0s 
+
+running (0m21.0s), 036/090 VUs, 40606 complete and 0 interrupted iterations
+ticket_list     [  17% ] 06/50 VUs  0m20.9s/2m00.0s
+ticket_create   [   9% ] 00/10 VUs  0m10.9s/2m0s  5.00 iters/s
+ticket_detail   [   9% ] 20 VUs     0m10.9s/2m0s 
+ticket_search   [   9% ] 10 VUs     0m10.9s/2m0s 
+
+running (0m22.0s), 037/090 VUs, 43494 complete and 0 interrupted iterations
+ticket_list     [  18% ] 07/50 VUs  0m21.9s/2m00.0s
+ticket_create   [  10% ] 00/10 VUs  0m11.9s/2m0s  5.00 iters/s
+ticket_detail   [  10% ] 20 VUs     0m11.9s/2m0s 
+ticket_search   [  10% ] 10 VUs     0m11.9s/2m0s 
+
+running (0m23.0s), 037/090 VUs, 46365 complete and 0 interrupted iterations
+ticket_list     [  19% ] 07/50 VUs  0m22.9s/2m00.0s
+ticket_create   [  11% ] 00/10 VUs  0m12.9s/2m0s  5.00 iters/s
+ticket_detail   [  11% ] 20 VUs     0m12.9s/2m0s 
+ticket_search   [  11% ] 10 VUs     0m12.9s/2m0s 
+
+running (0m24.0s), 037/090 VUs, 49346 complete and 0 interrupted iterations
+ticket_list     [  20% ] 07/50 VUs  0m23.9s/2m00.0s
+ticket_create   [  12% ] 00/10 VUs  0m13.9s/2m0s  5.00 iters/s
+ticket_detail   [  12% ] 20 VUs     0m13.9s/2m0s 
+ticket_search   [  12% ] 10 VUs     0m13.9s/2m0s 
+
+running (0m25.0s), 038/090 VUs, 52416 complete and 0 interrupted iterations
+ticket_list     [  21% ] 08/50 VUs  0m24.9s/2m00.0s
+ticket_create   [  12% ] 00/10 VUs  0m14.9s/2m0s  5.00 iters/s
+ticket_detail   [  12% ] 20 VUs     0m14.9s/2m0s 
+ticket_search   [  12% ] 10 VUs     0m14.9s/2m0s 
+
+running (0m26.0s), 038/090 VUs, 55486 complete and 0 interrupted iterations
+ticket_list     [  22% ] 08/50 VUs  0m25.9s/2m00.0s
+ticket_create   [  13% ] 00/10 VUs  0m15.9s/2m0s  5.00 iters/s
+ticket_detail   [  13% ] 20 VUs     0m15.9s/2m0s 
+ticket_search   [  13% ] 10 VUs     0m15.9s/2m0s 
+
+running (0m27.0s), 038/090 VUs, 58309 complete and 0 interrupted iterations
+ticket_list     [  22% ] 08/50 VUs  0m26.9s/2m00.0s
+ticket_create   [  14% ] 00/10 VUs  0m16.9s/2m0s  5.00 iters/s
+ticket_detail   [  14% ] 20 VUs     0m16.9s/2m0s 
+ticket_search   [  14% ] 10 VUs     0m16.9s/2m0s 
+
+running (0m28.0s), 039/090 VUs, 61089 complete and 0 interrupted iterations
+ticket_list     [  23% ] 09/50 VUs  0m27.9s/2m00.0s
+ticket_create   [  15% ] 00/10 VUs  0m17.9s/2m0s  5.00 iters/s
+ticket_detail   [  15% ] 20 VUs     0m17.9s/2m0s 
+ticket_search   [  15% ] 10 VUs     0m17.9s/2m0s 
+
+running (0m29.0s), 039/090 VUs, 64091 complete and 0 interrupted iterations
+ticket_list     [  24% ] 09/50 VUs  0m28.9s/2m00.0s
+ticket_create   [  16% ] 00/10 VUs  0m18.9s/2m0s  5.00 iters/s
+ticket_detail   [  16% ] 20 VUs     0m18.9s/2m0s 
+ticket_search   [  16% ] 10 VUs     0m18.9s/2m0s 
+
+running (0m30.0s), 039/090 VUs, 66965 complete and 0 interrupted iterations
+ticket_list     [  25% ] 09/50 VUs  0m29.9s/2m00.0s
+ticket_create   [  17% ] 00/10 VUs  0m19.9s/2m0s  5.00 iters/s
+ticket_detail   [  17% ] 20 VUs     0m19.9s/2m0s 
+ticket_search   [  17% ] 10 VUs     0m19.9s/2m0s 
+
+running (0m31.0s), 040/090 VUs, 69684 complete and 0 interrupted iterations
+ticket_list     [  26% ] 10/50 VUs  0m30.9s/2m00.0s
+ticket_create   [  17% ] 00/10 VUs  0m20.9s/2m0s  5.00 iters/s
+ticket_detail   [  17% ] 20 VUs     0m20.9s/2m0s 
+ticket_search   [  17% ] 10 VUs     0m20.9s/2m0s 
+
+running (0m32.0s), 041/090 VUs, 72423 complete and 0 interrupted iterations
+ticket_list     [  27% ] 11/50 VUs  0m31.9s/2m00.0s
+ticket_create   [  18% ] 00/10 VUs  0m21.9s/2m0s  5.00 iters/s
+ticket_detail   [  18% ] 20 VUs     0m21.9s/2m0s 
+ticket_search   [  18% ] 10 VUs     0m21.9s/2m0s 
+
+running (0m33.0s), 041/090 VUs, 75130 complete and 0 interrupted iterations
+ticket_list     [  27% ] 11/50 VUs  0m32.9s/2m00.0s
+ticket_create   [  19% ] 00/10 VUs  0m22.9s/2m0s  5.00 iters/s
+ticket_detail   [  19% ] 20 VUs     0m22.9s/2m0s 
+ticket_search   [  19% ] 10 VUs     0m22.9s/2m0s 
+
+running (0m34.0s), 042/090 VUs, 77912 complete and 0 interrupted iterations
+ticket_list     [  28% ] 12/50 VUs  0m33.9s/2m00.0s
+ticket_create   [  20% ] 00/10 VUs  0m23.9s/2m0s  5.00 iters/s
+ticket_detail   [  20% ] 20 VUs     0m23.9s/2m0s 
+ticket_search   [  20% ] 10 VUs     0m23.9s/2m0s 
+
+running (0m35.0s), 043/090 VUs, 80766 complete and 0 interrupted iterations
+ticket_list     [  29% ] 13/50 VUs  0m34.9s/2m00.0s
+ticket_create   [  21% ] 00/10 VUs  0m24.9s/2m0s  5.00 iters/s
+ticket_detail   [  21% ] 20 VUs     0m24.9s/2m0s 
+ticket_search   [  21% ] 10 VUs     0m24.9s/2m0s 
+
+running (0m36.0s), 043/090 VUs, 83664 complete and 0 interrupted iterations
+ticket_list     [  30% ] 13/50 VUs  0m35.9s/2m00.0s
+ticket_create   [  22% ] 00/10 VUs  0m25.9s/2m0s  5.00 iters/s
+ticket_detail   [  22% ] 20 VUs     0m25.9s/2m0s 
+ticket_search   [  22% ] 10 VUs     0m25.9s/2m0s 
+
+running (0m37.0s), 044/090 VUs, 86440 complete and 0 interrupted iterations
+ticket_list     [  31% ] 14/50 VUs  0m36.9s/2m00.0s
+ticket_create   [  22% ] 00/10 VUs  0m26.9s/2m0s  5.00 iters/s
+ticket_detail   [  22% ] 20 VUs     0m26.9s/2m0s 
+ticket_search   [  22% ] 10 VUs     0m26.9s/2m0s 
+
+running (0m38.0s), 045/090 VUs, 89232 complete and 0 interrupted iterations
+ticket_list     [  32% ] 15/50 VUs  0m37.9s/2m00.0s
+ticket_create   [  23% ] 00/10 VUs  0m27.9s/2m0s  5.00 iters/s
+ticket_detail   [  23% ] 20 VUs     0m27.9s/2m0s 
+ticket_search   [  23% ] 10 VUs     0m27.9s/2m0s 
+
+running (0m39.0s), 045/090 VUs, 92104 complete and 0 interrupted iterations
+ticket_list     [  32% ] 15/50 VUs  0m38.9s/2m00.0s
+ticket_create   [  24% ] 00/10 VUs  0m28.9s/2m0s  5.00 iters/s
+ticket_detail   [  24% ] 20 VUs     0m28.9s/2m0s 
+ticket_search   [  24% ] 10 VUs     0m28.9s/2m0s 
+
+running (0m40.0s), 046/090 VUs, 94813 complete and 0 interrupted iterations
+ticket_list     [  33% ] 16/50 VUs  0m39.9s/2m00.0s
+ticket_create   [  25% ] 00/10 VUs  0m29.9s/2m0s  5.00 iters/s
+ticket_detail   [  25% ] 20 VUs     0m29.9s/2m0s 
+ticket_search   [  25% ] 10 VUs     0m29.9s/2m0s 
+
+running (0m41.0s), 047/090 VUs, 97785 complete and 0 interrupted iterations
+ticket_list     [  34% ] 17/50 VUs  0m40.9s/2m00.0s
+ticket_create   [  26% ] 00/10 VUs  0m30.9s/2m0s  5.00 iters/s
+ticket_detail   [  26% ] 20 VUs     0m30.9s/2m0s 
+ticket_search   [  26% ] 10 VUs     0m30.9s/2m0s 
+
+running (0m42.0s), 047/090 VUs, 100571 complete and 0 interrupted iterations
+ticket_list     [  35% ] 17/50 VUs  0m41.9s/2m00.0s
+ticket_create   [  27% ] 00/10 VUs  0m31.9s/2m0s  5.00 iters/s
+ticket_detail   [  27% ] 20 VUs     0m31.9s/2m0s 
+ticket_search   [  27% ] 10 VUs     0m31.9s/2m0s 
+
+running (0m43.0s), 048/090 VUs, 103285 complete and 0 interrupted iterations
+ticket_list     [  36% ] 18/50 VUs  0m42.9s/2m00.0s
+ticket_create   [  27% ] 00/10 VUs  0m32.9s/2m0s  5.00 iters/s
+ticket_detail   [  27% ] 20 VUs     0m32.9s/2m0s 
+ticket_search   [  27% ] 10 VUs     0m32.9s/2m0s 
+
+running (0m44.0s), 049/090 VUs, 106104 complete and 0 interrupted iterations
+ticket_list     [  37% ] 19/50 VUs  0m43.9s/2m00.0s
+ticket_create   [  28% ] 00/10 VUs  0m33.9s/2m0s  5.00 iters/s
+ticket_detail   [  28% ] 20 VUs     0m33.9s/2m0s 
+ticket_search   [  28% ] 10 VUs     0m33.9s/2m0s 
+
+running (0m45.0s), 049/090 VUs, 108769 complete and 0 interrupted iterations
+ticket_list     [  37% ] 19/50 VUs  0m44.9s/2m00.0s
+ticket_create   [  29% ] 00/10 VUs  0m34.9s/2m0s  5.00 iters/s
+ticket_detail   [  29% ] 20 VUs     0m34.9s/2m0s 
+ticket_search   [  29% ] 10 VUs     0m34.9s/2m0s 
+
+running (0m46.0s), 050/090 VUs, 111594 complete and 0 interrupted iterations
+ticket_list     [  38% ] 20/50 VUs  0m45.9s/2m00.0s
+ticket_create   [  30% ] 00/10 VUs  0m35.9s/2m0s  5.00 iters/s
+ticket_detail   [  30% ] 20 VUs     0m35.9s/2m0s 
+ticket_search   [  30% ] 10 VUs     0m35.9s/2m0s 
+
+running (0m47.0s), 051/090 VUs, 114401 complete and 0 interrupted iterations
+ticket_list     [  39% ] 21/50 VUs  0m46.9s/2m00.0s
+ticket_create   [  31% ] 00/10 VUs  0m36.9s/2m0s  5.00 iters/s
+ticket_detail   [  31% ] 20 VUs     0m36.9s/2m0s 
+ticket_search   [  31% ] 10 VUs     0m36.9s/2m0s 
+
+running (0m48.0s), 051/090 VUs, 117104 complete and 0 interrupted iterations
+ticket_list     [  40% ] 21/50 VUs  0m47.9s/2m00.0s
+ticket_create   [  32% ] 00/10 VUs  0m37.9s/2m0s  5.00 iters/s
+ticket_detail   [  32% ] 20 VUs     0m37.9s/2m0s 
+ticket_search   [  32% ] 10 VUs     0m37.9s/2m0s 
+
+running (0m49.0s), 052/090 VUs, 119850 complete and 0 interrupted iterations
+ticket_list     [  41% ] 22/50 VUs  0m48.9s/2m00.0s
+ticket_create   [  32% ] 00/10 VUs  0m38.9s/2m0s  5.00 iters/s
+ticket_detail   [  32% ] 20 VUs     0m38.9s/2m0s 
+ticket_search   [  32% ] 10 VUs     0m38.9s/2m0s 
+
+running (0m50.0s), 053/090 VUs, 122682 complete and 0 interrupted iterations
+ticket_list     [  42% ] 23/50 VUs  0m49.9s/2m00.0s
+ticket_create   [  33% ] 00/10 VUs  0m39.9s/2m0s  5.00 iters/s
+ticket_detail   [  33% ] 20 VUs     0m39.9s/2m0s 
+ticket_search   [  33% ] 10 VUs     0m39.9s/2m0s 
+
+running (0m51.0s), 053/090 VUs, 125283 complete and 0 interrupted iterations
+ticket_list     [  42% ] 23/50 VUs  0m50.9s/2m00.0s
+ticket_create   [  34% ] 00/10 VUs  0m40.9s/2m0s  5.00 iters/s
+ticket_detail   [  34% ] 20 VUs     0m40.9s/2m0s 
+ticket_search   [  34% ] 10 VUs     0m40.9s/2m0s 
+
+running (0m52.0s), 054/090 VUs, 128045 complete and 0 interrupted iterations
+ticket_list     [  43% ] 24/50 VUs  0m51.9s/2m00.0s
+ticket_create   [  35% ] 00/10 VUs  0m41.9s/2m0s  5.00 iters/s
+ticket_detail   [  35% ] 20 VUs     0m41.9s/2m0s 
+ticket_search   [  35% ] 10 VUs     0m41.9s/2m0s 
+
+running (0m53.0s), 055/090 VUs, 130996 complete and 0 interrupted iterations
+ticket_list     [  44% ] 25/50 VUs  0m52.9s/2m00.0s
+ticket_create   [  36% ] 00/10 VUs  0m42.9s/2m0s  5.00 iters/s
+ticket_detail   [  36% ] 20 VUs     0m42.9s/2m0s 
+ticket_search   [  36% ] 10 VUs     0m42.9s/2m0s 
+
+running (0m54.0s), 055/090 VUs, 133811 complete and 0 interrupted iterations
+ticket_list     [  45% ] 25/50 VUs  0m53.9s/2m00.0s
+ticket_create   [  37% ] 00/10 VUs  0m43.9s/2m0s  5.00 iters/s
+ticket_detail   [  37% ] 20 VUs     0m43.9s/2m0s 
+ticket_search   [  37% ] 10 VUs     0m43.9s/2m0s 
+
+running (0m55.0s), 056/090 VUs, 136981 complete and 0 interrupted iterations
+ticket_list     [  46% ] 26/50 VUs  0m54.9s/2m00.0s
+ticket_create   [  37% ] 00/10 VUs  0m44.9s/2m0s  5.00 iters/s
+ticket_detail   [  37% ] 20 VUs     0m44.9s/2m0s 
+ticket_search   [  37% ] 10 VUs     0m44.9s/2m0s 
+
+running (0m56.0s), 057/090 VUs, 140163 complete and 0 interrupted iterations
+ticket_list     [  47% ] 27/50 VUs  0m55.9s/2m00.0s
+ticket_create   [  38% ] 00/10 VUs  0m45.9s/2m0s  5.00 iters/s
+ticket_detail   [  38% ] 20 VUs     0m45.9s/2m0s 
+ticket_search   [  38% ] 10 VUs     0m45.9s/2m0s 
+
+running (0m57.0s), 057/090 VUs, 143339 complete and 0 interrupted iterations
+ticket_list     [  47% ] 27/50 VUs  0m56.9s/2m00.0s
+ticket_create   [  39% ] 00/10 VUs  0m46.9s/2m0s  5.00 iters/s
+ticket_detail   [  39% ] 20 VUs     0m46.9s/2m0s 
+ticket_search   [  39% ] 10 VUs     0m46.9s/2m0s 
+
+running (0m58.0s), 058/090 VUs, 146486 complete and 0 interrupted iterations
+ticket_list     [  48% ] 28/50 VUs  0m57.9s/2m00.0s
+ticket_create   [  40% ] 00/10 VUs  0m47.9s/2m0s  5.00 iters/s
+ticket_detail   [  40% ] 20 VUs     0m47.9s/2m0s 
+ticket_search   [  40% ] 10 VUs     0m47.9s/2m0s 
+
+running (0m59.0s), 059/090 VUs, 149537 complete and 0 interrupted iterations
+ticket_list     [  49% ] 29/50 VUs  0m58.9s/2m00.0s
+ticket_create   [  41% ] 00/10 VUs  0m48.9s/2m0s  5.00 iters/s
+ticket_detail   [  41% ] 20 VUs     0m48.9s/2m0s 
+ticket_search   [  41% ] 10 VUs     0m48.9s/2m0s 
+
+running (1m00.0s), 059/090 VUs, 152100 complete and 0 interrupted iterations
+ticket_list     [  50% ] 29/50 VUs  0m59.9s/2m00.0s
+ticket_create   [  42% ] 00/10 VUs  0m49.9s/2m0s  5.00 iters/s
+ticket_detail   [  42% ] 20 VUs     0m49.9s/2m0s 
+ticket_search   [  42% ] 10 VUs     0m49.9s/2m0s 
+
+running (1m01.0s), 060/090 VUs, 154693 complete and 0 interrupted iterations
+ticket_list     [  51% ] 30/50 VUs  1m00.9s/2m00.0s
+ticket_create   [  42% ] 00/10 VUs  0m50.9s/2m0s  5.00 iters/s
+ticket_detail   [  42% ] 20 VUs     0m50.9s/2m0s 
+ticket_search   [  42% ] 10 VUs     0m50.9s/2m0s 
+
+running (1m02.0s), 061/090 VUs, 157633 complete and 0 interrupted iterations
+ticket_list     [  52% ] 31/50 VUs  1m01.9s/2m00.0s
+ticket_create   [  43% ] 00/10 VUs  0m51.9s/2m0s  5.00 iters/s
+ticket_detail   [  43% ] 20 VUs     0m51.9s/2m0s 
+ticket_search   [  43% ] 10 VUs     0m51.9s/2m0s 
+
+running (1m03.0s), 061/090 VUs, 160446 complete and 0 interrupted iterations
+ticket_list     [  52% ] 31/50 VUs  1m02.9s/2m00.0s
+ticket_create   [  44% ] 00/10 VUs  0m52.9s/2m0s  5.00 iters/s
+ticket_detail   [  44% ] 20 VUs     0m52.9s/2m0s 
+ticket_search   [  44% ] 10 VUs     0m52.9s/2m0s 
+
+running (1m04.0s), 062/090 VUs, 163405 complete and 0 interrupted iterations
+ticket_list     [  53% ] 32/50 VUs  1m03.9s/2m00.0s
+ticket_create   [  45% ] 00/10 VUs  0m53.9s/2m0s  5.00 iters/s
+ticket_detail   [  45% ] 20 VUs     0m53.9s/2m0s 
+ticket_search   [  45% ] 10 VUs     0m53.9s/2m0s 
+
+running (1m05.0s), 063/090 VUs, 166470 complete and 0 interrupted iterations
+ticket_list     [  54% ] 33/50 VUs  1m04.9s/2m00.0s
+ticket_create   [  46% ] 00/10 VUs  0m54.9s/2m0s  5.00 iters/s
+ticket_detail   [  46% ] 20 VUs     0m54.9s/2m0s 
+ticket_search   [  46% ] 10 VUs     0m54.9s/2m0s 
+
+running (1m06.0s), 063/090 VUs, 169833 complete and 0 interrupted iterations
+ticket_list     [  55% ] 33/50 VUs  1m05.9s/2m00.0s
+ticket_create   [  47% ] 00/10 VUs  0m55.9s/2m0s  5.00 iters/s
+ticket_detail   [  47% ] 20 VUs     0m55.9s/2m0s 
+ticket_search   [  47% ] 10 VUs     0m55.9s/2m0s 
+
+running (1m07.0s), 064/090 VUs, 173152 complete and 0 interrupted iterations
+ticket_list     [  56% ] 34/50 VUs  1m06.9s/2m00.0s
+ticket_create   [  47% ] 00/10 VUs  0m56.9s/2m0s  5.00 iters/s
+ticket_detail   [  47% ] 20 VUs     0m56.9s/2m0s 
+ticket_search   [  47% ] 10 VUs     0m56.9s/2m0s 
+
+running (1m08.0s), 065/090 VUs, 176377 complete and 0 interrupted iterations
+ticket_list     [  57% ] 35/50 VUs  1m07.9s/2m00.0s
+ticket_create   [  48% ] 00/10 VUs  0m57.9s/2m0s  5.00 iters/s
+ticket_detail   [  48% ] 20 VUs     0m57.9s/2m0s 
+ticket_search   [  48% ] 10 VUs     0m57.9s/2m0s 
+
+running (1m09.0s), 065/090 VUs, 179498 complete and 0 interrupted iterations
+ticket_list     [  57% ] 35/50 VUs  1m08.9s/2m00.0s
+ticket_create   [  49% ] 00/10 VUs  0m58.9s/2m0s  5.00 iters/s
+ticket_detail   [  49% ] 20 VUs     0m58.9s/2m0s 
+ticket_search   [  49% ] 10 VUs     0m58.9s/2m0s 
+
+running (1m10.0s), 066/090 VUs, 182897 complete and 0 interrupted iterations
+ticket_list     [  58% ] 36/50 VUs  1m09.9s/2m00.0s
+ticket_create   [  50% ] 00/10 VUs  0m59.9s/2m0s  5.00 iters/s
+ticket_detail   [  50% ] 20 VUs     0m59.9s/2m0s 
+ticket_search   [  50% ] 10 VUs     0m59.9s/2m0s 
+
+running (1m11.0s), 067/090 VUs, 185538 complete and 0 interrupted iterations
+ticket_list     [  59% ] 37/50 VUs  1m10.9s/2m00.0s
+ticket_create   [  51% ] 00/10 VUs  1m00.9s/2m0s  5.00 iters/s
+ticket_detail   [  51% ] 20 VUs     1m00.9s/2m0s 
+ticket_search   [  51% ] 10 VUs     1m00.9s/2m0s 
+
+running (1m12.0s), 067/090 VUs, 188077 complete and 0 interrupted iterations
+ticket_list     [  60% ] 37/50 VUs  1m11.9s/2m00.0s
+ticket_create   [  52% ] 00/10 VUs  1m01.9s/2m0s  5.00 iters/s
+ticket_detail   [  52% ] 20 VUs     1m01.9s/2m0s 
+ticket_search   [  52% ] 10 VUs     1m01.9s/2m0s 
+
+running (1m13.0s), 068/090 VUs, 190251 complete and 0 interrupted iterations
+ticket_list     [  61% ] 38/50 VUs  1m12.9s/2m00.0s
+ticket_create   [  52% ] 00/10 VUs  1m02.9s/2m0s  5.00 iters/s
+ticket_detail   [  52% ] 20 VUs     1m02.9s/2m0s 
+ticket_search   [  52% ] 10 VUs     1m02.9s/2m0s 
+
+running (1m14.0s), 069/090 VUs, 192258 complete and 0 interrupted iterations
+ticket_list     [  62% ] 39/50 VUs  1m13.9s/2m00.0s
+ticket_create   [  53% ] 00/10 VUs  1m03.9s/2m0s  5.00 iters/s
+ticket_detail   [  53% ] 20 VUs     1m03.9s/2m0s 
+ticket_search   [  53% ] 10 VUs     1m03.9s/2m0s 
+
+running (1m15.0s), 069/090 VUs, 194106 complete and 0 interrupted iterations
+ticket_list     [  62% ] 39/50 VUs  1m14.9s/2m00.0s
+ticket_create   [  54% ] 00/10 VUs  1m04.9s/2m0s  5.00 iters/s
+ticket_detail   [  54% ] 20 VUs     1m04.9s/2m0s 
+ticket_search   [  54% ] 10 VUs     1m04.9s/2m0s 
+
+running (1m16.0s), 070/090 VUs, 195590 complete and 0 interrupted iterations
+ticket_list     [  63% ] 40/50 VUs  1m15.9s/2m00.0s
+ticket_create   [  55% ] 00/10 VUs  1m05.9s/2m0s  5.00 iters/s
+ticket_detail   [  55% ] 20 VUs     1m05.9s/2m0s 
+ticket_search   [  55% ] 10 VUs     1m05.9s/2m0s 
+
+running (1m17.0s), 071/090 VUs, 198134 complete and 0 interrupted iterations
+ticket_list     [  64% ] 41/50 VUs  1m16.9s/2m00.0s
+ticket_create   [  56% ] 00/10 VUs  1m06.9s/2m0s  5.00 iters/s
+ticket_detail   [  56% ] 20 VUs     1m06.9s/2m0s 
+ticket_search   [  56% ] 10 VUs     1m06.9s/2m0s 
+
+running (1m18.0s), 071/090 VUs, 201091 complete and 0 interrupted iterations
+ticket_list     [  65% ] 41/50 VUs  1m18.0s/2m00.0s
+ticket_create   [  57% ] 00/10 VUs  1m08.0s/2m0s  5.00 iters/s
+ticket_detail   [  57% ] 20 VUs     1m08.0s/2m0s 
+ticket_search   [  57% ] 10 VUs     1m08.0s/2m0s 
+
+running (1m19.0s), 072/090 VUs, 203743 complete and 0 interrupted iterations
+ticket_list     [  66% ] 42/50 VUs  1m18.9s/2m00.0s
+ticket_create   [  57% ] 00/10 VUs  1m08.9s/2m0s  5.00 iters/s
+ticket_detail   [  57% ] 20 VUs     1m08.9s/2m0s 
+ticket_search   [  57% ] 10 VUs     1m08.9s/2m0s 
+
+running (1m20.0s), 073/090 VUs, 206206 complete and 0 interrupted iterations
+ticket_list     [  67% ] 43/50 VUs  1m19.9s/2m00.0s
+ticket_create   [  58% ] 00/10 VUs  1m09.9s/2m0s  5.00 iters/s
+ticket_detail   [  58% ] 20 VUs     1m09.9s/2m0s 
+ticket_search   [  58% ] 10 VUs     1m09.9s/2m0s 
+
+running (1m21.0s), 073/090 VUs, 208771 complete and 0 interrupted iterations
+ticket_list     [  67% ] 43/50 VUs  1m20.9s/2m00.0s
+ticket_create   [  59% ] 00/10 VUs  1m10.9s/2m0s  5.00 iters/s
+ticket_detail   [  59% ] 20 VUs     1m10.9s/2m0s 
+ticket_search   [  59% ] 10 VUs     1m10.9s/2m0s 
+
+running (1m22.0s), 074/090 VUs, 211424 complete and 0 interrupted iterations
+ticket_list     [  68% ] 44/50 VUs  1m21.9s/2m00.0s
+ticket_create   [  60% ] 00/10 VUs  1m11.9s/2m0s  5.00 iters/s
+ticket_detail   [  60% ] 20 VUs     1m11.9s/2m0s 
+ticket_search   [  60% ] 10 VUs     1m11.9s/2m0s 
+
+running (1m23.0s), 075/090 VUs, 214287 complete and 0 interrupted iterations
+ticket_list     [  69% ] 45/50 VUs  1m22.9s/2m00.0s
+ticket_create   [  61% ] 00/10 VUs  1m12.9s/2m0s  5.00 iters/s
+ticket_detail   [  61% ] 20 VUs     1m12.9s/2m0s 
+ticket_search   [  61% ] 10 VUs     1m12.9s/2m0s 
+
+running (1m24.0s), 075/090 VUs, 217283 complete and 0 interrupted iterations
+ticket_list     [  70% ] 45/50 VUs  1m23.9s/2m00.0s
+ticket_create   [  62% ] 00/10 VUs  1m13.9s/2m0s  5.00 iters/s
+ticket_detail   [  62% ] 20 VUs     1m13.9s/2m0s 
+ticket_search   [  62% ] 10 VUs     1m13.9s/2m0s 
+
+running (1m25.0s), 076/090 VUs, 220171 complete and 0 interrupted iterations
+ticket_list     [  71% ] 46/50 VUs  1m24.9s/2m00.0s
+ticket_create   [  62% ] 00/10 VUs  1m14.9s/2m0s  5.00 iters/s
+ticket_detail   [  62% ] 20 VUs     1m14.9s/2m0s 
+ticket_search   [  62% ] 10 VUs     1m14.9s/2m0s 
+
+running (1m26.0s), 077/090 VUs, 223064 complete and 0 interrupted iterations
+ticket_list     [  72% ] 47/50 VUs  1m25.9s/2m00.0s
+ticket_create   [  63% ] 00/10 VUs  1m15.9s/2m0s  5.00 iters/s
+ticket_detail   [  63% ] 20 VUs     1m15.9s/2m0s 
+ticket_search   [  63% ] 10 VUs     1m15.9s/2m0s 
+
+running (1m27.0s), 077/090 VUs, 225887 complete and 0 interrupted iterations
+ticket_list     [  72% ] 47/50 VUs  1m26.9s/2m00.0s
+ticket_create   [  64% ] 00/10 VUs  1m16.9s/2m0s  5.00 iters/s
+ticket_detail   [  64% ] 20 VUs     1m16.9s/2m0s 
+ticket_search   [  64% ] 10 VUs     1m16.9s/2m0s 
+
+running (1m28.0s), 078/090 VUs, 228832 complete and 0 interrupted iterations
+ticket_list     [  73% ] 48/50 VUs  1m27.9s/2m00.0s
+ticket_create   [  65% ] 00/10 VUs  1m17.9s/2m0s  5.00 iters/s
+ticket_detail   [  65% ] 20 VUs     1m17.9s/2m0s 
+ticket_search   [  65% ] 10 VUs     1m17.9s/2m0s 
+
+running (1m29.0s), 079/090 VUs, 231175 complete and 0 interrupted iterations
+ticket_list     [  74% ] 49/50 VUs  1m28.9s/2m00.0s
+ticket_create   [  66% ] 00/10 VUs  1m18.9s/2m0s  5.00 iters/s
+ticket_detail   [  66% ] 20 VUs     1m18.9s/2m0s 
+ticket_search   [  66% ] 10 VUs     1m18.9s/2m0s 
+
+running (1m30.0s), 079/090 VUs, 233614 complete and 0 interrupted iterations
+ticket_list     [  75% ] 49/50 VUs  1m29.9s/2m00.0s
+ticket_create   [  67% ] 00/10 VUs  1m19.9s/2m0s  5.00 iters/s
+ticket_detail   [  67% ] 20 VUs     1m19.9s/2m0s 
+ticket_search   [  67% ] 10 VUs     1m19.9s/2m0s 
+
+running (1m31.0s), 079/090 VUs, 236313 complete and 0 interrupted iterations
+ticket_list     [  76% ] 49/50 VUs  1m30.9s/2m00.0s
+ticket_create   [  67% ] 00/10 VUs  1m20.9s/2m0s  5.00 iters/s
+ticket_detail   [  67% ] 20 VUs     1m20.9s/2m0s 
+ticket_search   [  67% ] 10 VUs     1m20.9s/2m0s 
+
+running (1m32.0s), 077/090 VUs, 239366 complete and 0 interrupted iterations
+ticket_list     [  77% ] 47/50 VUs  1m31.9s/2m00.0s
+ticket_create   [  68% ] 00/10 VUs  1m21.9s/2m0s  5.00 iters/s
+ticket_detail   [  68% ] 20 VUs     1m21.9s/2m0s 
+ticket_search   [  68% ] 10 VUs     1m21.9s/2m0s 
+
+running (1m33.0s), 076/090 VUs, 242065 complete and 0 interrupted iterations
+ticket_list     [  77% ] 46/50 VUs  1m32.9s/2m00.0s
+ticket_create   [  69% ] 00/10 VUs  1m22.9s/2m0s  5.00 iters/s
+ticket_detail   [  69% ] 20 VUs     1m22.9s/2m0s 
+ticket_search   [  69% ] 10 VUs     1m22.9s/2m0s 
+
+running (1m34.0s), 074/090 VUs, 244317 complete and 0 interrupted iterations
+ticket_list     [  78% ] 44/50 VUs  1m33.9s/2m00.0s
+ticket_create   [  70% ] 00/10 VUs  1m23.9s/2m0s  5.00 iters/s
+ticket_detail   [  70% ] 20 VUs     1m23.9s/2m0s 
+ticket_search   [  70% ] 10 VUs     1m23.9s/2m0s 
+
+running (1m35.0s), 072/090 VUs, 246455 complete and 0 interrupted iterations
+ticket_list     [  79% ] 42/50 VUs  1m34.9s/2m00.0s
+ticket_create   [  71% ] 00/10 VUs  1m24.9s/2m0s  5.00 iters/s
+ticket_detail   [  71% ] 20 VUs     1m24.9s/2m0s 
+ticket_search   [  71% ] 10 VUs     1m24.9s/2m0s 
+
+running (1m36.0s), 071/090 VUs, 248710 complete and 0 interrupted iterations
+ticket_list     [  80% ] 41/50 VUs  1m35.9s/2m00.0s
+ticket_create   [  72% ] 00/10 VUs  1m25.9s/2m0s  5.00 iters/s
+ticket_detail   [  72% ] 20 VUs     1m25.9s/2m0s 
+ticket_search   [  72% ] 10 VUs     1m25.9s/2m0s 
+
+running (1m37.0s), 069/090 VUs, 250887 complete and 0 interrupted iterations
+ticket_list     [  81% ] 39/50 VUs  1m36.9s/2m00.0s
+ticket_create   [  72% ] 00/10 VUs  1m26.9s/2m0s  5.00 iters/s
+ticket_detail   [  72% ] 20 VUs     1m26.9s/2m0s 
+ticket_search   [  72% ] 10 VUs     1m26.9s/2m0s 
+
+running (1m38.0s), 067/090 VUs, 253343 complete and 0 interrupted iterations
+ticket_list     [  82% ] 37/50 VUs  1m37.9s/2m00.0s
+ticket_create   [  73% ] 00/10 VUs  1m27.9s/2m0s  5.00 iters/s
+ticket_detail   [  73% ] 20 VUs     1m27.9s/2m0s 
+ticket_search   [  73% ] 10 VUs     1m27.9s/2m0s 
+
+running (1m39.0s), 066/090 VUs, 255740 complete and 0 interrupted iterations
+ticket_list     [  82% ] 36/50 VUs  1m38.9s/2m00.0s
+ticket_create   [  74% ] 00/10 VUs  1m28.9s/2m0s  5.00 iters/s
+ticket_detail   [  74% ] 20 VUs     1m28.9s/2m0s 
+ticket_search   [  74% ] 10 VUs     1m28.9s/2m0s 
+
+running (1m40.0s), 064/090 VUs, 258436 complete and 0 interrupted iterations
+ticket_list     [  83% ] 34/50 VUs  1m39.9s/2m00.0s
+ticket_create   [  75% ] 00/10 VUs  1m29.9s/2m0s  5.00 iters/s
+ticket_detail   [  75% ] 20 VUs     1m29.9s/2m0s 
+ticket_search   [  75% ] 10 VUs     1m29.9s/2m0s 
+
+running (1m41.0s), 062/090 VUs, 261261 complete and 0 interrupted iterations
+ticket_list     [  84% ] 32/50 VUs  1m40.9s/2m00.0s
+ticket_create   [  76% ] 00/10 VUs  1m30.9s/2m0s  5.00 iters/s
+ticket_detail   [  76% ] 20 VUs     1m30.9s/2m0s 
+ticket_search   [  76% ] 10 VUs     1m30.9s/2m0s 
+
+running (1m42.0s), 061/090 VUs, 264083 complete and 0 interrupted iterations
+ticket_list     [  85% ] 31/50 VUs  1m41.9s/2m00.0s
+ticket_create   [  77% ] 00/10 VUs  1m31.9s/2m0s  5.00 iters/s
+ticket_detail   [  77% ] 20 VUs     1m31.9s/2m0s 
+ticket_search   [  77% ] 10 VUs     1m31.9s/2m0s 
+
+running (1m43.0s), 059/090 VUs, 266807 complete and 0 interrupted iterations
+ticket_list     [  86% ] 29/50 VUs  1m42.9s/2m00.0s
+ticket_create   [  77% ] 00/10 VUs  1m32.9s/2m0s  5.00 iters/s
+ticket_detail   [  77% ] 20 VUs     1m32.9s/2m0s 
+ticket_search   [  77% ] 10 VUs     1m32.9s/2m0s 
+
+running (1m44.0s), 057/090 VUs, 269211 complete and 0 interrupted iterations
+ticket_list     [  87% ] 27/50 VUs  1m43.9s/2m00.0s
+ticket_create   [  78% ] 00/10 VUs  1m33.9s/2m0s  5.00 iters/s
+ticket_detail   [  78% ] 20 VUs     1m33.9s/2m0s 
+ticket_search   [  78% ] 10 VUs     1m33.9s/2m0s 
+
+running (1m45.0s), 056/090 VUs, 271437 complete and 0 interrupted iterations
+ticket_list     [  87% ] 26/50 VUs  1m44.9s/2m00.0s
+ticket_create   [  79% ] 00/10 VUs  1m34.9s/2m0s  5.00 iters/s
+ticket_detail   [  79% ] 20 VUs     1m34.9s/2m0s 
+ticket_search   [  79% ] 10 VUs     1m34.9s/2m0s 
+
+running (1m46.0s), 054/090 VUs, 273526 complete and 0 interrupted iterations
+ticket_list     [  88% ] 24/50 VUs  1m45.9s/2m00.0s
+ticket_create   [  80% ] 00/10 VUs  1m35.9s/2m0s  5.00 iters/s
+ticket_detail   [  80% ] 20 VUs     1m35.9s/2m0s 
+ticket_search   [  80% ] 10 VUs     1m35.9s/2m0s 
+
+running (1m47.0s), 052/090 VUs, 275797 complete and 0 interrupted iterations
+ticket_list     [  89% ] 22/50 VUs  1m46.9s/2m00.0s
+ticket_create   [  81% ] 00/10 VUs  1m36.9s/2m0s  5.00 iters/s
+ticket_detail   [  81% ] 20 VUs     1m36.9s/2m0s 
+ticket_search   [  81% ] 10 VUs     1m36.9s/2m0s 
+
+running (1m48.0s), 051/090 VUs, 278108 complete and 0 interrupted iterations
+ticket_list     [  90% ] 21/50 VUs  1m47.9s/2m00.0s
+ticket_create   [  82% ] 00/10 VUs  1m37.9s/2m0s  5.00 iters/s
+ticket_detail   [  82% ] 20 VUs     1m37.9s/2m0s 
+ticket_search   [  82% ] 10 VUs     1m37.9s/2m0s 
+
+running (1m49.0s), 049/090 VUs, 280800 complete and 0 interrupted iterations
+ticket_list     [  91% ] 19/50 VUs  1m48.9s/2m00.0s
+ticket_create   [  82% ] 00/10 VUs  1m38.9s/2m0s  5.00 iters/s
+ticket_detail   [  82% ] 20 VUs     1m38.9s/2m0s 
+ticket_search   [  82% ] 10 VUs     1m38.9s/2m0s 
+
+running (1m50.0s), 047/090 VUs, 283376 complete and 0 interrupted iterations
+ticket_list     [  92% ] 17/50 VUs  1m49.9s/2m00.0s
+ticket_create   [  83% ] 00/10 VUs  1m39.9s/2m0s  5.00 iters/s
+ticket_detail   [  83% ] 20 VUs     1m39.9s/2m0s 
+ticket_search   [  83% ] 10 VUs     1m39.9s/2m0s 
+
+running (1m51.0s), 046/090 VUs, 285767 complete and 0 interrupted iterations
+ticket_list     [  92% ] 16/50 VUs  1m50.9s/2m00.0s
+ticket_create   [  84% ] 00/10 VUs  1m40.9s/2m0s  5.00 iters/s
+ticket_detail   [  84% ] 20 VUs     1m40.9s/2m0s 
+ticket_search   [  84% ] 10 VUs     1m40.9s/2m0s 
+
+running (1m52.0s), 044/090 VUs, 288247 complete and 0 interrupted iterations
+ticket_list     [  93% ] 14/50 VUs  1m51.9s/2m00.0s
+ticket_create   [  85% ] 00/10 VUs  1m41.9s/2m0s  5.00 iters/s
+ticket_detail   [  85% ] 20 VUs     1m41.9s/2m0s 
+ticket_search   [  85% ] 10 VUs     1m41.9s/2m0s 
+
+running (1m53.0s), 042/090 VUs, 290339 complete and 0 interrupted iterations
+ticket_list     [  94% ] 12/50 VUs  1m52.9s/2m00.0s
+ticket_create   [  86% ] 00/10 VUs  1m42.9s/2m0s  5.00 iters/s
+ticket_detail   [  86% ] 20 VUs     1m42.9s/2m0s 
+ticket_search   [  86% ] 10 VUs     1m42.9s/2m0s 
+
+running (1m54.0s), 041/090 VUs, 292577 complete and 0 interrupted iterations
+ticket_list     [  95% ] 11/50 VUs  1m53.9s/2m00.0s
+ticket_create   [  87% ] 00/10 VUs  1m43.9s/2m0s  5.00 iters/s
+ticket_detail   [  87% ] 20 VUs     1m43.9s/2m0s 
+ticket_search   [  87% ] 10 VUs     1m43.9s/2m0s 
+
+running (1m55.0s), 039/090 VUs, 294813 complete and 0 interrupted iterations
+ticket_list     [  96% ] 09/50 VUs  1m54.9s/2m00.0s
+ticket_create   [  87% ] 00/10 VUs  1m44.9s/2m0s  5.00 iters/s
+ticket_detail   [  87% ] 20 VUs     1m44.9s/2m0s 
+ticket_search   [  87% ] 10 VUs     1m44.9s/2m0s 
+
+running (1m56.0s), 037/090 VUs, 297304 complete and 0 interrupted iterations
+ticket_list     [  97% ] 07/50 VUs  1m55.9s/2m00.0s
+ticket_create   [  88% ] 00/10 VUs  1m45.9s/2m0s  5.00 iters/s
+ticket_detail   [  88% ] 20 VUs     1m45.9s/2m0s 
+ticket_search   [  88% ] 10 VUs     1m45.9s/2m0s 
+
+running (1m57.0s), 036/090 VUs, 299631 complete and 0 interrupted iterations
+ticket_list     [  97% ] 06/50 VUs  1m56.9s/2m00.0s
+ticket_create   [  89% ] 00/10 VUs  1m46.9s/2m0s  5.00 iters/s
+ticket_detail   [  89% ] 20 VUs     1m46.9s/2m0s 
+ticket_search   [  89% ] 10 VUs     1m46.9s/2m0s 
+
+running (1m58.0s), 034/090 VUs, 301962 complete and 0 interrupted iterations
+ticket_list     [  98% ] 04/50 VUs  1m57.9s/2m00.0s
+ticket_create   [  90% ] 00/10 VUs  1m47.9s/2m0s  5.00 iters/s
+ticket_detail   [  90% ] 20 VUs     1m47.9s/2m0s 
+ticket_search   [  90% ] 10 VUs     1m47.9s/2m0s 
+
+running (1m59.0s), 032/090 VUs, 304660 complete and 0 interrupted iterations
+ticket_list     [  99% ] 02/50 VUs  1m58.9s/2m00.0s
+ticket_create   [  91% ] 00/10 VUs  1m48.9s/2m0s  5.00 iters/s
+ticket_detail   [  91% ] 20 VUs     1m48.9s/2m0s 
+ticket_search   [  91% ] 10 VUs     1m48.9s/2m0s 
+
+running (2m00.0s), 031/090 VUs, 307672 complete and 0 interrupted iterations
+ticket_list     [ 100% ] 01/50 VUs  1m59.9s/2m00.0s
+ticket_create   [  92% ] 00/10 VUs  1m49.9s/2m0s  5.00 iters/s
+ticket_detail   [  92% ] 20 VUs     1m49.9s/2m0s 
+ticket_search   [  92% ] 10 VUs     1m49.9s/2m0s 
+
+running (2m01.0s), 030/090 VUs, 311126 complete and 0 interrupted iterations
+ticket_list   ✓ [ 100% ] 00/50 VUs  2m0s         
+ticket_create   [  92% ] 00/10 VUs  1m50.9s/2m0s  5.00 iters/s
+ticket_detail   [  92% ] 20 VUs     1m50.9s/2m0s 
+ticket_search   [  92% ] 10 VUs     1m50.9s/2m0s 
+
+running (2m02.0s), 030/090 VUs, 314701 complete and 0 interrupted iterations
+ticket_list   ✓ [ 100% ] 00/50 VUs  2m0s         
+ticket_create   [  93% ] 00/10 VUs  1m51.9s/2m0s  5.00 iters/s
+ticket_detail   [  93% ] 20 VUs     1m51.9s/2m0s 
+ticket_search   [  93% ] 10 VUs     1m51.9s/2m0s 
+
+running (2m03.0s), 030/090 VUs, 317985 complete and 0 interrupted iterations
+ticket_list   ✓ [ 100% ] 00/50 VUs  2m0s         
+ticket_create   [  94% ] 00/10 VUs  1m52.9s/2m0s  5.00 iters/s
+ticket_detail   [  94% ] 20 VUs     1m52.9s/2m0s 
+ticket_search   [  94% ] 10 VUs     1m52.9s/2m0s 
+
+running (2m04.0s), 030/090 VUs, 321097 complete and 0 interrupted iterations
+ticket_list   ✓ [ 100% ] 00/50 VUs  2m0s         
+ticket_create   [  95% ] 00/10 VUs  1m53.9s/2m0s  5.00 iters/s
+ticket_detail   [  95% ] 20 VUs     1m53.9s/2m0s 
+ticket_search   [  95% ] 10 VUs     1m53.9s/2m0s 
+
+running (2m05.0s), 030/090 VUs, 324281 complete and 0 interrupted iterations
+ticket_list   ✓ [ 100% ] 00/50 VUs  2m0s         
+ticket_create   [  96% ] 00/10 VUs  1m54.9s/2m0s  5.00 iters/s
+ticket_detail   [  96% ] 20 VUs     1m54.9s/2m0s 
+ticket_search   [  96% ] 10 VUs     1m54.9s/2m0s 
+
+running (2m06.0s), 030/090 VUs, 327431 complete and 0 interrupted iterations
+ticket_list   ✓ [ 100% ] 00/50 VUs  2m0s         
+ticket_create   [  97% ] 00/10 VUs  1m55.9s/2m0s  5.00 iters/s
+ticket_detail   [  97% ] 20 VUs     1m55.9s/2m0s 
+ticket_search   [  97% ] 10 VUs     1m55.9s/2m0s 
+
+running (2m07.0s), 030/090 VUs, 330201 complete and 0 interrupted iterations
+ticket_list   ✓ [ 100% ] 00/50 VUs  2m0s         
+ticket_create   [  97% ] 00/10 VUs  1m56.9s/2m0s  5.00 iters/s
+ticket_detail   [  97% ] 20 VUs     1m56.9s/2m0s 
+ticket_search   [  97% ] 10 VUs     1m56.9s/2m0s 
+
+running (2m08.0s), 030/090 VUs, 333184 complete and 0 interrupted iterations
+ticket_list   ✓ [ 100% ] 00/50 VUs  2m0s         
+ticket_create   [  98% ] 00/10 VUs  1m57.9s/2m0s  5.00 iters/s
+ticket_detail   [  98% ] 20 VUs     1m57.9s/2m0s 
+ticket_search   [  98% ] 10 VUs     1m57.9s/2m0s 
+
+running (2m09.0s), 030/090 VUs, 335959 complete and 0 interrupted iterations
+ticket_list   ✓ [ 100% ] 00/50 VUs  2m0s         
+ticket_create   [  99% ] 00/10 VUs  1m58.9s/2m0s  5.00 iters/s
+ticket_detail   [  99% ] 20 VUs     1m58.9s/2m0s 
+ticket_search   [  99% ] 10 VUs     1m58.9s/2m0s 
+
+running (2m10.0s), 030/090 VUs, 338780 complete and 0 interrupted iterations
+ticket_list   ✓ [ 100% ] 00/50 VUs  2m0s         
+ticket_create   [ 100% ] 00/10 VUs  1m59.9s/2m0s  5.00 iters/s
+ticket_detail   [ 100% ] 20 VUs     1m59.9s/2m0s 
+ticket_search   [ 100% ] 10 VUs     1m59.9s/2m0s 
+
+
+  █ THRESHOLDS 
+
+    http_req_duration{scenario:ticket_create}
+    ✓ 'p(95)<500' p(95)=88.23ms
+
+    http_req_duration{scenario:ticket_detail}
+    ✓ 'p(95)<300' p(95)=30.23ms
+
+    http_req_duration{scenario:ticket_list}
+    ✓ 'p(95)<500' p(95)=40.18ms
+
+    http_req_duration{scenario:ticket_search}
+    ✓ 'p(95)<500' p(95)=84.28ms
+
+    http_req_failed
+    ✓ 'rate<0.01' rate=0.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 476818  3665.217355/s
+    checks_succeeded...: 100.00% 476818 out of 476818
+    checks_failed......: 0.00%   0 out of 476818
+
+    ✓ login succeeded
+    ✓ ticket list for setup
+    ✓ list 200
+    ✓ list has tickets
+    ✓ detail 200
+    ✓ search 200
+    ✓ create 201
+
+    CUSTOM
+    scenario_failures..............: 0.00%  0 out of 339016
+    ticket_create_duration.........: avg=54.78ms min=16.63ms  med=52.89ms max=214.17ms p(50)=52.89ms p(90)=76.74ms p(95)=88.23ms p(99)=116.69ms
+    ticket_detail_duration.........: avg=13.28ms min=980.24µs med=10.94ms max=167.12ms p(50)=10.94ms p(90)=24.55ms p(95)=30.23ms p(99)=44.88ms 
+    ticket_list_duration...........: avg=18.63ms min=668.31µs med=16.67ms max=233.02ms p(50)=16.67ms p(90)=33.37ms p(95)=40.18ms p(99)=58.87ms 
+    ticket_search_duration.........: avg=50.83ms min=14.37ms  med=47.74ms max=243.66ms p(50)=47.74ms p(90)=74.45ms p(95)=84.28ms p(99)=107.7ms 
+
+    HTTP
+    http_req_duration..............: avg=18.13ms min=668.31µs med=14.12ms max=243.66ms p(50)=14.12ms p(90)=36.1ms  p(95)=47.63ms p(99)=72.7ms  
+      { expected_response:true }...: avg=18.13ms min=668.31µs med=14.12ms max=243.66ms p(50)=14.12ms p(90)=36.1ms  p(95)=47.63ms p(99)=72.7ms  
+      { scenario:ticket_create }...: avg=54.78ms min=16.63ms  med=52.89ms max=214.17ms p(50)=52.89ms p(90)=76.74ms p(95)=88.23ms p(99)=116.69ms
+      { scenario:ticket_detail }...: avg=13.28ms min=980.24µs med=10.94ms max=167.12ms p(50)=10.94ms p(90)=24.55ms p(95)=30.23ms p(99)=44.88ms 
+      { scenario:ticket_list }.....: avg=18.63ms min=668.31µs med=16.67ms max=233.02ms p(50)=16.67ms p(90)=33.37ms p(95)=40.18ms p(99)=58.87ms 
+      { scenario:ticket_search }...: avg=50.83ms min=14.37ms  med=47.74ms max=243.66ms p(50)=47.74ms p(90)=74.45ms p(95)=84.28ms p(99)=107.7ms 
+    http_req_failed................: 0.00%  0 out of 339018
+    http_reqs......................: 339018 2605.97263/s
+
+    EXECUTION
+    iteration_duration.............: avg=18.56ms min=818.06µs med=14.51ms max=243.8ms  p(50)=14.51ms p(90)=36.88ms p(95)=48.39ms p(99)=73.44ms 
+    iterations.....................: 339016 2605.957256/s
+    vus............................: 30     min=0           max=79
+    vus_max........................: 90     min=90          max=90
+
+    NETWORK
+    data_received..................: 1.6 GB 12 MB/s
+    data_sent......................: 140 MB 1.1 MB/s
+
+
+
+
+running (2m10.1s), 000/090 VUs, 339016 complete and 0 interrupted iterations
+ticket_list   ✓ [ 100% ] 00/50 VUs  2m0s 
+ticket_create ✓ [ 100% ] 00/10 VUs  2m0s  5.00 iters/s
+ticket_detail ✓ [ 100% ] 20 VUs     2m0s 
+ticket_search ✓ [ 100% ] 10 VUs     2m0s 

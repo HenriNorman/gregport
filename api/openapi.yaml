@@ -1,0 +1,452 @@
+openapi: 3.1.0
+info:
+  title: Gregport API
+  version: 1.0.0
+  description: |
+    Multi-tenant support ticketing API.
+
+    `org_id` is taken from the access token, never from the URL, body or query
+    string. A resource in another tenant returns 404, never 403.
+
+    All endpoints except `/healthz`, `/readyz`, `/docs`, `/v1/auth/*`,
+    `POST /v1/public/ratings` and `POST /v1/inbound/email` require
+    `Authorization: Bearer <access_token>`.
+servers:
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - name: auth
+  - name: tickets
+  - name: search
+  - name: operations
+paths:
+  /healthz:
+    get:
+      tags: [operations]
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ok }
+  /readyz:
+    get:
+      tags: [operations]
+      summary: Readiness probe (Postgres and Redis)
+      security: []
+      responses:
+        "200":
+          description: Dependencies are reachable
+        "503":
+          description: A dependency is unavailable
+  /docs:
+    get:
+      tags: [operations]
+      summary: Human-readable API documentation
+      security: []
+      responses:
+        "200":
+          description: Swagger UI page
+          content:
+            text/html:
+              schema: { type: string }
+  /v1/auth/signup:
+    post:
+      tags: [auth]
+      summary: Create an organisation, owner user and membership
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [org_name, name, email, password]
+              properties:
+                org_name: { type: string, minLength: 1 }
+                name: { type: string, minLength: 1 }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8, maxLength: 72 }
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_token, refresh_token, expires_in]
+                properties:
+                  access_token: { type: string }
+                  refresh_token: { type: string }
+                  expires_in: { type: integer }
+        "422": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Exchange credentials for a token pair
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+                org_slug: { type: string }
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_token, refresh_token, expires_in]
+                properties:
+                  access_token: { type: string }
+                  refresh_token: { type: string }
+                  expires_in: { type: integer }
+        "401": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      summary: Rotate a refresh token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: New token pair; the old refresh token is revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_token, refresh_token, expires_in]
+                properties:
+                  access_token: { type: string }
+                  refresh_token: { type: string }
+                  expires_in: { type: integer }
+        "401": { $ref: "#/components/responses/Error" }
+  /v1/tickets:
+    get:
+      tags: [tickets]
+      summary: List tickets for the caller's organisation
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/TicketStatus" }
+        - name: priority
+          in: query
+          schema: { $ref: "#/components/schemas/TicketPriority" }
+        - name: assignee_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: requester_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: One page, newest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TicketList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [tickets]
+      summary: Create a ticket
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTicket" }
+      responses:
+        "201":
+          description: Ticket created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "401": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /v1/tickets/{number}:
+    parameters:
+      - name: number
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    get:
+      tags: [tickets]
+      summary: Fetch a ticket by its per-organisation number
+      responses:
+        "200":
+          description: The ticket
+          headers:
+            ETag:
+              description: Quoted version; send as If-Match on PATCH
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [tickets]
+      summary: Update status, priority or subject
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          description: Quoted version from the last read
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateTicket" }
+      responses:
+        "200":
+          description: Updated ticket
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ticket" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "412": { $ref: "#/components/responses/Error" }
+        "428": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [tickets]
+      summary: Soft-delete a ticket (owner or admin)
+      responses:
+        "204":
+          description: Deleted
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /v1/search:
+    get:
+      tags: [search]
+      summary: Full-text search over tickets and comments
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 200 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100 }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/TicketStatus" }
+        - name: priority
+          in: query
+          schema: { $ref: "#/components/schemas/TicketPriority" }
+      responses:
+        "200":
+          description: Ranked results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    items: { $ref: "#/components/schemas/SearchHit" }
+                  next_cursor: { type: string }
+        "401": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Replays the stored response for the same key and body.
+      schema: { type: string, maxLength: 255 }
+  responses:
+    Error:
+      description: Error envelope
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    TicketStatus:
+      type: string
+      enum: [new, open, pending, solved, closed]
+    TicketPriority:
+      type: string
+      enum: [low, normal, high, urgent]
+    Requester:
+      type: object
+      additionalProperties: false
+      required: [email, name]
+      properties:
+        email: { type: string, format: email }
+        name: { type: string }
+    Ticket:
+      type: object
+      additionalProperties: false
+      required:
+        [number, id, subject, status, priority, requester, version, created_at, updated_at]
+      properties:
+        number: { type: integer, minimum: 1 }
+        id: { type: string, format: uuid }
+        subject: { type: string }
+        status: { $ref: "#/components/schemas/TicketStatus" }
+        priority: { $ref: "#/components/schemas/TicketPriority" }
+        requester: { $ref: "#/components/schemas/Requester" }
+        first_response_due_at: { type: string, format: date-time }
+        resolution_due_at: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    TicketList:
+      type: object
+      additionalProperties: false
+      required: [tickets]
+      properties:
+        tickets:
+          type: array
+          items: { $ref: "#/components/schemas/Ticket" }
+        next_cursor: { type: string }
+    CreateTicket:
+      type: object
+      additionalProperties: false
+      required: [requester_email, requester_name, subject, body]
+      properties:
+        requester_email: { type: string, format: email }
+        requester_name: { type: string, minLength: 1 }
+        subject: { type: string, minLength: 1, maxLength: 255 }
+        body: { type: string, minLength: 1 }
+        priority: { $ref: "#/components/schemas/TicketPriority" }
+    UpdateTicket:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        status: { $ref: "#/components/schemas/TicketStatus" }
+        priority: { $ref: "#/components/schemas/TicketPriority" }
+        subject: { type: string, minLength: 1, maxLength: 255 }
+    SearchHit:
+      type: object
+      additionalProperties: false
+      required: [id, number, subject, status, priority, requester_email, created_at, updated_at, highlights]
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: integer }
+        subject: { type: string }
+        status: { $ref: "#/components/schemas/TicketStatus" }
+        priority: { $ref: "#/components/schemas/TicketPriority" }
+        requester_email: { type: string, format: email }
+        assignee_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        highlights:
+          type: object
+          additionalProperties: false
+          properties:
+            subject: { type: array, items: { type: string } }
+            comments: { type: array, items: { type: string } }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, details, request_id]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  message: { type: string }
+            request_id: { type: string }
+    WebhookEvent:
+      type: object
+      required: [id, type, org_id, created_at, data]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [ticket.created, ticket.updated, comment.created] }
+        org_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        data:
+          type: object
+          additionalProperties: true
+security:
+  - bearerAuth: []
+webhooks:
+  ticketCreated:
+    post:
+      summary: Ticket created
+      description: |
+        Sent when a ticket is created. The body is the event envelope below.
+        Every delivery is signed with `X-Gregport-Signature:
+        sha256=<hex HMAC-SHA256 of the raw body>` using the subscription secret.
+        Delivery is at-least-once; receivers must deduplicate on `id`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookEvent" }
+      responses:
+        "2XX":
+          description: Receiver accepted the event
+  ticketUpdated:
+    post:
+      summary: Ticket status, priority or assignment changed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookEvent" }
+      responses:
+        "2XX":
+          description: Receiver accepted the event
+  commentCreated:
+    post:
+      summary: Comment added to a ticket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookEvent" }
+      responses:
+        "2XX":
+          description: Receiver accepted the event

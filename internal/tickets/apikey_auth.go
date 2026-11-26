@@ -128,6 +128,7 @@ func (t *LastUsedThrottle) mark(ctx context.Context, orgID, keyID uuid.UUID) {
 	t.lastSeen[keyID] = time.Now()
 	t.mu.Unlock()
 
+	// #nosec G118 -- last_used_at must be refreshed even after the request ends.
 	go t.update(keyID)
 }
 
@@ -151,6 +152,7 @@ func (t *LastUsedThrottle) markRedis(ctx context.Context, client *redis.Client, 
 		return
 	}
 
+	// #nosec G118 -- last_used_at must be refreshed even after the request ends.
 	go t.update(keyID)
 }
 

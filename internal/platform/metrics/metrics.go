@@ -19,7 +19,13 @@ type Counters struct {
 	idemConflicts atomic.Int64
 	idemPending   atomic.Int64
 	idemErrors    atomic.Int64
+
+	prom *Prometheus
 }
+
+// Attach mirrors the atomic counters into Prometheus. Call it once during
+// startup before requests are served.
+func (c *Counters) Attach(p *Prometheus) { c.prom = p }
 
 // Snapshot is a point-in-time copy of all counters.
 type Snapshot struct {
@@ -39,17 +45,70 @@ func New() *Counters {
 	return &Counters{}
 }
 
-func (c *Counters) CacheHit()          { c.cacheHits.Add(1) }
-func (c *Counters) CacheMiss()         { c.cacheMisses.Add(1) }
-func (c *Counters) CacheError()        { c.cacheErrors.Add(1) }
-func (c *Counters) RateLimitRejected() { c.rateLimited.Add(1) }
-func (c *Counters) RateLimitError()    { c.rateLimitErrs.Add(1) }
-func (c *Counters) IdempotencyReplay()   { c.idemReplays.Add(1) }
+func (c *Counters) CacheHit() {
+	c.cacheHits.Add(1)
+	if c.prom != nil {
+		c.prom.CacheHits.Inc()
+	}
+}
+
+func (c *Counters) CacheMiss() {
+	c.cacheMisses.Add(1)
+	if c.prom != nil {
+		c.prom.CacheMisses.Inc()
+	}
+}
+
+func (c *Counters) CacheError() {
+	c.cacheErrors.Add(1)
+	if c.prom != nil {
+		c.prom.CacheErrors.Inc()
+	}
+}
+
+func (c *Counters) RateLimitRejected() {
+	c.rateLimited.Add(1)
+	if c.prom != nil {
+		c.prom.RateLimitRejected.Inc()
+	}
+}
+
+func (c *Counters) RateLimitError() {
+	c.rateLimitErrs.Add(1)
+	if c.prom != nil {
+		c.prom.RateLimitErrors.Inc()
+	}
+}
+
+func (c *Counters) IdempotencyReplay() {
+	c.idemReplays.Add(1)
+}
+
 func (c *Counters) IdempotencyConflict() {
 	c.idemConflicts.Add(1)
 }
-func (c *Counters) IdempotencyPending() { c.idemPending.Add(1) }
-func (c *Counters) IdempotencyError()   { c.idemErrors.Add(1) }
+
+func (c *Counters) IdempotencyPending() {
+	c.idemPending.Add(1)
+}
+
+func (c *Counters) IdempotencyError() {
+	c.idemErrors.Add(1)
+}
+
+// WebhookDelivery records an outgoing webhook outcome (sent, failed, dead).
+func (c *Counters) WebhookDelivery(result string) {
+	if c.prom != nil {
+		c.prom.WebhookResult.WithLabelValues(result).Inc()
+	}
+}
+
+// JobProcessed records one queue handler outcome.
+func (c *Counters) JobProcessed(taskType, outcome string) {
+	if c.prom != nil {
+		c.prom.JobsProcessed.WithLabelValues(taskType, outcome).Inc()
+	}
+}
 
 // Snapshot returns the current values.
 func (c *Counters) Snapshot() Snapshot {

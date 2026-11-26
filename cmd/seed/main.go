@@ -13,6 +13,7 @@
 //
 //	SEED_TICKETS          total tickets to create (default 1000000)
 //	SEED_ORGS             organisations to spread them across (default 5)
+//	SEED_SKEW             share of tickets in the first (huge) org (default 0.7)
 //	SEED_CUSTOMERS        customers per organisation (default 1000)
 //	SEED_USERS            agent users to create globally (default 50)
 //	SEED_TAGS             tags per organisation (default 12)
@@ -42,6 +43,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/HenriNorman/gregport/internal/platform/config"
 	"github.com/HenriNorman/gregport/internal/platform/database"
@@ -164,8 +166,9 @@ func main() {
 	logger.Info("connected to postgres")
 
 	s := &Seeder{
-		pool:      pool,
-		logger:    logger,
+		pool:   pool,
+		logger: logger,
+		// #nosec G404 -- the seed only needs reproducible synthetic data.
 		rng:       rand.New(rand.NewSource(seed)),
 		tickets:   envInt("SEED_TICKETS", 1_000_000),
 		orgs:      envInt("SEED_ORGS", 5),
@@ -173,6 +176,7 @@ func main() {
 		users:     envInt("SEED_USERS", 50),
 		tags:      envInt("SEED_TAGS", len(tagNames)),
 		batch:     envInt("SEED_BATCH", 5000),
+		skew:      envFloat("SEED_SKEW", 0.7),
 	}
 	if err := s.validate(); err != nil {
 		logger.Error("invalid seed configuration", "error", err)
@@ -204,6 +208,7 @@ type Seeder struct {
 	users     int
 	tags      int
 	batch     int
+	skew      float64
 
 	ticketsInserted    int
 	commentsInserted   int
@@ -224,6 +229,8 @@ func (s *Seeder) validate() error {
 		return fmt.Errorf("SEED_TAGS must be between 1 and %d", len(tagNames))
 	case s.batch < 1:
 		return fmt.Errorf("SEED_BATCH must be positive")
+	case s.skew < 0 || s.skew > 0.95:
+		return fmt.Errorf("SEED_SKEW must be between 0 and 0.95")
 	}
 	return nil
 }
@@ -235,23 +242,23 @@ func (s *Seeder) Run(ctx context.Context) error {
 		return fmt.Errorf("create users: %w", err)
 	}
 
-	perOrg := s.tickets / s.orgs
-	remainder := s.tickets % s.orgs
+	counts := ticketDistribution(s.tickets, s.orgs, s.skew)
 	runID := time.Now().UTC().Format("20060102t150405")
+	var hugeOrgID uuid.UUID
 
 	for org := 0; org < s.orgs; org++ {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
-		count := perOrg
-		if org < remainder {
-			count++
-		}
+		count := counts[org]
 
 		orgID, err := s.createOrganisation(ctx, org, runID)
 		if err != nil {
 			return fmt.Errorf("create organisation %d: %w", org, err)
+		}
+		if org == 0 {
+			hugeOrgID = orgID
 		}
 
 		customers, err := s.createCustomers(ctx, orgID, s.customers)
@@ -273,7 +280,54 @@ func (s *Seeder) Run(ctx context.Context) error {
 			"tickets", count, "total", s.ticketsInserted, "of", s.tickets)
 	}
 
+	if hugeOrgID != uuid.Nil {
+		email, err := s.createLoadUser(ctx, hugeOrgID)
+		if err != nil {
+			return fmt.Errorf("create load-test user: %w", err)
+		}
+		s.logger.Info("load-test login ready",
+			"email", email,
+			"password_env", "SEED_LOAD_PASSWORD",
+			"org_id", hugeOrgID,
+		)
+	}
+
 	return nil
+}
+
+func (s *Seeder) createLoadUser(ctx context.Context, orgID uuid.UUID) (string, error) {
+	email := strings.ToLower(strings.TrimSpace(envString("SEED_LOAD_EMAIL", "loadtest@seed.test")))
+	password := envString("SEED_LOAD_PASSWORD", "loadtest-password")
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", fmt.Errorf("hash load-test password: %w", err)
+	}
+
+	var userID uuid.UUID
+	if err := s.pool.QueryRow(ctx,
+		`INSERT INTO users (email, password_hash, name)
+		 VALUES ($1, $2, 'Load Test')
+		 ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash
+		 RETURNING id`,
+		email, string(hash),
+	).Scan(&userID); err != nil {
+		return "", fmt.Errorf("upsert load-test user: %w", err)
+	}
+	if _, err := s.pool.Exec(ctx,
+		`INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, 'owner')
+		 ON CONFLICT DO NOTHING`,
+		orgID, userID,
+	); err != nil {
+		return "", fmt.Errorf("load-test membership: %w", err)
+	}
+	return email, nil
+}
+
+func envString(name, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func (s *Seeder) createOrganisation(ctx context.Context, idx int, runID string) (uuid.UUID, error) {
@@ -651,6 +705,60 @@ func envInt64(name string, fallback int64) int64 {
 		log.Fatalf("%s: %v", name, err)
 	}
 	return v
+}
+
+func envFloat(name string, fallback float64) float64 {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		log.Fatalf("%s: %v", name, err)
+	}
+	return v
+}
+
+// ticketDistribution gives the first organisation a large share and splits the
+// remainder into a long tail. Real tenants are not uniform: one huge org and
+// many small ones is what makes per-tenant indexes and caching matter.
+func ticketDistribution(total, orgs int, skew float64) []int {
+	counts := make([]int, orgs)
+	if orgs == 1 {
+		counts[0] = total
+		return counts
+	}
+	if skew <= 0 {
+		for i := range counts {
+			counts[i] = total / orgs
+			if i < total%orgs {
+				counts[i]++
+			}
+		}
+		return counts
+	}
+
+	big := int(float64(total) * skew)
+	if big > total {
+		big = total
+	}
+	counts[0] = big
+	rest := total - big
+
+	// Harmonic weights: each small org's share is proportional to 1/i, so the
+	// tail is long rather than uniform.
+	weightSum := 0.0
+	for i := 1; i < orgs; i++ {
+		weightSum += 1 / float64(i)
+	}
+	assigned := 0
+	for i := 1; i < orgs; i++ {
+		share := int(float64(rest) * (1 / float64(i)) / weightSum)
+		counts[i] = share
+		assigned += share
+	}
+	counts[1] += rest - assigned
+	return counts
 }
 
 func shortID() string {

@@ -33,6 +33,7 @@ type Service struct {
 	resolver         Resolver
 	failureThreshold int
 	now              func() time.Time
+	observeDelivery  func(result string)
 }
 
 // NewService creates the webhook service. The production sender and resolver
@@ -53,6 +54,18 @@ func (s *Service) SetSender(sender Sender) { s.sender = sender }
 
 // SetEnqueuer installs the queue client used to schedule delivery attempts.
 func (s *Service) SetEnqueuer(enqueuer Enqueuer) { s.enqueuer = enqueuer }
+
+// SetDeliveryObserver receives one call per completed delivery attempt with
+// the final status (sent, failed or dead).
+func (s *Service) SetDeliveryObserver(observe func(result string)) {
+	s.observeDelivery = observe
+}
+
+func (s *Service) observe(result string) {
+	if s.observeDelivery != nil {
+		s.observeDelivery(result)
+	}
+}
 
 // SetResolver overrides DNS resolution for URL validation. Tests use it to
 // make hostname checks deterministic.
@@ -344,6 +357,7 @@ func (s *Service) attempt(ctx context.Context, sub Subscription, delivery Delive
 		if err := s.repo.RecordDeliverySuccess(ctx, delivery); err != nil {
 			return Delivery{}, err
 		}
+		s.observe(StatusSent)
 		return delivery, nil
 	}
 
@@ -366,6 +380,7 @@ func (s *Service) attempt(ctx context.Context, sub Subscription, delivery Delive
 	if _, err := s.repo.RecordDeliveryFailure(ctx, delivery, s.failureThreshold, countFailure); err != nil {
 		return Delivery{}, err
 	}
+	s.observe(delivery.Status)
 	return delivery, nil
 }
 

@@ -46,6 +46,10 @@ A multi-tenant support ticketing SaaS built with Go and PostgreSQL. It supports 
 | Customer erasure | Complete — idempotent org-scoped anonymisation that keeps ticket history and writes an audit row |
 | Search | Complete — PostgreSQL full-text baseline, Elasticsearch index with a mandatory org filter, highlights, `search_after` pagination, Postgres fallback, sync circuit breaker, zero-downtime reindex, and a measured latency comparison |
 | Real-time updates | Complete — SSE over Redis pub/sub, short-lived single-use stream tokens, `Last-Event-ID` replay from `ticket_events.seq`, typing indicators, slow-consumer drops, tenant isolation and a measured memory-per-connection figure |
+| Observability | Complete — Prometheus metrics on a private port, provisioned Grafana RED dashboard, four alerts, OpenTelemetry traces with pgx spans and trace IDs in logs |
+| Security | Complete — OWASP API Top 10 review, security headers, CORS allowlist, body limits, bcrypt cost policy, login backoff, internal metrics/pprof, CI scans and Dependabot |
+| Performance | Complete — 1M-ticket skewed seed, k6 baseline and post-fix runs, EXPLAIN-driven partial index, documented hardware and before/after table |
+| API contract | Complete — spec-first OpenAPI 3.1 at `api/openapi.yaml`, `/docs` and `/openapi.yaml`, kin-openapi contract tests, documented outbound webhooks |
 
 ### Authentication
 
@@ -2323,6 +2327,128 @@ is listed below it, not a hidden requirement.
 - Logs are stdout-only; there is no bundled aggregation or retention layer.
 
 ---
+
+## Observability, Security and Performance
+
+### Metrics and dashboards
+
+The API exposes Prometheus metrics on `METRICS_PORT` (default `9091`) and the
+worker on `WORKER_METRICS_PORT` (default `9092`). Both listeners are separate
+from the public HTTP server: `/metrics` and `/debug/pprof` are never registered
+on the API router, and compose does not publish those ports.
+
+Collected series:
+
+| Area | Metrics |
+|:--|:--|
+| HTTP | `gregport_http_requests_total{method,route,status}`, `gregport_http_request_duration_seconds{method,route}`, `gregport_http_requests_in_flight`, `gregport_http_response_bytes_total` |
+| Database | `gregport_db_pool_{acquired,idle,total,max,constructing}_conns`, acquire counters and lifetime-destroy counters per pool |
+| Cache | `gregport_cache_{hits,misses,errors}_total` |
+| Rate limits | `gregport_rate_limit_{rejected,errors}_total` |
+| Queue | `gregport_queue_depth{queue,state}`, `gregport_queue_archived{queue}` |
+| Jobs | `gregport_jobs_processed_total{type,outcome}` |
+| Webhooks | `gregport_webhook_deliveries_total{result}` |
+| Real-time | `gregport_sse_connections` |
+
+The HTTP labels use the chi route pattern, never the raw path or a user ID, so
+cardinality stays bounded. The Grafana dashboard is committed at
+`deploy/grafana/dashboards/gregport-red.json` and uses the RED method: request
+rate, error rate and p50/p95/p99 latency, plus pool saturation, queue depth,
+cache hit ratio, rate-limit rejections and job outcomes.
+
+```bash
+docker compose up -d prometheus grafana jaeger
+# Grafana:    http://localhost:3000 (admin/admin by default)
+# Prometheus: http://localhost:9090
+# Jaeger:     http://localhost:16686
+```
+
+Four alerts are provisioned in `deploy/prometheus/alerts.yml`: 5xx error rate,
+p95 latency, queue-depth growth and dead-letter count. More alerts would page
+for noise; these four map to user-visible failure.
+
+### Tracing
+
+Tracing is opt-in. Set:
+
+```bash
+OTEL_ENABLED=true
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_INSECURE=true
+```
+
+The API uses `otelhttp` around the router and `otelpgx` on the pool, so one trace
+shows the HTTP span and every SQL statement, including the ticket-create
+transaction. `trace_id` and `span_id` are added to every request log line and to
+the error envelope's server log, so a log line can be pasted into Jaeger.
+
+### Security review
+
+`docs/security/owasp-api-top10.md` answers every OWASP API Security Top 10
+(2023) item with the mechanism that implements it. This pass added security
+headers, a per-environment CORS allowlist, request body limits, bcrypt cost 12
+for new hashes, a per-account login backoff, and an audit confirming that every
+SQL value is a bound parameter. CI runs `govulncheck`, `gosec`, `gitleaks` and a
+Trivy image scan; Dependabot updates Go modules, Actions and Docker images.
+
+### Load test setup
+
+The load scripts are in `loadtest/k6`. The dataset is created by `cmd/seed` with
+a deliberately skewed tenant distribution: one organisation holds 70% of the
+tickets and the remaining 30% is split across a long tail.
+
+```bash
+SEED_TICKETS=1000000 SEED_ORGS=12 SEED_CUSTOMERS=200 SEED_USERS=50 \
+  SEED_SKEW=0.7 \
+  SEED_LOAD_EMAIL=loadtest@seed.test SEED_LOAD_PASSWORD=loadtest-password \
+  go run ./cmd/seed
+
+BASE_URL=http://127.0.0.1:8080 k6 run loadtest/k6/baseline.js
+```
+
+Measured on the hardware below, with the API, Postgres, Redis and Elasticsearch
+running on the same machine. The k6 process shared the CPU with the API, so these
+numbers are conservative and useful for relative comparison, not capacity
+planning.
+
+| Item | Value |
+|:--|:--|
+| CPU | AMD Ryzen 5 7235HS, 4 cores / 8 threads |
+| Memory | 11 GiB |
+| Disk | NVMe SSD |
+| OS | Linux |
+| Go | 1.27.4 |
+| Postgres | 16-alpine, local container |
+| k6 | v2.4.0 |
+| Dataset | 1,000,000 tickets, 12 orgs (largest 700,000), 2,496,499 comments |
+| Scenarios | list: ramp 0→50 VUs; detail: 20 VUs; create: 5/s arrival rate; search: 10 VUs; 2 minutes each |
+
+<!-- PERF_TABLE -->
+| Scenario | p50 before → after | p95 before → after | p99 before → after | Error rate | What changed |
+|:--|--:|--:|--:|--:|:--|
+| Ticket list | 4,899.53 → 16.68 ms | 8,530.99 → 40.19 ms | 9,763.88 → 58.87 ms | 0.05% → 0% | Added partial composite index `(org_id, created_at DESC, id DESC) WHERE deleted_at IS NULL`; the plan changed from parallel seq scan + top-N sort to an index scan. |
+| Ticket detail | 9.91 → 10.94 ms | 37.87 → 30.23 ms | 352.65 → 44.88 ms | 0.05% → 0% | No query change; the unique `(org_id, number)` index already served it. The tail improved because list queries stopped saturating Postgres. |
+| Ticket create | 406.49 → 52.89 ms | 4,320 → 88.23 ms | 4,740 → 116.69 ms | 0.05% → 0% | No code change; transaction latency fell once list scans stopped competing for I/O and CPU. |
+| Search | 61.50 → 47.74 ms | 198.70 → 84.28 ms | 2,670 → 107.70 ms | 0.05% → 0% | No query change; Elasticsearch handled the same load with less host contention. |
+| Whole run | — | — | — | 51 → 0 failures | Throughput rose from 696.5 to 2,606.0 req/s (3.7×) on the same script and dataset. |
+
+`EXPLAIN (ANALYZE, BUFFERS)` for the 700k-ticket tenant's 25-row list: 208 ms
+with 30,816 shared reads before the index, 0.52 ms with 3 reads after it. The
+full setup, raw k6 results and per-row reasoning are in `loadtest/README.md`.
+
+### Published API contract
+
+`api/openapi.yaml` is the source of truth (OpenAPI 3.1). The API serves it at
+`/openapi.yaml` and renders it at `/docs`. `internal/tickets/contract_test.go`
+loads the document with kin-openapi and validates real handler responses for
+ticket list, detail and create; an added, renamed or missing field fails the
+test. Outgoing webhook events are described in the document's `webhooks`
+section, including the HMAC signature header and at-least-once semantics.
+
+### Backup and failure drills
+
+The restore drill and the dependency-failure drills are documented with their
+results in `docs/operations/drills.md`.
 
 ## Testing
 

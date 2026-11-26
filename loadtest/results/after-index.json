@@ -1,0 +1,300 @@
+{
+    "metrics": {
+        "http_req_receiving": {
+            "p(90)": 0.7891916999999974,
+            "p(95)": 3.7442650499999943,
+            "p(99)": 13.133013490000005,
+            "avg": 0.6506244361685779,
+            "min": 0.013535,
+            "med": 0.041807,
+            "max": 206.096831,
+            "p(50)": 0.041807
+        },
+        "vus_max": {
+            "value": 90,
+            "min": 90,
+            "max": 90
+        },
+        "http_req_waiting": {
+            "max": 228.815943,
+            "p(50)": 13.6153235,
+            "p(90)": 34.531540799999995,
+            "p(95)": 45.81979939999999,
+            "p(99)": 70.25373770000004,
+            "avg": 17.433981870540585,
+            "min": 0.620898,
+            "med": 13.6153235
+        },
+        "http_reqs": {
+            "count": 339018,
+            "rate": 2605.9726297000443
+        },
+        "http_req_duration{scenario:ticket_search}": {
+            "min": 14.370455,
+            "med": 47.745453,
+            "max": 243.669579,
+            "p(50)": 47.745453,
+            "p(90)": 74.45505840000001,
+            "p(95)": 84.28479919999998,
+            "p(99)": 107.70025198000009,
+            "avg": 50.83017365449967,
+            "thresholds": {
+                "p(95)<500": false
+            }
+        },
+        "http_req_duration": {
+            "p(90)": 36.101936099999996,
+            "p(95)": 47.63652369999999,
+            "p(99)": 72.70248216000003,
+            "avg": 18.13615960091191,
+            "min": 0.668316,
+            "med": 14.124223,
+            "max": 243.669579,
+            "p(50)": 14.124223
+        },
+        "http_req_tls_handshaking": {
+            "max": 0,
+            "p(50)": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "p(99)": 0,
+            "avg": 0,
+            "min": 0,
+            "med": 0
+        },
+        "data_sent": {
+            "count": 140320057,
+            "rate": 1078615.9671166432
+        },
+        "http_req_duration{scenario:ticket_create}": {
+            "avg": 54.78408507487521,
+            "min": 16.63001,
+            "med": 52.891113,
+            "max": 214.174887,
+            "p(50)": 52.891113,
+            "p(90)": 76.742904,
+            "p(95)": 88.236178,
+            "p(99)": 116.697101,
+            "thresholds": {
+                "p(95)<500": false
+            }
+        },
+        "http_req_duration{scenario:ticket_detail}": {
+            "p(95)": 30.234496749999998,
+            "p(99)": 44.88128929999994,
+            "avg": 13.289912663851771,
+            "min": 0.980244,
+            "med": 10.948548500000001,
+            "max": 167.120132,
+            "p(50)": 10.948548500000001,
+            "p(90)": 24.5544355,
+            "thresholds": {
+                "p(95)<300": false
+            }
+        },
+        "data_received": {
+            "count": 1619161704,
+            "rate": 12446215.492046101
+        },
+        "scenario_failures": {
+            "passes": 0,
+            "fails": 339016,
+            "value": 0
+        },
+        "iterations": {
+            "count": 339016,
+            "rate": 2605.957256046553
+        },
+        "ticket_create_duration": {
+            "min": 16.63001,
+            "med": 52.891113,
+            "max": 214.174887,
+            "p(50)": 52.891113,
+            "p(90)": 76.742904,
+            "p(95)": 88.236178,
+            "p(99)": 116.697101,
+            "avg": 54.78408507487521
+        },
+        "http_req_failed": {
+            "passes": 0,
+            "fails": 339018,
+            "thresholds": {
+                "rate<0.01": false
+            },
+            "value": 0
+        },
+        "http_req_blocked": {
+            "max": 29.785487,
+            "p(50)": 0.002746,
+            "p(90)": 0.005299,
+            "p(95)": 0.006522,
+            "p(99)": 0.014086,
+            "avg": 0.007696198650218973,
+            "min": 0.000841,
+            "med": 0.002746
+        },
+        "iteration_duration": {
+            "p(90)": 36.88987,
+            "p(95)": 48.3966855,
+            "p(99)": 73.44158374999996,
+            "avg": 18.565150332949138,
+            "min": 0.81806,
+            "med": 14.511827499999999,
+            "max": 243.802563,
+            "p(50)": 14.511827499999999
+        },
+        "ticket_search_duration": {
+            "p(95)": 84.28479919999998,
+            "p(99)": 107.70025198000009,
+            "avg": 50.83017365449967,
+            "min": 14.370455,
+            "med": 47.745453,
+            "max": 243.669579,
+            "p(50)": 47.745453,
+            "p(90)": 74.45505840000001
+        },
+        "http_req_connecting": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "p(99)": 0,
+            "avg": 0.00018212550955996437,
+            "min": 0,
+            "med": 0,
+            "max": 12.474598,
+            "p(50)": 0
+        },
+        "checks": {
+            "passes": 476818,
+            "fails": 0,
+            "value": 1
+        },
+        "http_req_duration{expected_response:true}": {
+            "min": 0.668316,
+            "med": 14.124223,
+            "max": 243.669579,
+            "p(50)": 14.124223,
+            "p(90)": 36.101936099999996,
+            "p(95)": 47.63652369999999,
+            "p(99)": 72.70248216000003,
+            "avg": 18.13615960091191
+        },
+        "http_req_sending": {
+            "avg": 0.051553294202668756,
+            "min": 0.004078,
+            "med": 0.010159,
+            "max": 74.52606,
+            "p(50)": 0.010159,
+            "p(90)": 0.020908,
+            "p(95)": 0.034233,
+            "p(99)": 0.34666970000000147
+        },
+        "ticket_list_duration": {
+            "p(95)": 40.18520704999998,
+            "p(99)": 58.87019009000018,
+            "avg": 18.635221508853423,
+            "min": 0.668316,
+            "med": 16.6773265,
+            "max": 233.023989,
+            "p(50)": 16.6773265,
+            "p(90)": 33.374438700000006
+        },
+        "http_req_duration{scenario:ticket_list}": {
+            "p(90)": 33.374438700000006,
+            "p(95)": 40.18520704999998,
+            "p(99)": 58.87019009000018,
+            "avg": 18.635221508853423,
+            "min": 0.668316,
+            "med": 16.6773265,
+            "max": 233.023989,
+            "p(50)": 16.6773265,
+            "thresholds": {
+                "p(95)<500": false
+            }
+        },
+        "vus": {
+            "value": 30,
+            "min": 0,
+            "max": 79
+        },
+        "ticket_detail_duration": {
+            "p(95)": 30.234496749999998,
+            "p(99)": 44.88128929999994,
+            "avg": 13.289912663851771,
+            "min": 0.980244,
+            "med": 10.948548500000001,
+            "max": 167.120132,
+            "p(50)": 10.948548500000001,
+            "p(90)": 24.5544355
+        }
+    },
+    "setup_data": {
+        "number": 702905,
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIyMWEyYTNjYy05ZWNkLTQxMzYtYjg5Zi00NjFiYTJkMGRlZDAiLCJvcmciOiJiOTc3ZDFkNy1jMTcwLTQ1ZjktODhiMi0zNGMzMzY2MTcxMDgiLCJyb2xlIjoib3duZXIiLCJleHAiOjE3OTU2MzAzOTMsImlhdCI6MTc5NTYyOTQ5M30.2GyWQFmDX4UbkePIvP21KkoCP9Ah0ZOITprK-12MfA0"
+    },
+    "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "setup": {
+                "name": "setup",
+                "path": "::setup",
+                "id": "5c0f8025f7e0b6654089e5b00e950f1a",
+                "groups": {},
+                "checks": {
+                    "login succeeded": {
+                        "fails": 0,
+                        "name": "login succeeded",
+                        "path": "::setup::login succeeded",
+                        "id": "a7d4e67a461e12e148d0e432e39a2c96",
+                        "passes": 1
+                    },
+                    "ticket list for setup": {
+                        "id": "b6053239920b4910b20422f6fb50f11d",
+                        "passes": 1,
+                        "fails": 0,
+                        "name": "ticket list for setup",
+                        "path": "::setup::ticket list for setup"
+                    }
+                }
+            }
+        },
+        "checks": {
+            "list 200": {
+                "path": "::list 200",
+                "id": "bb957fc3b3b94304050fa1ff782f2f89",
+                "passes": 137800,
+                "fails": 0,
+                "name": "list 200"
+            },
+            "list has tickets": {
+                "fails": 0,
+                "name": "list has tickets",
+                "path": "::list has tickets",
+                "id": "de558b332f9fd4ae4bb813180bc970dc",
+                "passes": 137800
+            },
+            "detail 200": {
+                "fails": 0,
+                "name": "detail 200",
+                "path": "::detail 200",
+                "id": "981c52cabeb9f59acfcea75637140716",
+                "passes": 177136
+            },
+            "search 200": {
+                "id": "f1430541508c538fdf29bbd85cfe5de5",
+                "passes": 23479,
+                "fails": 0,
+                "name": "search 200",
+                "path": "::search 200"
+            },
+            "create 201": {
+                "passes": 601,
+                "fails": 0,
+                "name": "create 201",
+                "path": "::create 201",
+                "id": "156654209db568811cc0f7da2d599478"
+            }
+        }
+    }
+}

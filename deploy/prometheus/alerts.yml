@@ -1,0 +1,49 @@
+groups:
+  - name: gregport
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(gregport_http_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(gregport_http_requests_total[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "API 5xx rate above 5% for five minutes"
+          description: "Check the Grafana RED dashboard and recent error logs (trace_id is logged)."
+
+      - alert: HighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(gregport_http_request_duration_seconds_bucket[5m]))
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "API p95 latency above 500ms for ten minutes"
+          description: "Check pgxpool saturation, slow queries and downstream dependencies."
+
+      - alert: QueueDepthGrowing
+        expr: |
+          sum(gregport_queue_depth{state="pending"})
+          - sum(gregport_queue_depth{state="pending"} offset 10m)
+          > 500
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Queue backlog grew by more than 500 tasks in ten minutes"
+          description: "Check worker health, Redis latency and handler error logs."
+
+      - alert: DeadLetteredTasks
+        expr: sum(gregport_queue_archived) > 10
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "More than 10 tasks in the dead-letter set"
+          description: "Inspect the asynqmon archived view and fix the failing handler."

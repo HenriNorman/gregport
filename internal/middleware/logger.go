@@ -8,6 +8,7 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/httpx"
 	"github.com/HenriNorman/gregport/internal/platform/logging"
 	"github.com/HenriNorman/gregport/internal/platform/requestctx"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // WithLogger derives a request-scoped logger carrying the request id, stores
@@ -55,6 +56,10 @@ func RequestLogger() func(http.Handler) http.Handler {
 						attrs = append(attrs, "api_key_id", p.ActorID.String())
 					}
 				}
+			}
+
+			if sc := trace.SpanContextFromContext(r.Context()); sc.IsValid() {
+				attrs = append(attrs, "trace_id", sc.TraceID().String(), "span_id", sc.SpanID().String())
 			}
 
 			logger := logging.FromContext(r.Context())

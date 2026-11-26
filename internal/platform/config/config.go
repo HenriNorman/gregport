@@ -34,6 +34,30 @@ type Config struct {
 	RequestTimeout          time.Duration
 	ShutdownTimeout         time.Duration
 
+	// Internal observability server. It is bound separately from the public
+	// API port and must never be published by a reverse proxy.
+	MetricsPort string
+	Pprof       bool
+
+	// Cross-origin allow-list. Empty disables CORS.
+	CORSAllowedOrigins []string
+	MaxRequestBytes    int64
+	BcryptCost         int
+
+	// Tracing is optional. An empty exporter endpoint disables it.
+	OTELEnabled     bool
+	OTELEndpoint    string
+	OTELServiceName string
+	OTELInsecure    bool
+	OTELSampleRatio float64
+
+	// Pool sizing. Keep DBMaxConns * instances below PostgreSQL's
+	// max_connections with headroom for the worker pool.
+	DBMaxConns        int
+	DBMinConns        int
+	DBMaxConnLifetime time.Duration
+	DBMaxConnIdleTime time.Duration
+
 	// Real-time streams. Tokens are short-lived and single-use; the heartbeat
 	// keeps proxies from closing an idle SSE connection.
 	StreamTokenTTL          time.Duration
@@ -121,6 +145,22 @@ func Load() (Config, error) {
 		RequestTimeout:          10 * time.Second,
 		ShutdownTimeout:         15 * time.Second,
 
+		MetricsPort:     getEnv("METRICS_PORT", "9091"),
+		Pprof:           false,
+		MaxRequestBytes: 1 << 20,
+		BcryptCost:      12,
+
+		OTELEnabled:     false,
+		OTELEndpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318"),
+		OTELServiceName: getEnv("OTEL_SERVICE_NAME", "gregport-api"),
+		OTELInsecure:    true,
+		OTELSampleRatio: 1,
+
+		DBMaxConns:        20,
+		DBMinConns:        2,
+		DBMaxConnLifetime: 30 * time.Minute,
+		DBMaxConnIdleTime: 5 * time.Minute,
+
 		StreamTokenTTL:          30 * time.Second,
 		StreamHeartbeatInterval: 20 * time.Second,
 		StreamBufferSize:        64,
@@ -206,6 +246,41 @@ func Load() (Config, error) {
 	} else {
 		cfg.AppPort = port
 	}
+	if port, err := envPort("METRICS_PORT", cfg.MetricsPort); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.MetricsPort = port
+	}
+	if origins, err := envOrigins("CORS_ALLOWED_ORIGINS"); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.CORSAllowedOrigins = origins
+	}
+	if value, err := envInt64("MAX_REQUEST_BYTES", cfg.MaxRequestBytes, 1); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.MaxRequestBytes = value
+	}
+	if value, err := envFloat("OTEL_SAMPLE_RATIO", cfg.OTELSampleRatio, 0, 1); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.OTELSampleRatio = value
+	}
+	if value, err := envBool("OTEL_ENABLED", cfg.OTELEnabled); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.OTELEnabled = value
+	}
+	if value, err := envBool("OTEL_INSECURE", cfg.OTELInsecure); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.OTELInsecure = value
+	}
+	if value, err := envBool("PPROF_ENABLED", cfg.Pprof); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.Pprof = value
+	}
 
 	durations := []struct {
 		name      string
@@ -255,6 +330,8 @@ func Load() (Config, error) {
 		{"EXPORT_LINK_TTL", &cfg.ExportLinkTTL},
 		{"ATTACHMENT_PENDING_TTL", &cfg.AttachmentPendingTTL},
 		{"ELASTICSEARCH_TIMEOUT", &cfg.ElasticsearchTimeout},
+		{"DB_MAX_CONN_LIFETIME", &cfg.DBMaxConnLifetime},
+		{"DB_MAX_CONN_IDLE_TIME", &cfg.DBMaxConnIdleTime},
 	}
 	for _, d := range redisDurations {
 		value, err := envDuration(d.name, *d.dst, false)
@@ -278,6 +355,9 @@ func Load() (Config, error) {
 		{"MAX_ATTACHMENT_BYTES", &cfg.MaxAttachmentBytes, 1},
 		{"STREAM_BUFFER_SIZE", &cfg.StreamBufferSize, 1},
 		{"STREAM_REPLAY_BATCH", &cfg.StreamReplayBatch, 1},
+		{"DB_MAX_CONNS", &cfg.DBMaxConns, 1},
+		{"DB_MIN_CONNS", &cfg.DBMinConns, 0},
+		{"BCRYPT_COST", &cfg.BcryptCost, 10},
 	}
 	for _, n := range ints {
 		value, err := envInt(n.name, *n.dst, n.min)
@@ -339,6 +419,19 @@ func Load() (Config, error) {
 			"SHUTDOWN_TIMEOUT (%s) must be at least REQUEST_TIMEOUT (%s)",
 			cfg.ShutdownTimeout, cfg.RequestTimeout,
 		))
+	}
+
+	if cfg.BcryptCost < 10 || cfg.BcryptCost > 15 {
+		errs = append(errs, fmt.Errorf("BCRYPT_COST must be between 10 and 15, got %d", cfg.BcryptCost))
+	}
+	if cfg.DBMinConns > cfg.DBMaxConns {
+		errs = append(errs, fmt.Errorf("DB_MIN_CONNS (%d) must not exceed DB_MAX_CONNS (%d)", cfg.DBMinConns, cfg.DBMaxConns))
+	}
+	if cfg.OTELEnabled {
+		u, err := url.Parse(cfg.OTELEndpoint)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			errs = append(errs, errors.New("OTEL_EXPORTER_OTLP_ENDPOINT must be an http or https URL"))
+		}
 	}
 
 	if len(errs) > 0 {
@@ -471,6 +564,61 @@ func envCIDRs(name string) ([]netip.Prefix, error) {
 		prefixes = append(prefixes, prefix)
 	}
 	return prefixes, nil
+}
+
+func envInt64(name string, fallback, min int64) (int64, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer, got %q", name, raw)
+	}
+	if value < min {
+		return 0, fmt.Errorf("%s must be at least %d, got %d", name, min, value)
+	}
+	return value, nil
+}
+
+func envFloat(name string, fallback, min, max float64) (float64, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a number, got %q", name, raw)
+	}
+	if value < min || value > max {
+		return 0, fmt.Errorf("%s must be between %g and %g, got %g", name, min, max, value)
+	}
+	return value, nil
+}
+
+func envOrigins(name string) ([]string, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	origins := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if part == "*" {
+			origins = append(origins, part)
+			continue
+		}
+		u, err := url.Parse(part)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || (u.Path != "" && u.Path != "/") {
+			return nil, fmt.Errorf("%s contains invalid origin %q", name, part)
+		}
+		origins = append(origins, u.Scheme+"://"+u.Host)
+	}
+	return origins, nil
 }
 
 // validateAppURL requires an absolute http(s) URL so a malformed PUBLIC_APP_URL

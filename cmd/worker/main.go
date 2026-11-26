@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/exaring/otelpgx"
 	"github.com/hibiken/asynq"
 	"github.com/joho/godotenv"
 
@@ -25,6 +28,8 @@ import (
 	"github.com/HenriNorman/gregport/internal/platform/config"
 	"github.com/HenriNorman/gregport/internal/platform/database"
 	"github.com/HenriNorman/gregport/internal/platform/logging"
+	"github.com/HenriNorman/gregport/internal/platform/metrics"
+	"github.com/HenriNorman/gregport/internal/platform/telemetry"
 	"github.com/HenriNorman/gregport/internal/queue"
 	"github.com/HenriNorman/gregport/internal/ratings"
 	"github.com/HenriNorman/gregport/internal/realtime"
@@ -56,14 +61,47 @@ func run() error {
 	}
 	logging.SetDefault(logger)
 
+	shutdownTracing, err := telemetry.Init(context.Background(), telemetry.Config{
+		Enabled:     cfg.OTELEnabled,
+		Endpoint:    cfg.OTELEndpoint,
+		ServiceName: cfg.OTELServiceName,
+		Environment: envOr("APP_ENV", "development"),
+		SampleRatio: cfg.OTELSampleRatio,
+		Insecure:    cfg.OTELInsecure,
+	})
+	if err != nil {
+		return fmt.Errorf("tracing: %w", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(ctx)
+	}()
+
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := database.NewPool(signalCtx, cfg.DSN())
+	prom := metrics.NewPrometheus()
+	counters := metrics.New()
+	counters.Attach(prom)
+	metricsSrv := metrics.NewServer(cfg.MetricsPort, prom, cfg.Pprof)
+	go func() {
+		if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("metrics server stopped", "error", err)
+		}
+	}()
+	defer metricsSrv.Close()
+
+	pool, err := database.NewPool(signalCtx, cfg.DSN(),
+		database.WithPoolLimits(cfg.DBMaxConns, cfg.DBMinConns),
+		database.WithConnLifetime(cfg.DBMaxConnLifetime, cfg.DBMaxConnIdleTime),
+		database.WithTracer(otelpgx.NewTracer()),
+	)
 	if err != nil {
 		return fmt.Errorf("postgres: %w", err)
 	}
 	defer pool.Close()
+	metrics.RegisterPoolMetrics(prom.Registry, pool, "worker")
 	logger.Info("connected to postgres")
 
 	objectStore, err := storage.New(storage.Config{
@@ -134,6 +172,7 @@ func run() error {
 	webhookSvc := webhooks.NewService(webhooks.NewRepository(pool))
 	webhookSvc.SetSender(webhooks.NewHTTPSender(webhooks.SenderOptions{Timeout: webhooks.DefaultTimeout}))
 	webhookSvc.SetEnqueuer(queueClient)
+	webhookSvc.SetDeliveryObserver(counters.WebhookDelivery)
 	webhookHandler := webhooks.NewTaskHandler(webhookSvc, logger)
 
 	attachmentRepo := attachments.NewRepository(pool)
@@ -239,18 +278,26 @@ func run() error {
 		return nil
 	})
 
+	observeJob := func(taskType, outcome string) { counters.JobProcessed(taskType, outcome) }
+	reg := func(taskType string, handler asynq.Handler) worker.HandlerRegistration {
+		return worker.HandlerRegistration{
+			Type:    taskType,
+			Handler: worker.ObserveHandler(taskType, handler, observeJob),
+		}
+	}
+
 	mux := worker.NewMux(
-		worker.HandlerRegistration{Type: queue.TaskEmailSend, Handler: emailHandler},
-		worker.HandlerRegistration{Type: queue.TaskNotify, Handler: notifyHandler},
-		worker.HandlerRegistration{Type: queue.TaskWebhookDispatch, Handler: asynq.HandlerFunc(webhookHandler.Dispatch)},
-		worker.HandlerRegistration{Type: queue.TaskWebhookDeliver, Handler: asynq.HandlerFunc(webhookHandler.Deliver)},
-		worker.HandlerRegistration{Type: queue.TaskAttachmentValidate, Handler: asynq.HandlerFunc(attachmentHandler.Validate)},
-		worker.HandlerRegistration{Type: queue.TaskThumbnailGenerate, Handler: asynq.HandlerFunc(attachmentHandler.Thumbnail)},
-		worker.HandlerRegistration{Type: queue.TaskExportRun, Handler: asynq.HandlerFunc(exportHandler.Run)},
-		worker.HandlerRegistration{Type: queue.TaskSearchIndex, Handler: asynq.HandlerFunc(searchSyncHandler.Handle)},
-		worker.HandlerRegistration{Type: queue.TaskSLABreachCheck, Handler: breachHandler},
-		worker.HandlerRegistration{Type: queue.TaskAutoClose, Handler: autoCloseHandler},
-		worker.HandlerRegistration{Type: queue.TaskHousekeeping, Handler: housekeepingHandler},
+		reg(queue.TaskEmailSend, emailHandler),
+		reg(queue.TaskNotify, notifyHandler),
+		reg(queue.TaskWebhookDispatch, asynq.HandlerFunc(webhookHandler.Dispatch)),
+		reg(queue.TaskWebhookDeliver, asynq.HandlerFunc(webhookHandler.Deliver)),
+		reg(queue.TaskAttachmentValidate, asynq.HandlerFunc(attachmentHandler.Validate)),
+		reg(queue.TaskThumbnailGenerate, asynq.HandlerFunc(attachmentHandler.Thumbnail)),
+		reg(queue.TaskExportRun, asynq.HandlerFunc(exportHandler.Run)),
+		reg(queue.TaskSearchIndex, asynq.HandlerFunc(searchSyncHandler.Handle)),
+		reg(queue.TaskSLABreachCheck, breachHandler),
+		reg(queue.TaskAutoClose, autoCloseHandler),
+		reg(queue.TaskHousekeeping, housekeepingHandler),
 	)
 	ioServer := queue.NewIOServer(queueCfg)
 	cpuServer := queue.NewCPUServer(queueCfg)
@@ -300,6 +347,13 @@ func run() error {
 		close(statsDone)
 	}()
 	done = append(done, donePair{done: statsDone, name: "queue statistics"})
+
+	queueMetricsDone := make(chan struct{})
+	go func() {
+		metrics.RunQueueMetrics(workerCtx, inspector, prom, 15*time.Second)
+		close(queueMetricsDone)
+	}()
+	done = append(done, donePair{done: queueMetricsDone, name: "queue metrics"})
 
 	// SLA breach scheduler: enqueues a sla:breach_check task each tick.
 	if cfg.SLABreachCheckInterval > 0 {
@@ -461,4 +515,11 @@ func waitBackground(done <-chan struct{}, name string, logger *slog.Logger, time
 	case <-time.After(timeout):
 		logger.Warn("background task did not stop within the shutdown timeout", "task", name)
 	}
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
