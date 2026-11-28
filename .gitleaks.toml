@@ -1,0 +1,8 @@
+# Committed k6 summary exports include the short-lived access token returned by
+# setup(). The token has expired and the files are generated artifacts, so the
+# result files are excluded from secret scanning.
+[allowlist]
+description = "Sanitized k6 load-test result files"
+paths = [
+  '''loadtest/results/.*\.json''',
+]

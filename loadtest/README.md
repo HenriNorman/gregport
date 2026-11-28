@@ -76,7 +76,10 @@ CREATE INDEX idx_tickets_org_created_active
 | Whole run | Throughput | 696.5 req/s | 2,606.0 req/s | 3.7× higher | List requests stopped blocking for seconds |
 | Whole run | Error rate | 0.05% | 0.00% | 51 → 0 failures | List requests no longer exceeded the 10s request timeout |
 
-Raw k6 output is committed in `loadtest/results/`.
+Raw k6 output is committed in `loadtest/results/`. k6 writes the access token
+returned by `setup()` into the summary export; the committed copies have that
+field redacted, and `.gitleaks.toml` excludes these generated artifacts from
+secret scanning.
 
 ## Notes
 
